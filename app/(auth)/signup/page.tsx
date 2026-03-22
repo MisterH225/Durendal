@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { isGmailAddress, OTP_SIGNUP_STORAGE_KEY } from '@/lib/auth/email-domain'
 import { Eye, EyeOff } from 'lucide-react'
 
 function PasswordStrength({ password }: { password: string }) {
@@ -46,20 +47,57 @@ export default function SignupPage() {
     if (password.length < 8) { setError('Le mot de passe doit contenir au moins 8 caractères.'); return }
     setLoading(true)
     setError('')
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
+    const normalizedEmail = email.trim().toLowerCase()
+    const fullName = `${firstName} ${lastName}`.trim()
+
+    if (isGmailAddress(normalizedEmail)) {
+      const { error } = await supabase.auth.signUp({
+        email: normalizedEmail,
+        password,
+        options: {
+          data: { full_name: fullName },
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      })
+      if (error) {
+        setError(error.message)
+        setLoading(false)
+      } else {
+        setLoading(false)
+        router.push(`/verify?email=${encodeURIComponent(normalizedEmail)}`)
+      }
+      return
+    }
+
+    // Hors Gmail : compte créé par OTP ; le mot de passe est appliqué après validation du code.
+    const { error } = await supabase.auth.signInWithOtp({
+      email: normalizedEmail,
       options: {
-        data: { full_name: `${firstName} ${lastName}` },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        shouldCreateUser: true,
+        data: {
+          full_name: fullName,
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+        },
       },
     })
     if (error) {
       setError(error.message)
       setLoading(false)
-    } else {
-      router.push(`/verify?email=${encodeURIComponent(email)}`)
+      return
     }
+    try {
+      sessionStorage.setItem(
+        OTP_SIGNUP_STORAGE_KEY,
+        JSON.stringify({ email: normalizedEmail, password })
+      )
+    } catch {
+      setError('Impossible de poursuivre dans ce navigateur (stockage bloqué).')
+      setLoading(false)
+      return
+    }
+    setLoading(false)
+    router.push(`/verify-otp?email=${encodeURIComponent(normalizedEmail)}&mode=signup`)
   }
 
   async function handleGoogle() {
@@ -99,6 +137,9 @@ export default function SignupPage() {
 
           <h1 className="text-xl font-bold text-neutral-900 tracking-tight mb-1">Créez votre compte</h1>
           <p className="text-sm text-neutral-500 mb-5">Commencez votre veille en 2 minutes.</p>
+          <p className="text-xs text-neutral-400 mb-5 -mt-3 leading-relaxed">
+            Adresse Gmail / Google : confirmation par lien dans l’e-mail. Autres domaines : un code à 6 chiffres vous sera envoyé pour valider la création du compte.
+          </p>
 
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-700">{error}</div>

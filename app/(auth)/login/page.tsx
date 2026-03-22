@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { isGmailAddress } from '@/lib/auth/email-domain'
 import { Eye, EyeOff, AlertCircle } from 'lucide-react'
 
 export default function LoginPage() {
@@ -13,13 +14,15 @@ export default function LoginPage() {
   const [showPwd, setShowPwd] = useState(false)
   const [remember, setRemember] = useState(true)
   const [loading, setLoading] = useState(false)
+  const [otpLoading, setOtpLoading] = useState(false)
   const [error, setError] = useState('')
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const normalized = email.trim().toLowerCase()
+    const { error } = await supabase.auth.signInWithPassword({ email: normalized, password })
     if (error) {
       setError('Email ou mot de passe incorrect. Vérifiez vos informations.')
       setLoading(false)
@@ -34,6 +37,30 @@ export default function LoginPage() {
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     })
+  }
+
+  async function handleLoginWithOtp() {
+    const normalized = email.trim().toLowerCase()
+    if (!normalized) {
+      setError('Indiquez d’abord votre adresse e-mail.')
+      return
+    }
+    if (isGmailAddress(normalized)) {
+      setError('La connexion par code e-mail est réservée aux adresses hors Gmail. Utilisez le mot de passe ou Google.')
+      return
+    }
+    setOtpLoading(true)
+    setError('')
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      email: normalized,
+      options: { shouldCreateUser: false },
+    })
+    setOtpLoading(false)
+    if (otpError) {
+      setError(otpError.message)
+      return
+    }
+    router.push(`/verify-otp?email=${encodeURIComponent(normalized)}&mode=login`)
   }
 
   return (
@@ -121,6 +148,20 @@ export default function LoginPage() {
             <button type="submit" disabled={loading} className="btn-primary w-full py-2.5 mt-1">
               {loading ? 'Connexion...' : 'Se connecter'}
             </button>
+
+            {!isGmailAddress(email.trim()) && email.includes('@') && (
+              <div className="pt-2 border-t border-neutral-100 mt-4">
+                <p className="text-xs text-neutral-500 mb-2 text-center">Adresse professionnelle ou autre que Gmail</p>
+                <button
+                  type="button"
+                  onClick={handleLoginWithOtp}
+                  disabled={otpLoading}
+                  className="w-full py-2.5 text-sm font-medium text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+                >
+                  {otpLoading ? 'Envoi du code...' : 'Recevoir un code par e-mail'}
+                </button>
+              </div>
+            )}
           </form>
         </div>
       </div>

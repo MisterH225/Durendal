@@ -72,7 +72,7 @@
   .sidebar-item {
     @apply flex items-center gap-2.5 px-4 py-2 text-sm text-white/55
            border-l-2 border-transparent cursor-pointer transition-all duration-150
-           hover:bg-white/8 hover:text-white;
+           hover:bg-white/[0.08] hover:text-white;
   }
   .sidebar-item-active {
     @apply bg-white/10 text-white border-l-blue-400;

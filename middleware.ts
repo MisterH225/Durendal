@@ -28,14 +28,14 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
-  const publicRoutes = ['/login', '/signup', '/verify', '/verify-otp', '/reset', '/reset-password', '/activate']
+  const publicRoutes = ['/login', '/signup', '/verify', '/verify-otp', '/reset', '/reset-password', '/activate', '/auth', '/api/auth']
   const isPublicRoute = publicRoutes.some(r => pathname.startsWith(r))
 
   if (!user && !isPublicRoute && pathname !== '/') {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && isPublicRoute) {
+  if (user && isPublicRoute && !pathname.startsWith('/api')) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
@@ -60,6 +60,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Exclure /auth pour que le callback OAuth ne soit pas interféré par le middleware.
+    '/((?!_next/static|_next/image|favicon.ico|auth|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

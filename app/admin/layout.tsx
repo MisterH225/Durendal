@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import { getBypassAdminProfile, isAuthUiBypassEnabled } from '@/lib/auth/ui-bypass'
 import { LayoutDashboard, Users, Package, Globe, Key, Bot, CreditCard, Settings } from 'lucide-react'
 
 const adminNav = [
@@ -15,14 +16,21 @@ const adminNav = [
 ]
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  let profile: { role: string | null; full_name: string | null } | null = null
 
-  const { data: profile } = await supabase
-    .from('profiles').select('role, full_name').eq('id', user.id).single()
+  if (isAuthUiBypassEnabled()) {
+    profile = getBypassAdminProfile()
+  } else {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) redirect('/login')
 
-  if (profile?.role !== 'superadmin') redirect('/dashboard')
+    const { data: p } = await supabase
+      .from('profiles').select('role, full_name').eq('id', user.id).single()
+
+    profile = p
+    if (profile?.role !== 'superadmin') redirect('/dashboard')
+  }
 
   const initials = profile?.full_name?.split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase() || 'SA'
 

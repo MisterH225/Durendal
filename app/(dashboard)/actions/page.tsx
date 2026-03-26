@@ -10,10 +10,12 @@ const typeConfig: Record<string, { label: string; icon: any; color: string }> = 
 
 export default async function ActionsPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  let user: any = null
+  try { const { data } = await supabase.auth.getUser(); user = data.user } catch {}
+  if (!user) return null
 
   const { data: profile } = await supabase
-    .from('profiles').select('account_id').eq('id', user!.id).single()
+    .from('profiles').select('account_id').eq('id', user.id).single()
 
   const { data: recs } = await supabase
     .from('recommendations')

@@ -63,10 +63,12 @@ const plans = [
 
 export default async function ForfaitPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  let user: any = null
+  try { const { data } = await supabase.auth.getUser(); user = data.user } catch {}
+  if (!user) return null
 
   const { data: profile } = await supabase
-    .from('profiles').select('account_id, accounts(*, plans(*))').eq('id', user!.id).single()
+    .from('profiles').select('account_id, accounts(*, plans(*))').eq('id', user.id).single()
 
   const currentPlan = (profile?.accounts as any)?.plans?.name || 'free'
 

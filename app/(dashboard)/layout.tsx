@@ -18,15 +18,26 @@ export default async function DashboardLayout({ children }: { children: React.Re
     )
   }
 
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  let user: any = null
+  let profile: any = null
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*, accounts(*, plans(*))')
-    .eq('id', user.id)
-    .single()
+  try {
+    const supabase = createClient()
+    const { data, error } = await supabase.auth.getUser()
+    if (error || !data.user) {
+      redirect('/login')
+    }
+    user = data.user
+
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('*, accounts(*, plans(*))')
+      .eq('id', user.id)
+      .single()
+    profile = profileData
+  } catch {
+    redirect('/login')
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-neutral-100">

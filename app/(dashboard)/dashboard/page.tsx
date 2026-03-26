@@ -4,13 +4,22 @@ import Link from 'next/link'
 
 export default async function DashboardPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  let user: any = null
+  let profile: any = null
 
-  const { data: profile } = await supabase
+  try {
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch { /* session manquante — le layout gère déjà la redirection */ }
+
+  if (!user) return null
+
+  const { data: profileData } = await supabase
     .from('profiles')
     .select('*, accounts(*, plans(*))')
-    .eq('id', user!.id)
+    .eq('id', user.id)
     .single()
+  profile = profileData
 
   const { data: watches } = await supabase
     .from('watches')

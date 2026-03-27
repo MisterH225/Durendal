@@ -167,21 +167,25 @@ export default async function DashboardPage() {
               { done: true, icon: '✅', title: 'Compte créé', desc: 'Email vérifié avec succès', href: null },
               { done: false, icon: '👁', title: 'Créez votre première veille', desc: 'Choisissez secteur, pays, concurrents', href: '/veilles' },
               { done: false, icon: '💳', title: 'Activez votre forfait', desc: '14 jours gratuits, sans carte bancaire', href: '/forfait' },
-            ].map(({ done, icon, title, desc, href }) => (
-              <div key={title} className={`flex items-center gap-3 p-3 rounded-lg border transition-all
-                ${done ? 'border-green-200 bg-green-50' : 'border-neutral-200 hover:border-blue-200 hover:bg-blue-50 cursor-pointer'}`}
-                onClick={() => href && window.location.assign(href)}>
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0
-                  ${done ? 'bg-green-100' : 'bg-blue-100'}`}>
-                  {icon}
-                </div>
-                <div className="flex-1">
-                  <div className="text-xs font-semibold text-neutral-900">{title}</div>
-                  <div className="text-[11px] text-neutral-500">{desc}</div>
-                </div>
-                {done ? <span className="text-green-600 text-sm font-bold">✓</span> : <span className="text-neutral-300 text-sm">→</span>}
-              </div>
-            ))}
+            ].map(({ done, icon, title, desc, href }) => {
+              const inner = (
+                <>
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0
+                    ${done ? 'bg-green-100' : 'bg-blue-100'}`}>
+                    {icon}
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-xs font-semibold text-neutral-900">{title}</div>
+                    <div className="text-[11px] text-neutral-500">{desc}</div>
+                  </div>
+                  {done ? <span className="text-green-600 text-sm font-bold">✓</span> : <span className="text-neutral-300 text-sm">→</span>}
+                </>
+              )
+              const cls = `flex items-center gap-3 p-3 rounded-lg border transition-all ${done ? 'border-green-200 bg-green-50' : 'border-neutral-200 hover:border-blue-200 hover:bg-blue-50'}`
+              return href
+                ? <Link key={title} href={href} className={cls}>{inner}</Link>
+                : <div key={title} className={cls}>{inner}</div>
+            })}
           </div>
         </div>
       )}

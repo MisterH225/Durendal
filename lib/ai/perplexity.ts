@@ -1,40 +1,103 @@
 /**
  * lib/ai/perplexity.ts
- * Client Perplexity Search API — endpoint dédié /search.
+ * Client Perplexity — Responses API (/v1/responses) + Search API (/search).
  *
- * Contrairement au Sonar API (chat completions), la Search API :
- *   - Retourne des résultats structurés {title, url, snippet, date}
- *   - Pas d'inférence LLM → plus rapide et moins cher
- *   - Fonctionne depuis n'importe quel VPS/datacenter
+ * Responses API (endpoint principal) :
+ *   POST /v1/responses
+ *   preset: "fast-search" | "quality-search"
+ *   → retourne une réponse synthétisée + annotations (citations URL)
+ *   → 1 seul appel = recherche web + synthèse → idéal pour agents
  *
- * Docs : https://docs.perplexity.ai/api-reference/search-post
+ * Search API (fallback) :
+ *   POST /search
+ *   → retourne des résultats structurés {title, url, snippet}
  */
 
 const PERPLEXITY_BASE = 'https://api.perplexity.ai'
 
+// ── Types : Responses API ─────────────────────────────────────────────────────
+
+export interface PerplexityUrlCitation {
+  type:        'url_citation'
+  url:         string
+  title:       string
+  start_index?: number
+  end_index?:   number
+}
+
+export interface PerplexityResponseResult {
+  text:      string
+  citations: PerplexityUrlCitation[]
+}
+
+// ── Types : Search API ────────────────────────────────────────────────────────
+
 export interface PerplexitySearchResult {
-  title:        string
-  url:          string
-  snippet:      string
-  date?:        string | null
+  title:         string
+  url:           string
+  snippet:       string
+  date?:         string | null
   last_updated?: string | null
 }
 
-export interface PerplexitySearchResponse {
-  results: PerplexitySearchResult[]
-  id:          string
-  server_time?: string | null
-}
+// ── Responses API (principal) ─────────────────────────────────────────────────
 
 /**
- * Recherche via la Perplexity Search API.
- * Retourne des résultats web structurés, prêts à être utilisés dans les agents.
+ * Appel à la Perplexity Responses API.
+ * Retourne une réponse synthétisée + citations web.
  *
- * @param query              Requête de recherche
- * @param options.maxResults Nombre max de résultats (1–20, défaut 5)
- * @param options.recency    Filtre temporel : 'day' | 'week' | 'month' | 'year'
- * @param options.language   Filtre langue ISO 639-1, ex: ['fr', 'en']
- * @param options.domains    Limiter à des domaines spécifiques
+ * @param input   Requête / question pour l'agent
+ * @param preset  "fast-search" (rapide) | "quality-search" (meilleure qualité)
+ */
+export async function perplexityResponses(
+  input:  string,
+  preset: 'fast-search' | 'quality-search' = 'fast-search',
+): Promise<PerplexityResponseResult> {
+  const apiKey = process.env.PERPLEXITY_API_KEY
+  if (!apiKey) throw new Error('PERPLEXITY_API_KEY manquant')
+
+  const res = await fetch(`${PERPLEXITY_BASE}/v1/responses`, {
+    method:  'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization:  `Bearer ${apiKey}`,
+    },
+    body:   JSON.stringify({ preset, input }),
+    signal: AbortSignal.timeout(20_000),
+  })
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText)
+    throw new Error(`Perplexity Responses API ${res.status}: ${err}`)
+  }
+
+  const data = await res.json()
+
+  // Extrait le texte synthétisé depuis output[].content[].text
+  const outputMsg   = data.output?.find((o: any) => o.type === 'message')
+  const contentPart = outputMsg?.content?.find((c: any) => c.type === 'output_text')
+  const text        = contentPart?.text ?? data.output_text ?? data.text ?? ''
+
+  // Extrait les citations (annotations de type url_citation)
+  const annotations: any[] = contentPart?.annotations ?? data.annotations ?? []
+  const citations: PerplexityUrlCitation[] = annotations
+    .filter((a: any) => a.type === 'url_citation' && a.url)
+    .map((a: any) => ({
+      type:  'url_citation' as const,
+      url:   a.url,
+      title: a.title ?? '',
+    }))
+    // Déduplique par URL
+    .filter((c, i, arr) => arr.findIndex(x => x.url === c.url) === i)
+
+  return { text, citations }
+}
+
+// ── Search API (fallback) ─────────────────────────────────────────────────────
+
+/**
+ * Appel à la Perplexity Search API (fallback si /v1/responses échoue).
+ * Retourne des résultats web structurés {title, url, snippet}.
  */
 export async function perplexitySearch(
   query: string,
@@ -42,8 +105,6 @@ export async function perplexitySearch(
     maxResults?:       number
     maxTokensPerPage?: number
     recency?:          'hour' | 'day' | 'week' | 'month' | 'year'
-    language?:         string[]
-    domains?:          string[]
   } = {},
 ): Promise<PerplexitySearchResult[]> {
   const apiKey = process.env.PERPLEXITY_API_KEY
@@ -51,13 +112,10 @@ export async function perplexitySearch(
 
   const body: Record<string, any> = {
     query,
-    max_results:          options.maxResults       ?? 5,
-    max_tokens_per_page:  options.maxTokensPerPage ?? 512,
+    max_results:         options.maxResults       ?? 5,
+    max_tokens_per_page: options.maxTokensPerPage ?? 512,
   }
-
-  if (options.recency)           body.search_recency_filter   = options.recency
-  if (options.language?.length)  body.search_language_filter  = options.language
-  if (options.domains?.length)   body.search_domain_filter    = options.domains
+  if (options.recency) body.search_recency_filter = options.recency
 
   const res = await fetch(`${PERPLEXITY_BASE}/search`, {
     method:  'POST',
@@ -74,23 +132,60 @@ export async function perplexitySearch(
     throw new Error(`Perplexity Search API ${res.status}: ${err}`)
   }
 
-  const data: PerplexitySearchResponse = await res.json()
+  const data = await res.json()
   return data.results ?? []
 }
 
+// ── Adaptateur pour collector-engine ─────────────────────────────────────────
+
 /**
- * Variante adaptée au format webSearch() du collector-engine.
- * Retourne {title, url, snippet} directement utilisables par les agents.
- * Le snippet contient du contenu extrait de la page → skip fetchPageContent.
+ * Interface unifiée pour le collector-engine.
+ * Essaie Responses API (/v1/responses) en premier, puis /search en fallback.
+ *
+ * Retourne des SearchResult avec :
+ *   - fullContent : texte synthétisé (riche, ~500 mots) → skip fetchPageContent
+ *   - url/title  : première citation si disponible, sinon URL factice
  */
 export async function perplexityWebSearch(
   query:      string,
   maxResults = 3,
 ): Promise<{ title: string; url: string; snippet: string; fullContent?: string }[]> {
+  // ── Niveau 1 : Responses API ────────────────────────────────────────────────
+  try {
+    const { text, citations } = await perplexityResponses(query, 'fast-search')
+
+    if (text && text.length > 100) {
+      // La réponse synthétisée est le contenu principal
+      // Les citations deviennent les "résultats" individuels (max maxResults)
+      const sources = citations.slice(0, maxResults)
+
+      if (sources.length > 0) {
+        // Un résultat par citation, tous avec le même contenu synthétisé
+        return sources.map((c, i) => ({
+          title:       c.title || `Source ${i + 1}`,
+          url:         c.url,
+          snippet:     text.slice(0, 300),
+          fullContent: text,  // texte complet partagé entre toutes les sources
+        }))
+      }
+
+      // Réponse sans citation — on retourne un résultat synthétique
+      return [{
+        title:       query.slice(0, 80),
+        url:         `https://perplexity.ai/search?q=${encodeURIComponent(query)}`,
+        snippet:     text.slice(0, 300),
+        fullContent: text,
+      }]
+    }
+  } catch {
+    // Silence — tombe en fallback /search
+  }
+
+  // ── Niveau 2 : Search API ────────────────────────────────────────────────────
   try {
     const results = await perplexitySearch(query, {
       maxResults,
-      maxTokensPerPage: 512,   // ~400 mots — suffisant pour l'extraction Gemini
+      maxTokensPerPage: 512,
     })
 
     return results.map(r => ({

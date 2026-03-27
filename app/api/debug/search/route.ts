@@ -4,7 +4,7 @@
  * À SUPPRIMER après diagnostic (protégé par AUTH_UI_BYPASS ou superadmin check).
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { perplexityWebSearch }        from '@/lib/ai/perplexity'
+import { perplexityWebSearch, perplexityResponses, perplexitySearch } from '@/lib/ai/perplexity'
 import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 
 export const maxDuration = 60
@@ -55,13 +55,32 @@ export async function GET(req: NextRequest) {
     steps: {},
   }
 
-  // ── Step 1 : Perplexity Search API ────────────────────────────────────────
-  report.steps.perplexity = { status: 'skipped', reason: 'clé absente' }
+  // ── Step 1a : Perplexity Responses API (/v1/responses) ───────────────────
+  report.steps.perplexity_responses = { status: 'skipped', reason: 'clé absente' }
   if (process.env.PERPLEXITY_API_KEY) {
     try {
       const t0  = Date.now()
-      const res = await perplexityWebSearch(query, 2)
-      report.steps.perplexity = {
+      const res = await perplexityResponses(query, 'fast-search')
+      report.steps.perplexity_responses = {
+        status:     res.text.length > 100 ? 'ok' : 'empty',
+        durationMs: Date.now() - t0,
+        textLength: res.text.length,
+        textPreview: res.text.slice(0, 400),
+        citationsCount: res.citations.length,
+        citations: res.citations.slice(0, 3),
+      }
+    } catch (e: any) {
+      report.steps.perplexity_responses = { status: 'error', reason: e?.message }
+    }
+  }
+
+  // ── Step 1b : Perplexity Search API (/search) ─────────────────────────────
+  report.steps.perplexity_search = { status: 'skipped', reason: 'clé absente' }
+  if (process.env.PERPLEXITY_API_KEY) {
+    try {
+      const t0  = Date.now()
+      const res = await perplexitySearch(query, { maxResults: 2, maxTokensPerPage: 256 })
+      report.steps.perplexity_search = {
         status:    res.length > 0 ? 'ok' : 'empty',
         count:     res.length,
         durationMs: Date.now() - t0,
@@ -69,11 +88,10 @@ export async function GET(req: NextRequest) {
           title:   r.title,
           url:     r.url,
           snippet: r.snippet?.slice(0, 200),
-          hasFullContent: !!r.fullContent,
         })),
       }
     } catch (e: any) {
-      report.steps.perplexity = { status: 'error', reason: e?.message }
+      report.steps.perplexity_search = { status: 'error', reason: e?.message }
     }
   }
 

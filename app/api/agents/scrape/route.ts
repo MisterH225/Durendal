@@ -6,8 +6,8 @@ export const maxDuration = 300
  * Orchestrateur principal de collecte — architecture inspirée de VeilleCI.
  *
  * Pipeline :
- *  1. runAllAgentsParallel()   → 4 agents en parallèle (DDG + fetchPageContent)
- *  2. researchWithGrounding()  → Gemini + Google Search (sources vérifiables)
+ *  1. runAllAgentsParallel()   → 4 agents en parallèle (Perplexity + fetchPageContent)
+ *  2. researchWithPerplexity() → Perplexity Responses API (qualité + citations)
  *  3. Firecrawl / LinkedIn     → enrichissement si clés disponibles
  *  4. generateWatchReport()    → rapport inline (PAS fire-and-forget)
  */

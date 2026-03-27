@@ -9,8 +9,14 @@
  *   → top-level: text (raccourci)
  *
  * Search API (fallback) :
- *   POST /search { query, max_results, max_tokens_per_page }
+ *   POST /search { query, max_results, max_tokens_per_page, search_domain_filter, ... }
  *   → results[]: {title, url, snippet}
+ *
+ * Filtres supportés (Search + Responses) :
+ *   - search_domain_filter  : max 20 domaines (allowlist OU denylist avec prefix -)
+ *   - search_recency_filter : hour | day | week | month | year
+ *   - search_language_filter: ISO 639-1 codes (fr, en, …)
+ *   - country               : ISO 3166-1 alpha-2 (CI, SN, GH, …)
  */
 
 const PERPLEXITY_BASE = 'https://api.perplexity.ai'
@@ -34,17 +40,38 @@ export interface PerplexitySearchResult {
   date?:         string | null
 }
 
+export type SearchRecency = 'hour' | 'day' | 'week' | 'month' | 'year'
+
+export interface PerplexityFilters {
+  domains?:   string[]
+  recency?:   SearchRecency
+  languages?: string[]
+  country?:   string
+}
+
 // ── Responses API (principal) ─────────────────────────────────────────────────
 
 /**
  * Appel à la Perplexity Responses API.
  * Retourne une réponse synthétisée + URLs sources.
+ * Accepte des filtres optionnels (domaines, récence) via l'objet tools.
  */
 export async function perplexityResponses(
-  input: string,
+  input:   string,
+  filters?: PerplexityFilters,
 ): Promise<PerplexityResponseResult> {
   const apiKey = process.env.PERPLEXITY_API_KEY
   if (!apiKey) throw new Error('PERPLEXITY_API_KEY manquant')
+
+  const body: Record<string, any> = { preset: 'fast-search', input }
+
+  const hasFilters = filters?.domains?.length || filters?.recency
+  if (hasFilters) {
+    const toolFilters: Record<string, any> = {}
+    if (filters!.domains?.length)  toolFilters.search_domain_filter  = filters!.domains.slice(0, 20)
+    if (filters!.recency)          toolFilters.search_recency_filter = filters!.recency
+    body.tools = [{ type: 'web_search', filters: toolFilters }]
+  }
 
   const res = await fetch(`${PERPLEXITY_BASE}/v1/responses`, {
     method:  'POST',
@@ -52,7 +79,7 @@ export async function perplexityResponses(
       'Content-Type': 'application/json',
       Authorization:  `Bearer ${apiKey}`,
     },
-    body:   JSON.stringify({ preset: 'fast-search', input }),
+    body:   JSON.stringify(body),
     signal: AbortSignal.timeout(25_000),
   })
 
@@ -114,6 +141,7 @@ export async function perplexitySearch(
   options: {
     maxResults?:       number
     maxTokensPerPage?: number
+    filters?:          PerplexityFilters
   } = {},
 ): Promise<PerplexitySearchResult[]> {
   const apiKey = process.env.PERPLEXITY_API_KEY
@@ -124,6 +152,11 @@ export async function perplexitySearch(
     max_results:         options.maxResults       ?? 5,
     max_tokens_per_page: options.maxTokensPerPage ?? 512,
   }
+
+  if (options.filters?.domains?.length)   body.search_domain_filter   = options.filters.domains.slice(0, 20)
+  if (options.filters?.recency)           body.search_recency_filter  = options.filters.recency
+  if (options.filters?.languages?.length) body.search_language_filter = options.filters.languages
+  if (options.filters?.country)           body.country                = options.filters.country
 
   const res = await fetch(`${PERPLEXITY_BASE}/search`, {
     method:  'POST',
@@ -189,14 +222,16 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 /**
  * Interface unifiée pour le collector-engine.
  * Essaie Responses API d'abord, puis /search en fallback.
+ * Propage les filtres (domaines, récence, langue, pays) aux deux APIs.
  */
 export async function perplexityWebSearch(
   query:      string,
   maxResults = 3,
+  filters?:  PerplexityFilters,
 ): Promise<{ title: string; url: string; snippet: string; fullContent?: string }[]> {
   // ── Niveau 1 : Responses API ────────────────────────────────────────────────
   try {
-    const { text, citations } = await perplexityResponses(query)
+    const { text, citations } = await perplexityResponses(query, filters)
 
     if (text && text.length > 100) {
       const sources = citations.slice(0, maxResults)
@@ -226,6 +261,7 @@ export async function perplexityWebSearch(
     const results = await perplexitySearch(query, {
       maxResults,
       maxTokensPerPage: 512,
+      filters,
     })
 
     return results.map(r => ({

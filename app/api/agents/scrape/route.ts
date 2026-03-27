@@ -90,6 +90,15 @@ async function fetchLinkedInPosts(linkedinUrl: string) {
 }
 
 // ─── Perplexity Research (Phase 2) ───────────────────────────────────────────
+//
+// Sources spécialisées pour la recherche approfondie (max 20 domaines)
+const PHASE2_DOMAINS = [
+  'jeuneafrique.com', 'theafricareport.com', 'financialafrik.com',
+  'agenceecofin.com', 'africanews.com', 'allafrica.com',
+  'reuters.com', 'bloomberg.com', 'lemonde.fr', 'ft.com',
+  'afdb.org', 'worldbank.org',
+]
+
 async function researchWithPerplexity(
   companyName: string,
   countries:   string[],
@@ -105,10 +114,15 @@ async function researchWithPerplexity(
   const year         = new Date().getFullYear()
 
   try {
-    const query = `Actualités récentes ${year - 1}-${year} sur "${companyName}" en Afrique (${countryNames}). Secteurs : ${sectorStr}. Cherche : levées de fonds, nouveaux produits, partenariats stratégiques, expansion géographique, résultats financiers, contrats.`
-    log(`  [perplexity] "${companyName}" — recherche web...`)
+    const query = `Actualités récentes ${year - 1}-${year} sur "${companyName}" en Afrique (${countryNames}). Secteurs : ${sectorStr}. Cherche : contrats, appels d'offres, partenariats stratégiques, levées de fonds, expansion géographique, résultats financiers.`
+    log(`  [perplexity] "${companyName}" — recherche web (${PHASE2_DOMAINS.length} domaines ciblés)...`)
 
-    const { text, citations } = await perplexityResponses(query)
+    const { text, citations } = await perplexityResponses(query, {
+      domains:   PHASE2_DOMAINS,
+      recency:   'year',
+      languages: ['fr', 'en'],
+      country:   countries[0] || undefined,
+    })
 
     if (!text || text.trim().length < 80) {
       log(`  [perplexity] "${companyName}" → réponse vide`)

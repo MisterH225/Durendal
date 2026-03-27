@@ -15,8 +15,8 @@
  * avec des stratégies de requêtes différentes.
  */
 
-import { callGemini, parseGeminiJson }                         from '@/lib/ai/gemini'
-import { perplexityWebSearch, perplexityEmbed, cosineSimilarity } from '@/lib/ai/perplexity'
+import { callGemini, parseGeminiJson }                                            from '@/lib/ai/gemini'
+import { perplexityWebSearch, perplexityEmbed, cosineSimilarity, PerplexityFilters } from '@/lib/ai/perplexity'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ export type AgentType =
   | 'web_scanner'
   | 'press_monitor'
   | 'analyst'
+  | 'deep_search'
   | 'deep_research'
   | 'deep_research_iterative'
 
@@ -52,11 +53,99 @@ export interface EngineResult {
   errors:     string[]
 }
 
+/** Requête enrichie avec filtres Perplexity */
+export interface AgentQuery {
+  query:   string
+  filters: PerplexityFilters
+}
+
 // ─── Mapping ISO → noms complets ─────────────────────────────────────────────
 const COUNTRY_NAMES: Record<string, string> = {
   CI: "Côte d'Ivoire", SN: 'Sénégal',      GH: 'Ghana',      NG: 'Nigeria',
   KE: 'Kenya',         CM: 'Cameroun',      MA: 'Maroc',      ZA: 'Afrique du Sud',
   BJ: 'Bénin',         BF: 'Burkina Faso',  ML: 'Mali',       TG: 'Togo',
+  CD: 'RDC',           GA: 'Gabon',         NE: 'Niger',      GN: 'Guinée',
+  MG: 'Madagascar',    TN: 'Tunisie',       DZ: 'Algérie',    ET: 'Éthiopie',
+}
+
+// ─── Sources spécialisées par catégorie ──────────────────────────────────────
+//
+// Perplexity search_domain_filter : max 20 domaines par requête.
+// On compose la liste dynamiquement par type d'agent.
+
+const AFRICA_BUSINESS_PRESS = [
+  'jeuneafrique.com',
+  'theafricareport.com',
+  'financialafrik.com',
+  'agenceecofin.com',
+  'africanews.com',
+  'allafrica.com',
+  'mondafrique.com',
+  'african-markets.com',
+]
+
+const INTERNATIONAL_PRESS = [
+  'reuters.com',
+  'bloomberg.com',
+  'lemonde.fr',
+  'ft.com',
+  'bbc.com',
+]
+
+const REGIONAL_PRESS: Record<string, string[]> = {
+  CI: ['abidjan.net', 'fratmat.info', 'linfodrome.com', 'koaci.com'],
+  SN: ['dakaractu.com', 'lesoleil.sn', 'seneweb.com'],
+  CM: ['cameroon-tribune.cm', 'journalducameroun.com'],
+  GH: ['ghanaweb.com', 'graphic.com.gh'],
+  NG: ['punch.ng', 'guardian.ng', 'premiumtimesng.com'],
+  KE: ['nation.africa', 'businessdailyafrica.com'],
+  MA: ['medias24.com', 'leseco.ma', 'leconomiste.com'],
+  ZA: ['news24.com', 'businesslive.co.za', 'dailymaverick.co.za'],
+  BJ: ['lanouvelletribune.info'],
+  BF: ['lefaso.net'],
+  TG: ['togofirst.com'],
+  ML: ['maliweb.net'],
+}
+
+const INSTITUTIONAL_SOURCES = [
+  'afdb.org',
+  'worldbank.org',
+  'ifc.org',
+  'imf.org',
+]
+
+const TECH_AFRICA = [
+  'disrupt-africa.com',
+  'techpoint.africa',
+  'techcabal.com',
+]
+
+/**
+ * Compose la liste de domaines pour un type d'agent (max 20).
+ * Priorise les sources régionales des pays surveillés.
+ */
+function getDomainsForAgent(type: AgentType, watchCountries: string[]): string[] {
+  const regional = watchCountries
+    .flatMap(c => REGIONAL_PRESS[c] ?? [])
+    .slice(0, 6)
+
+  switch (type) {
+    case 'press_monitor':
+      return [...AFRICA_BUSINESS_PRESS, ...INTERNATIONAL_PRESS, ...regional].slice(0, 20)
+
+    case 'analyst':
+      return [
+        ...INSTITUTIONAL_SOURCES,
+        ...INTERNATIONAL_PRESS,
+        ...AFRICA_BUSINESS_PRESS.slice(0, 4),
+      ].slice(0, 20)
+
+    case 'web_scanner':
+    case 'deep_research':
+    case 'deep_research_iterative':
+    default:
+      return []
+  }
 }
 
 // ─── 1. Moteurs de recherche (cascade : Perplexity → Firecrawl) ──────────────
@@ -79,14 +168,14 @@ export interface SearchResult {
 }
 
 // ── 1a. Perplexity Search API ─────────────────────────────────────────────────
-async function perplexitySearch(
+async function pplxSearch(
   query:      string,
   maxResults: number,
+  filters?:   PerplexityFilters,
 ): Promise<SearchResult[]> {
   if (!process.env.PERPLEXITY_API_KEY) return []
   try {
-    // Utilise perplexityWebSearch() du module — adapte déjà au format SearchResult
-    return await perplexityWebSearch(query, maxResults)
+    return await perplexityWebSearch(query, maxResults, filters)
   } catch {
     return []
   }
@@ -125,14 +214,14 @@ async function firecrawlWebSearch(
 export async function webSearch(
   query:      string,
   maxResults = 3,
+  filters?:   PerplexityFilters,
 ): Promise<SearchResult[]> {
-  // Niveau 1 : Perplexity (Responses API → /search API, fonctionne depuis VPS)
-  const pplx = await perplexitySearch(query, maxResults)
+  // Niveau 1 : Perplexity avec filtres (domaines, récence, langue, pays)
+  const pplx = await pplxSearch(query, maxResults, filters)
   if (pplx.length > 0) return pplx
 
-  // Niveau 2 : Firecrawl (résultats bruts, fonctionne depuis VPS)
+  // Niveau 2 : Firecrawl (résultats bruts, pas de filtrage domaine)
   return firecrawlWebSearch(query, maxResults)
-  // DDG supprimé : bloqué depuis les IP datacenter/VPS
 }
 
 // ─── 2. Extraction texte depuis une page HTML ─────────────────────────────────
@@ -167,58 +256,74 @@ export async function fetchPageContent(url: string): Promise<string> {
 }
 
 // ─── 3. Requêtes spécialisées par type d'agent ────────────────────────────────
-// Reproduit buildSearchQueries() de VeilleCI (collector-engine.ts L532-620)
+//
+// Retourne des AgentQuery[] : requêtes en langage naturel (optimisées Perplexity)
+// + filtres API (domaines spécialisés, récence, langue, pays).
+//
+// IMPORTANT : pas d'opérateurs Google (site:, OR, etc.) — Perplexity ne les
+// supporte pas. Le ciblage des sources se fait via search_domain_filter.
+
 export function buildQueriesForAgent(
-  type:         AgentType,
-  companyName:  string,
-  websiteHost:  string,
-  sectors:      string[],
-  countryNames: string[],
-  year:         number,
-): string[] {
+  type:           AgentType,
+  companyName:    string,
+  websiteHost:    string,
+  sectors:        string[],
+  countryNames:   string[],
+  watchCountries: string[],
+  year:           number,
+): AgentQuery[] {
   const primary = countryNames[0] || 'Afrique'
   const sector  = sectors.slice(0, 2).join(' ')
 
+  const domains   = getDomainsForAgent(type, watchCountries)
+  const country   = watchCountries[0] || undefined
+  const languages = ['fr', 'en']
+
+  const baseFilters: PerplexityFilters = {
+    recency:   'year',
+    languages,
+    country,
+    ...(domains.length > 0 ? { domains } : {}),
+  }
+
+  const q = (query: string, filterOverrides?: Partial<PerplexityFilters>): AgentQuery => ({
+    query,
+    filters: { ...baseFilters, ...filterOverrides },
+  })
+
   switch (type) {
-    // Scanner Web — sites officiels + news directes de l'entreprise
     case 'web_scanner':
       return [
-        websiteHost
-          ? `site:${websiteHost} actualités news ${year}`
-          : `"${companyName}" actualités news ${year}`,
-        `"${companyName}" ${primary} contrat partenariat ${year}`,
-        `"${companyName}" financement levée fonds expansion ${year}`,
-        `"${companyName}" communiqué presse press release ${year}`,
+        q(`${companyName} actualités récentes ${primary} ${year}`, { recency: 'month' }),
+        q(`${companyName} contrat partenariat ${primary} ${year}`),
+        q(`${companyName} financement levée de fonds expansion ${year}`),
+        q(`${companyName} communiqué de presse résultats ${year}`),
       ]
 
-    // Presse Monitor — presse africaine + médias internationaux
     case 'press_monitor':
       return [
-        `"${companyName}" ${primary} presse ${year}`,
-        `${sector} Afrique actualités marché contrat ${year}`,
-        `"${companyName}" (site:reuters.com OR site:theafricareport.com OR site:jeuneafrique.com OR site:bloomberglinea.com)`,
-        `${sector} ${primary} appel offres investissement ${year}`,
+        q(`${companyName} ${primary} actualités presse ${year}`),
+        q(`${sector} Afrique actualités marché contrat ${year}`),
+        q(`${companyName} Afrique partenariat investissement ${year}`),
+        q(`${sector} ${primary} appel d'offres projet ${year}`),
       ]
 
-    // Analyste — intelligence stratégique + rapports marché
     case 'analyst':
       return [
-        `${sector} marché tendances analyse ${primary} ${year}`,
-        `"${companyName}" stratégie acquisitions résultats financiers ${year}`,
-        `${sector} industry market Africa competitive forecast ${year}`,
-        `"${companyName}" rapport annuel annual report résultats ${year}`,
+        q(`${sector} marché tendances analyse ${primary} ${year}`),
+        q(`${companyName} stratégie acquisitions résultats financiers ${year}`),
+        q(`${sector} Africa market competitive landscape forecast ${year}`),
+        q(`${companyName} rapport annuel résultats chiffre d'affaires ${year}`),
       ]
 
-    // Chercheur profond — multi-angle (équivalent Perplexity researcher)
     case 'deep_research':
       return [
-        `"${companyName}" latest news ${year}`,
-        `${sector} ${primary} opportunités investissement projets ${year}`,
-        `"${companyName}" concurrents compétiteurs analyse`,
-        `${companyName} Africa ${sector} growth expansion partnership ${year}`,
+        q(`${companyName} dernières actualités ${year}`, { recency: 'month' }),
+        q(`${sector} ${primary} opportunités investissement projets ${year}`),
+        q(`${companyName} concurrents analyse compétitive ${primary}`),
+        q(`${companyName} Africa ${sector} growth expansion partnership ${year}`, { domains: [] }),
       ]
 
-    // deep_research_iterative gère ses propres requêtes dynamiquement
     default:
       return []
   }
@@ -289,7 +394,6 @@ Si rien de pertinent sur "${companyName}", réponds exactement : {"signals":[]}`
 }
 
 // ─── 5. Exécution d'un type d'agent pour toutes les entreprises ───────────────
-// Reproduit runAgentCollector() de VeilleCI mais pour un type d'agent
 export async function runAgentType(
   type:           AgentType,
   companies:      any[],
@@ -310,14 +414,15 @@ export async function runAgentType(
     let websiteHost = ''
     try { if (company.website) websiteHost = new URL(company.website).hostname } catch {}
 
-    const queries = buildQueriesForAgent(type, company.name, websiteHost, sectors, countryNames, year)
+    const agentQueries = buildQueriesForAgent(
+      type, company.name, websiteHost, sectors, countryNames, watchCountries, year,
+    )
 
-    for (const query of queries) {
+    for (const { query, filters } of agentQueries) {
       try {
-        const rawResults = await webSearch(query, 3)
+        const rawResults = await webSearch(query, 3, filters)
         queriesRun++
 
-        // ★ Filtre par pertinence sémantique (embeddings) avant Gemini
         const webResults = await filterByRelevance(
           rawResults, company.name, sectors, watchCountries,
         )
@@ -325,11 +430,10 @@ export async function runAgentType(
           log(`    [${type}] embed-filter: ${rawResults.length} → ${webResults.length} résultats`)
         }
 
-        // ★ Fetches en parallèle ; skip fetchPageContent si Perplexity a le contenu
         const jobs = webResults.map(async (result) => {
           let pageContent: string
           if (result.fullContent && result.fullContent.length > 80) {
-            pageContent = result.fullContent          // Perplexity a déjà extrait le contenu
+            pageContent = result.fullContent
           } else {
             pageContent = await fetchPageContent(result.url)
             if (pageContent.length < 100) pageContent = `${result.title}\n\n${result.snippet}`
@@ -481,21 +585,25 @@ export async function runDeepResearchAgent(
     const allFindings: string[] = [] // résumés accumulés pour l'analyse de gaps
     let currentQueries = subQuestions
 
+    const deepFilters: PerplexityFilters = {
+      recency:   'year',
+      languages: ['fr', 'en'],
+      country:   watchCountries[0] || undefined,
+    }
+
     for (let iter = 0; iter < MAX_ITER; iter++) {
       if (currentQueries.length === 0) break
       log(`  [deep_research_iterative] Itération ${iter + 1}/${MAX_ITER} — ${currentQueries.length} requêtes`)
 
       for (const query of currentQueries) {
         try {
-          const rawResults = await webSearch(query, 3)
+          const rawResults = await webSearch(query, 3, deepFilters)
           queriesRun++
 
-          // Filtrage sémantique avant Gemini
           const webResults = await filterByRelevance(
             rawResults, company.name, sectors, watchCountries,
           )
 
-          // ★ Fetches EN PARALLÈLE ; skip fetchPageContent si Perplexity a déjà le contenu
           const drJobs = webResults.map(async (result) => {
             let pageContent: string
             if ((result as any).fullContent && (result as any).fullContent.length > 80) {
@@ -570,6 +678,8 @@ export async function runAllAgentsParallel(
   log(`[Engine]   Secteurs     : ${sectors.join(', ')}`)
   log(`[Engine]   Pays         : ${watchCountries.join(', ')}`)
   log(`[Engine]   Agents       : web_scanner | press_monitor | analyst | deep_research | deep_research_iterative`)
+  log(`[Engine]   Sources presse : ${getDomainsForAgent('press_monitor', watchCountries).join(', ')}`)
+  log(`[Engine]   Sources analyst: ${getDomainsForAgent('analyst', watchCountries).join(', ')}`)
 
   // ★ Agents 1–4 : requêtes fixes par type (VeilleCI)
   const fixedTypes: AgentType[] = ['web_scanner', 'press_monitor', 'analyst', 'deep_research']

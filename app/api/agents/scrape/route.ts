@@ -118,7 +118,7 @@ Si rien de concret : {"signals":[]}`
 
     const { text: extracted } = await callGemini(extractPrompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_200 })
     const parsed = parseGeminiJson<{ signals: any[] }>(extracted)
-    const rawSignals = (parsed?.signals ?? []).filter((s: any) => s.relevance >= 0.35)
+    const rawSignals = (parsed?.signals ?? []).filter((s: any) => s.relevance >= 0.25)
 
     log(`  [grounding] "${companyName}" → ${rawSignals.length} signaux, ${sources.length} sources`)
 
@@ -151,7 +151,7 @@ JSON : {"signals":[{"title":"...","content":"...","relevance":0.8,"type":"fundin
 Si rien : {"signals":[]}`
     const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_000 })
     const parsed = parseGeminiJson<{ signals: any[] }>(text)
-    return (parsed?.signals ?? []).filter((s: any) => s.relevance >= 0.35)
+    return (parsed?.signals ?? []).filter((s: any) => s.relevance >= 0.25)
   } catch { return [] }
 }
 

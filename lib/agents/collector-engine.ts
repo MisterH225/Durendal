@@ -58,8 +58,41 @@ const COUNTRY_NAMES: Record<string, string> = {
   BJ: 'Bénin',         BF: 'Burkina Faso',  ML: 'Mali',       TG: 'Togo',
 }
 
-// ─── 1. DuckDuckGo Lite — moteur de recherche gratuit ────────────────────────
-export async function webSearch(
+// ─── 1. Moteur de recherche (Firecrawl prioritaire → DDG fallback) ───────────
+//
+// DuckDuckGo Lite est bloqué sur les IPs de datacenter/VPS.
+// On utilise Firecrawl Search en priorité (API key disponible),
+// et DDG Lite seulement en fallback sur IP résidentielle/dev.
+
+async function firecrawlSearch(
+  query: string,
+  maxResults = 3,
+): Promise<{ title: string; url: string; snippet: string }[]> {
+  const apiKey = process.env.FIRECRAWL_API_KEY
+  if (!apiKey) return []
+  try {
+    const res = await fetch('https://api.firecrawl.dev/v1/search', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body:    JSON.stringify({ query, limit: maxResults }),
+      signal:  AbortSignal.timeout(12_000),
+    })
+    if (!res.ok) return []
+    const data = await res.json()
+    return (data.data ?? [])
+      .slice(0, maxResults)
+      .map((r: any) => ({
+        title:   r.title   ?? r.url ?? '',
+        url:     r.url     ?? '',
+        snippet: r.description ?? r.markdown?.slice(0, 300) ?? '',
+      }))
+      .filter((r: any) => r.url && r.title)
+  } catch {
+    return []
+  }
+}
+
+async function ddgSearch(
   query: string,
   maxResults = 3,
 ): Promise<{ title: string; url: string; snippet: string }[]> {
@@ -77,8 +110,6 @@ export async function webSearch(
     const html = await res.text()
 
     const results: { title: string; url: string; snippet: string }[] = []
-
-    // DDG Lite : résultats dans des <tr> contenant des <a href="...">
     const rowRegex = /<tr[\s\S]*?<\/tr>/gi
     const rows = html.match(rowRegex) || []
 
@@ -95,11 +126,21 @@ export async function webSearch(
         : ''
       results.push({ url, title, snippet })
     }
-
     return results
   } catch {
     return []
   }
+}
+
+export async function webSearch(
+  query: string,
+  maxResults = 3,
+): Promise<{ title: string; url: string; snippet: string }[]> {
+  // Firecrawl en priorité (fonctionne depuis un VPS)
+  const fc = await firecrawlSearch(query, maxResults)
+  if (fc.length > 0) return fc
+  // Fallback DDG (fonctionne en local, souvent bloqué en prod)
+  return ddgSearch(query, maxResults)
 }
 
 // ─── 2. Extraction texte depuis une page HTML ─────────────────────────────────
@@ -213,7 +254,7 @@ Si rien de pertinent sur "${companyName}", réponds exactement : {"signals":[]}`
 
     const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_000 })
     const parsed = parseGeminiJson<{ signals: any[] }>(text)
-    return (parsed?.signals || []).filter((s: any) => s.relevance >= 0.35)
+    return (parsed?.signals || []).filter((s: any) => s.relevance >= 0.25)
   } catch {
     return []
   }

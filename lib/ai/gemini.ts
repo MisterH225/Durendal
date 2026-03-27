@@ -87,7 +87,7 @@ export async function callGeminiWithSearch(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ google_search: {} }],
+        tools: [{ googleSearch: {} }],
         generationConfig: { maxOutputTokens, temperature: 0.1 },
       }),
     }

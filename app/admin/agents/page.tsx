@@ -1,8 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
+import Link from 'next/link'
 import {
   Bot, CheckCircle2, XCircle, Clock, Zap, Settings2,
   Globe, Newspaper, BarChart2, Search, BrainCircuit, Layers,
-  TrendingUp, Activity,
+  TrendingUp, Activity, Tag,
 } from 'lucide-react'
 
 // ─── Pipeline d'agents (côté admin) ──────────────────────────────────────────
@@ -219,6 +220,31 @@ export default async function AdminAgentsPage() {
             </div>
           )
         })}
+      </div>
+
+      {/* ── Agent autonome : Catégoriseur de sources ──────────────────── */}
+      <div className="mb-8">
+        <h3 className="text-sm font-bold text-neutral-900 mb-3 flex items-center gap-2">
+          <Tag size={14} className="text-teal-600" />
+          Agents autonomes (système)
+        </h3>
+        <Link href="/admin/agents/categorizer" className="block">
+          <div className="card-lg border-l-4 border-teal-400 hover:shadow-md transition-shadow cursor-pointer">
+            <div className="flex items-start gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-teal-50 flex items-center justify-center flex-shrink-0">
+                <Tag size={16} className="text-teal-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-bold text-neutral-900">Catégoriseur de sources</div>
+                <div className="text-[10px] text-neutral-400 mt-0.5">Agent autonome · Gemini 2.5 Flash · Auto-trigger à l&apos;ajout</div>
+                <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">
+                  Analyse automatiquement les sites web de la bibliothèque pour les catégoriser par domaine (banque, construction, presse, etc.). Se déclenche à chaque ajout de source.
+                </p>
+              </div>
+              <span className="badge badge-blue text-[10px] flex-shrink-0 mt-0.5">Configurer →</span>
+            </div>
+          </div>
+        </Link>
       </div>
 
       {/* ── Tableau des jobs récents ──────────────────────────────────────── */}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { runSourceCategorizer } from '@/lib/agents/source-categorizer'
 
 export async function POST(req: NextRequest) {
   const supabase = createClient()
@@ -14,5 +15,14 @@ export async function POST(req: NextRequest) {
   const db = createAdminClient()
   const { error, data } = await db.from('sources').insert(body).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Déclenche automatiquement l'agent catégoriseur pour la nouvelle source
+  if (data?.id) {
+    runSourceCategorizer(db, {
+      sourceIds: [data.id],
+      trigger: 'auto_insert',
+    }).catch(() => {})
+  }
+
   return NextResponse.json({ source: data })
 }

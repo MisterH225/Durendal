@@ -16,7 +16,7 @@
  */
 
 import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
-import { perplexitySearch }             from '@/lib/ai/perplexity'
+import { perplexityWebSearch }          from '@/lib/ai/perplexity'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,42 +62,32 @@ const COUNTRY_NAMES: Record<string, string> = {
 // ─── 1. Moteurs de recherche (cascade : Perplexity → Firecrawl → DDG) ────────
 //
 // Hiérarchie :
-//   1. Perplexity sonar  — synthèse + citations, fonctionne depuis VPS
-//   2. Firecrawl Search  — résultats bruts, fonctionne depuis VPS
-//   3. DDG Lite          — fallback local (bloqué sur datacenter)
+//   1. Perplexity Search API  — résultats structurés {title,url,snippet,date}
+//                               endpoint dédié /search, pas d'inférence LLM
+//                               → plus rapide, moins cher, fonctionne depuis VPS
+//   2. Firecrawl Search       — résultats bruts, fonctionne depuis VPS
+//   3. DDG Lite               — fallback local (bloqué sur datacenter)
 //
 // Résultat enrichi : { title, url, snippet, fullContent? }
-// Quand `fullContent` est présent (Perplexity), on SKIP le fetchPageContent.
+// Quand `fullContent` est présent, on SKIP fetchPageContent (contenu déjà extrait).
 
 export interface SearchResult {
   title:        string
   url:          string
   snippet:      string
-  /** Texte complet déjà synthétisé par Perplexity — skip fetchPageContent */
+  /** Contenu extrait par Perplexity — skip fetchPageContent si présent */
   fullContent?: string
 }
 
-// ── 1a. Perplexity Search ─────────────────────────────────────────────────────
-async function perplexityWebSearch(
+// ── 1a. Perplexity Search API ─────────────────────────────────────────────────
+async function perplexitySearch(
   query:      string,
   maxResults: number,
 ): Promise<SearchResult[]> {
   if (!process.env.PERPLEXITY_API_KEY) return []
   try {
-    const { content, citations } = await perplexitySearch(query, { model: 'sonar' })
-    if (!content || citations.length === 0) return []
-
-    return citations.slice(0, maxResults).map((url, i) => {
-      let title = url
-      try { title = new URL(url).hostname.replace('www.', '') } catch {}
-      return {
-        title,
-        url,
-        snippet:     content.slice(0, 400),
-        // Contenu complet joint au 1er résultat → skip fetchPageContent
-        fullContent: i === 0 ? content : undefined,
-      }
-    })
+    // Utilise perplexityWebSearch() du module — adapte déjà au format SearchResult
+    return await perplexityWebSearch(query, maxResults)
   } catch {
     return []
   }
@@ -174,8 +164,8 @@ export async function webSearch(
   query:      string,
   maxResults = 3,
 ): Promise<SearchResult[]> {
-  // Niveau 1 : Perplexity (synthèse IA + citations, fonctionne depuis VPS)
-  const pplx = await perplexityWebSearch(query, maxResults)
+  // Niveau 1 : Perplexity Search API (résultats structurés, fonctionne depuis VPS)
+  const pplx = await perplexitySearch(query, maxResults)
   if (pplx.length > 0) return pplx
 
   // Niveau 2 : Firecrawl (résultats bruts, fonctionne depuis VPS)

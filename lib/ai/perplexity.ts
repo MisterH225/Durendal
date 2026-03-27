@@ -1,106 +1,105 @@
 /**
  * lib/ai/perplexity.ts
- * Client Perplexity API — modèle `sonar` (recherche web avec citations).
+ * Client Perplexity Search API — endpoint dédié /search.
  *
- * Perplexity fait la recherche web sur SES propres serveurs → fonctionne
- * depuis n'importe quel VPS/datacenter, contrairement au scraping DDG direct.
+ * Contrairement au Sonar API (chat completions), la Search API :
+ *   - Retourne des résultats structurés {title, url, snippet, date}
+ *   - Pas d'inférence LLM → plus rapide et moins cher
+ *   - Fonctionne depuis n'importe quel VPS/datacenter
  *
- * Docs : https://docs.perplexity.ai/api-reference/chat-completions
+ * Docs : https://docs.perplexity.ai/api-reference/search-post
  */
 
 const PERPLEXITY_BASE = 'https://api.perplexity.ai'
 
-export interface PerplexityResult {
-  /** Texte de synthèse complet avec citations inline [1], [2]... */
-  content:    string
-  /** URLs des sources citées (dans l'ordre des citations) */
-  citations:  string[]
-  /** Nombre de tokens utilisés */
-  tokensUsed: number
+export interface PerplexitySearchResult {
+  title:        string
+  url:          string
+  snippet:      string
+  date?:        string | null
+  last_updated?: string | null
+}
+
+export interface PerplexitySearchResponse {
+  results: PerplexitySearchResult[]
+  id:          string
+  server_time?: string | null
 }
 
 /**
- * Recherche Perplexity — envoie une requête et retourne une synthèse + sources.
+ * Recherche via la Perplexity Search API.
+ * Retourne des résultats web structurés, prêts à être utilisés dans les agents.
  *
- * @param query    Requête de recherche en langage naturel
- * @param options  model: 'sonar' (rapide/gratuit) | 'sonar-pro' (plus précis)
+ * @param query              Requête de recherche
+ * @param options.maxResults Nombre max de résultats (1–20, défaut 5)
+ * @param options.recency    Filtre temporel : 'day' | 'week' | 'month' | 'year'
+ * @param options.language   Filtre langue ISO 639-1, ex: ['fr', 'en']
+ * @param options.domains    Limiter à des domaines spécifiques
  */
 export async function perplexitySearch(
-  query:   string,
-  options: { model?: 'sonar' | 'sonar-pro'; maxTokens?: number } = {},
-): Promise<PerplexityResult> {
+  query: string,
+  options: {
+    maxResults?: number
+    recency?:   'hour' | 'day' | 'week' | 'month' | 'year'
+    language?:  string[]
+    domains?:   string[]
+  } = {},
+): Promise<PerplexitySearchResult[]> {
   const apiKey = process.env.PERPLEXITY_API_KEY
   if (!apiKey) throw new Error('PERPLEXITY_API_KEY manquant')
 
-  const model     = options.model     ?? 'sonar'
-  const maxTokens = options.maxTokens ?? 1_500
+  const body: Record<string, any> = {
+    query,
+    max_results:           options.maxResults ?? 5,
+    search_recency_filter: options.recency    ?? 'month',
+  }
 
-  const res = await fetch(`${PERPLEXITY_BASE}/chat/completions`, {
+  if (options.language?.length)  body.search_language_filter = options.language
+  if (options.domains?.length)   body.search_domain_filter   = options.domains
+
+  const res = await fetch(`${PERPLEXITY_BASE}/search`, {
     method:  'POST',
     headers: {
-      'Content-Type':  'application/json',
-      Authorization:   `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      Authorization:  `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role:    'system',
-          content: 'Tu es un assistant de veille économique spécialisé sur les marchés africains. Réponds de façon factuelle et concise avec des informations récentes vérifiables.',
-        },
-        {
-          role:    'user',
-          content: query,
-        },
-      ],
-      max_tokens:          maxTokens,
-      temperature:         0.1,   // réponses factuelles, peu créatives
-      return_citations:    true,
-      return_images:       false,
-      search_recency_filter: 'month', // actualités du mois en priorité
-    }),
-    signal: AbortSignal.timeout(20_000),
+    body:   JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
   })
 
   if (!res.ok) {
     const err = await res.text().catch(() => res.statusText)
-    throw new Error(`Perplexity API ${res.status}: ${err}`)
+    throw new Error(`Perplexity Search API ${res.status}: ${err}`)
   }
 
-  const data      = await res.json()
-  const content   = data.choices?.[0]?.message?.content ?? ''
-  const citations = (data.citations ?? []) as string[]
-  const tokensUsed = (data.usage?.total_tokens ?? 0) as number
-
-  return { content, citations, tokensUsed }
+  const data: PerplexitySearchResponse = await res.json()
+  return data.results ?? []
 }
 
 /**
- * Variante "multi-source" : effectue la recherche ET retourne les résultats
- * dans le format attendu par webSearch() {title, url, snippet}.
- *
- * Utilisé comme fallback dans collector-engine.ts.
+ * Variante adaptée au format webSearch() du collector-engine.
+ * Retourne {title, url, snippet} directement utilisables par les agents.
+ * Le snippet contient du contenu extrait de la page → skip fetchPageContent.
  */
 export async function perplexityWebSearch(
   query:      string,
   maxResults = 3,
 ): Promise<{ title: string; url: string; snippet: string; fullContent?: string }[]> {
   try {
-    const { content, citations } = await perplexitySearch(query)
-    if (!content || citations.length === 0) return []
-
-    // Chaque citation devient un résultat de recherche
-    // Le contenu complet de Perplexity est attaché au premier résultat
-    return citations.slice(0, maxResults).map((url, i) => {
-      let hostname = url
-      try { hostname = new URL(url).hostname.replace('www.', '') } catch {}
-      return {
-        title:       hostname,
-        url,
-        snippet:     content.slice(0, 300), // snippet = début de la synthèse
-        fullContent: i === 0 ? content : undefined, // contenu complet sur le 1er
-      }
+    const results = await perplexitySearch(query, {
+      maxResults,
+      recency:  'month',
+      language: ['fr', 'en'],
     })
+
+    return results.map(r => ({
+      title:       r.title,
+      url:         r.url,
+      snippet:     r.snippet,
+      // Le snippet de Perplexity Search contient déjà le contenu de la page
+      // → on le passe comme fullContent pour éviter un fetchPageContent inutile
+      fullContent: r.snippet.length > 100 ? r.snippet : undefined,
+    }))
   } catch {
     return []
   }

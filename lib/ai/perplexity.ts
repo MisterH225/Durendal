@@ -39,10 +39,11 @@ export interface PerplexitySearchResponse {
 export async function perplexitySearch(
   query: string,
   options: {
-    maxResults?: number
-    recency?:   'hour' | 'day' | 'week' | 'month' | 'year'
-    language?:  string[]
-    domains?:   string[]
+    maxResults?:       number
+    maxTokensPerPage?: number
+    recency?:          'hour' | 'day' | 'week' | 'month' | 'year'
+    language?:         string[]
+    domains?:          string[]
   } = {},
 ): Promise<PerplexitySearchResult[]> {
   const apiKey = process.env.PERPLEXITY_API_KEY
@@ -50,12 +51,13 @@ export async function perplexitySearch(
 
   const body: Record<string, any> = {
     query,
-    max_results:           options.maxResults ?? 5,
-    search_recency_filter: options.recency    ?? 'month',
+    max_results:          options.maxResults       ?? 5,
+    max_tokens_per_page:  options.maxTokensPerPage ?? 512,
   }
 
-  if (options.language?.length)  body.search_language_filter = options.language
-  if (options.domains?.length)   body.search_domain_filter   = options.domains
+  if (options.recency)           body.search_recency_filter   = options.recency
+  if (options.language?.length)  body.search_language_filter  = options.language
+  if (options.domains?.length)   body.search_domain_filter    = options.domains
 
   const res = await fetch(`${PERPLEXITY_BASE}/search`, {
     method:  'POST',
@@ -88,17 +90,14 @@ export async function perplexityWebSearch(
   try {
     const results = await perplexitySearch(query, {
       maxResults,
-      recency:  'month',
-      language: ['fr', 'en'],
+      maxTokensPerPage: 512,   // ~400 mots — suffisant pour l'extraction Gemini
     })
 
     return results.map(r => ({
       title:       r.title,
       url:         r.url,
       snippet:     r.snippet,
-      // Le snippet de Perplexity Search contient déjà le contenu de la page
-      // → on le passe comme fullContent pour éviter un fetchPageContent inutile
-      fullContent: r.snippet.length > 100 ? r.snippet : undefined,
+      fullContent: r.snippet && r.snippet.length > 80 ? r.snippet : undefined,
     }))
   } catch {
     return []

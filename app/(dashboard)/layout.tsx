@@ -2,7 +2,10 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Sidebar from '@/components/dashboard/Sidebar'
 import Topbar from '@/components/dashboard/Topbar'
+import SuperAdminBar from '@/components/admin/SuperAdminBar'
 import { getBypassDashboardProfile, isAuthUiBypassEnabled } from '@/lib/auth/ui-bypass'
+
+const SUPERADMIN_EMAIL = process.env.SUPERADMIN_EMAIL
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   if (isAuthUiBypassEnabled()) {
@@ -39,6 +42,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/login')
   }
 
+  const isSuperAdmin = user?.email === SUPERADMIN_EMAIL
+  const currentPlanName = profile?.accounts?.plans?.name || 'free'
+
   return (
     <div className="flex h-screen overflow-hidden bg-neutral-100">
       {/* Sidebar desktop */}
@@ -51,6 +57,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
           {children}
         </main>
       </div>
+
+      {/* Barre super admin flottante (visible uniquement pour le super admin) */}
+      {isSuperAdmin && <SuperAdminBar currentPlanName={currentPlanName} />}
     </div>
   )
 }

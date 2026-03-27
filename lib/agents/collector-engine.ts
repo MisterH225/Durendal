@@ -61,7 +61,7 @@ const COUNTRY_NAMES: Record<string, string> = {
 // ─── 1. DuckDuckGo Lite — moteur de recherche gratuit ────────────────────────
 export async function webSearch(
   query: string,
-  maxResults = 4,
+  maxResults = 3,
 ): Promise<{ title: string; url: string; snippet: string }[]> {
   try {
     const params = new URLSearchParams({ q: query, kl: 'fr-fr' })
@@ -71,7 +71,7 @@ export async function webSearch(
         'Accept':          'text/html,application/xhtml+xml',
         'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
       },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(8_000),
     })
     if (!res.ok) return []
     const html = await res.text()
@@ -110,7 +110,7 @@ export async function fetchPageContent(url: string): Promise<string> {
         'User-Agent': 'Mozilla/5.0 (compatible; MarketLens/1.0)',
         'Accept':     'text/html',
       },
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(5_000),
     })
     if (!res.ok) return ''
     const ct = res.headers.get('content-type') || ''
@@ -245,7 +245,7 @@ export async function runAgentType(
 
     for (const query of queries) {
       try {
-        const webResults = await webSearch(query, 4)
+        const webResults = await webSearch(query, 3)
         queriesRun++
 
         for (const result of webResults) {
@@ -327,15 +327,13 @@ Réponds UNIQUEMENT en JSON : {"questions":["requête 1","requête 2","requête 
   try {
     const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 600 })
     const parsed   = parseGeminiJson<{ questions: string[] }>(text)
-    return (parsed?.questions ?? []).slice(0, 5).filter(q => q.length > 5)
+    return (parsed?.questions ?? []).slice(0, 3).filter(q => q.length > 5)
   } catch {
     // Fallback : requêtes génériques si Gemini échoue
     return [
-      `"${companyName}" ${primary} financement résultats ${year}`,
+      `"${companyName}" ${primary} actualités ${year}`,
       `"${companyName}" contrat partenariat ${year}`,
       `"${companyName}" concurrents ${sector}`,
-      `"${companyName}" expansion nouveaux marchés ${year}`,
-      `"${companyName}" actualités ${year}`,
     ]
   }
 }
@@ -390,7 +388,7 @@ export async function runDeepResearchAgent(
   const errors:      string[]          = []
   let   queriesRun   = 0
   const countryNames = watchCountries.map(c => COUNTRY_NAMES[c] || c)
-  const MAX_ITER     = 2 // profondeur max : 2 itérations (extensible)
+  const MAX_ITER     = 1 // ★ Budget temps : 1 seule itération sur Nginx (60s)
 
   log(`  [deep_research_iterative] ★ Démarrage — ${companies.length} entreprise(s)`)
 
@@ -412,7 +410,7 @@ export async function runDeepResearchAgent(
 
       for (const query of currentQueries) {
         try {
-          const webResults = await webSearch(query, 4)
+          const webResults = await webSearch(query, 3)
           queriesRun++
 
           for (const result of webResults) {

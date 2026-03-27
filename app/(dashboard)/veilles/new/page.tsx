@@ -1,7 +1,6 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { ArrowLeft, ArrowRight, Check, Plus, X } from 'lucide-react'
 
 const sectors = ['Fintech','E-commerce','Télécom','Logistique','BTP / Immobilier','Santé','EdTech','Énergie','Agriculture','Autre']
@@ -45,7 +44,6 @@ const steps = ['Informations', 'Secteurs & Pays', 'Entreprises', 'Configuration'
 
 export default function NewWatchPage() {
   const router = useRouter()
-  const supabase = createClient()
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -92,61 +90,33 @@ export default function NewWatchPage() {
     setLoading(true)
     setError('')
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: profile } = await supabase.from('profiles').select('account_id').eq('id', user!.id).single()
+      // ── Tout passe par l'API serveur (contourne le RLS pour companies / watch_companies)
+      const res = await fetch('/api/watches', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          description,
+          sectors:    selectedSectors,
+          countries:  selectedCountries,
+          companies,
+          frequency,
+          is_shared:  isShared,
+        }),
+      })
 
-      // Create watch
-      const { data: watch, error: watchError } = await supabase.from('watches').insert({
-        account_id: profile?.account_id,
-        created_by: user!.id,
-        name,
-        description,
-        sectors: selectedSectors,
-        countries: selectedCountries,
-        frequency,
-        is_shared: isShared,
-      }).select().single()
+      const data = await res.json()
+      if (!res.ok || data.error) throw new Error(data.error ?? `Erreur ${res.status}`)
 
-      if (watchError) throw watchError
+      const watchId = data.watch?.id
 
-      // Upsert companies and link them
-      for (const co of companies) {
-        const { data: existingCo } = await supabase.from('companies')
-          .select('id').eq('name', co.name).single()
-
-        let companyId = existingCo?.id
-        if (!companyId) {
-          const { data: newCo } = await supabase.from('companies').insert({
-            name: co.name, country: co.country, sector: co.sector, is_global: true
-          }).select('id').single()
-          companyId = newCo?.id
-        }
-
-        if (companyId) {
-          await supabase.from('watch_companies').insert({ watch_id: watch.id, company_id: companyId })
-        }
-      }
-
-      // Lancer les agents 1 et 2 en arrière-plan (fire-and-forget)
-      // On n'attend pas la réponse pour ne pas bloquer l'utilisateur
-      if (watch?.id) {
-        const watchIdToRun = watch.id
-        Promise.resolve().then(async () => {
-          try {
-            await fetch('/api/agents/scrape', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ watchId: watchIdToRun }),
-            })
-            await fetch('/api/agents/synthesize', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ watchId: watchIdToRun }),
-            })
-          } catch (e) {
-            console.error('[AutoRun] Erreur démarrage agents:', e)
-          }
-        })
+      // Lancer les 5 agents en parallèle (fire-and-forget, Agent 1 déclenche Agent 2)
+      if (watchId) {
+        fetch('/api/agents/scrape', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ watchId }),
+        }).catch(e => console.error('[AutoRun]', e))
       }
 
       router.push('/veilles')

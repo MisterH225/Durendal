@@ -39,7 +39,7 @@ export default async function WatchDetailPage({ params }: { params: { id: string
       .from('reports')
       .select('*')
       .eq('watch_id', params.id)
-      .order('created_at', { ascending: false })
+      .order('generated_at', { ascending: false })
       .limit(10),
     supabase
       .from('agent_jobs')

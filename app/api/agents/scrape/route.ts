@@ -112,7 +112,7 @@ Réponds UNIQUEMENT en JSON valide (pas de texte avant/après) :
 
 Si rien de pertinent sur "${companyName}", réponds exactement : {"signals":[]}`
 
-    const { text } = await callGemini(prompt, { model: 'gemini-1.5-flash', maxOutputTokens: 1000 })
+    const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1000 })
     const parsed = parseGeminiJson<{ signals: any[] }>(text)
     return (parsed?.signals || [])
       .filter((s: any) => s.relevance >= 0.35)
@@ -151,7 +151,7 @@ async function researchWithGrounding(
 
     console.log(`[Agent1] Grounding PASS 1: "${companyName}"`)
     const { text: researchText, sources } = await callGeminiWithSearch(researchQuery, {
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
       maxOutputTokens: 2000,
     })
 
@@ -177,7 +177,7 @@ Règles :
 - Si rien de concret, réponds exactement : {"signals":[]}`
 
     const { text: extractText } = await callGemini(extractPrompt, {
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
       maxOutputTokens: 1200,
     })
     const parsed = parseGeminiJson<{ signals: any[] }>(extractText)

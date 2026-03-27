@@ -1,10 +1,11 @@
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 
 export type GeminiModel =
-  | 'gemini-1.5-flash'         // Stable — modèle par défaut recommandé
-  | 'gemini-1.5-pro'           // Plus puissant, quota plus faible
-  | 'gemini-2.0-flash-lite'    // Rapide et économique (2.0)
-  | 'gemini-2.0-flash'         // Déprécié — ne plus utiliser
+  | 'gemini-2.5-flash'          // Stable — MODÈLE PAR DÉFAUT (meilleur rapport qualité/prix 2025-2026)
+  | 'gemini-2.5-flash-lite'     // Ultra-rapide et économique
+  | 'gemini-3-flash-preview'    // Preview Gemini 3 (instable — tests uniquement)
+  | 'gemini-3.1-pro-preview'    // Preview Gemini 3.1 Pro (tests uniquement)
+  | 'gemini-1.5-flash'          // Ancien modèle stable — fallback
 
 export interface GroundingSource {
   title: string
@@ -13,7 +14,7 @@ export interface GroundingSource {
 
 /**
  * Appel générique à l'API Google Gemini.
- * Utilise gemini-1.5-flash par défaut : stable, rapide, bon rapport qualité/prix.
+ * Utilise gemini-2.5-flash par défaut : modèle stable recommandé 2026.
  */
 export async function callGemini(
   prompt: string,
@@ -26,7 +27,7 @@ export async function callGemini(
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new Error('GEMINI_API_KEY manquant dans les variables d\'environnement')
 
-  const model           = options.model           ?? 'gemini-1.5-flash'
+  const model           = options.model           ?? 'gemini-2.5-flash'
   const maxOutputTokens = options.maxOutputTokens ?? 2000
   const temperature     = options.temperature     ?? 0.3
 
@@ -76,7 +77,7 @@ export async function callGeminiWithSearch(
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new Error('GEMINI_API_KEY manquant')
 
-  const model           = options.model           ?? 'gemini-1.5-flash'
+  const model           = options.model           ?? 'gemini-2.5-flash'
   const maxOutputTokens = options.maxOutputTokens ?? 3000
 
   const res = await fetch(
@@ -145,7 +146,7 @@ export async function callGeminiChat(
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new Error('GEMINI_API_KEY manquant')
 
-  const model           = options.model           ?? 'gemini-1.5-flash'
+  const model           = options.model           ?? 'gemini-2.5-flash'
   const maxOutputTokens = options.maxOutputTokens ?? 1200
   const temperature     = options.temperature     ?? 0.5
 

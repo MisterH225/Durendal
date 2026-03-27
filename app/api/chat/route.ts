@@ -1,6 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { callGeminiChat } from '@/lib/ai/gemini'
+import { callGeminiChat, callGeminiChatWithFunctionResult } from '@/lib/ai/gemini'
+
+// ── Déclarations des outils disponibles pour l'assistant ────────────────────
+const CHAT_TOOLS = [
+  {
+    function_declarations: [
+      {
+        name: 'create_watch',
+        description: 'Crée une nouvelle veille concurrentielle pour surveiller des entreprises dans un secteur et pays donnés. Utilise cet outil quand l\'utilisateur demande explicitement de créer, ajouter ou mettre en place une veille.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: {
+              type: 'string',
+              description: 'Nom court et descriptif de la veille (ex: "Fintech Côte d\'Ivoire")',
+            },
+            description: {
+              type: 'string',
+              description: 'Description optionnelle de l\'objectif de la veille',
+            },
+            sectors: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Secteurs à surveiller parmi : Fintech, E-commerce, Télécom, Logistique, BTP / Immobilier, Santé, EdTech, Énergie, Agriculture, Autre',
+            },
+            countries: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Codes pays ISO : CI (Côte d\'Ivoire), SN (Sénégal), GH (Ghana), NG (Nigeria), KE (Kenya), CM (Cameroun), MA (Maroc), ZA (Afrique du Sud), BJ (Bénin), BF (Burkina Faso), ML (Mali), TG (Togo)',
+            },
+            companies: {
+              type: 'array',
+              description: 'Entreprises à surveiller (optionnel)',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  country: { type: 'string', description: 'Code pays ISO' },
+                  sector: { type: 'string' },
+                },
+                required: ['name'],
+              },
+            },
+          },
+          required: ['name', 'sectors', 'countries'],
+        },
+      },
+    ],
+  },
+]
 
 // Nombre maximum de tours conservés en mémoire (1 tour = 1 message user + 1 model)
 const MAX_HISTORY_TURNS = 15
@@ -131,15 +180,73 @@ RÈGLES :
 - Ton style est professionnel mais accessible, direct et actionnable
 - Termine les réponses importantes par 1-2 recommandations concrètes`
 
-    // ── Appel Gemini en mode multi-tour natif ──────────────────────────────
-    const { text: reply, tokensUsed } = await callGeminiChat(
+    // ── Appel Gemini en mode multi-tour natif avec function calling ─────────
+    const geminiResult = await callGeminiChat(
       systemPrompt,
       history,
       message.trim(),
-      { maxOutputTokens: 1200, temperature: 0.5 }
+      { maxOutputTokens: 1200, temperature: 0.5, tools: CHAT_TOOLS }
     )
 
-    const replyText = reply.trim() || "Désolé, je n'ai pas pu générer une réponse."
+    let replyText   = ''
+    let tokensUsed  = geminiResult.tokensUsed
+    let actionData: any = null
+
+    if (geminiResult.functionCall) {
+      // ── Gemini veut exécuter une fonction ──────────────────────────────
+      const fc = geminiResult.functionCall
+      let functionResult: Record<string, any> = {}
+
+      if (fc.name === 'create_watch') {
+        try {
+          const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/watches`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Cookie: (await import('next/headers')).cookies().toString(),
+            },
+            body: JSON.stringify(fc.args),
+          })
+          const data = await res.json()
+          if (res.ok && data.watch) {
+            functionResult = {
+              success: true,
+              watchId: data.watch.id,
+              watchName: data.watch.name,
+              message: `Veille "${data.watch.name}" créée avec succès.`,
+            }
+            actionData = {
+              type: 'watch_created',
+              watchId: data.watch.id,
+              watchName: data.watch.name,
+              sectors: fc.args.sectors,
+              countries: fc.args.countries,
+              companiesCount: (fc.args.companies || []).length,
+            }
+          } else {
+            functionResult = { success: false, error: data.error || 'Erreur création veille' }
+          }
+        } catch (e: any) {
+          functionResult = { success: false, error: e.message }
+        }
+      }
+
+      // Second appel pour que Gemini formule la réponse après l'action
+      const followUp = await callGeminiChatWithFunctionResult(
+        systemPrompt,
+        history,
+        message.trim(),
+        fc,
+        functionResult,
+        { maxOutputTokens: 800, temperature: 0.5, tools: CHAT_TOOLS }
+      )
+      replyText  = followUp.text.trim()
+      tokensUsed += followUp.tokensUsed
+    } else {
+      replyText = geminiResult.text.trim()
+    }
+
+    if (!replyText) replyText = "Désolé, je n'ai pas pu générer une réponse."
 
     // ── Sauvegarde en base (persistance de la mémoire) ─────────────────────
     if (profile?.account_id) {
@@ -160,7 +267,7 @@ RÈGLES :
       ])
     }
 
-    return NextResponse.json({ content: replyText, tokensUsed })
+    return NextResponse.json({ content: replyText, tokensUsed, action: actionData })
   } catch (error: any) {
     const msg = error?.message || String(error)
     console.error('[Chat] Erreur:', msg)

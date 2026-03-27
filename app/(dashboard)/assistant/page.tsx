@@ -1,8 +1,20 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, Sparkles, Trash2, AlertCircle, ExternalLink } from 'lucide-react'
+import { Send, Bot, Sparkles, Trash2, AlertCircle, ExternalLink, Eye, ArrowRight, CheckCircle2 } from 'lucide-react'
+import Link from 'next/link'
 
-interface Message { role: 'user' | 'assistant'; content: string }
+interface Message {
+  role: 'user' | 'assistant'
+  content: string
+  action?: {
+    type: 'watch_created'
+    watchId: string
+    watchName: string
+    sectors?: string[]
+    countries?: string[]
+    companiesCount?: number
+  }
+}
 
 const suggestions = [
   'Quelles sont les opportunités prioritaires en Côte d\'Ivoire ?',
@@ -132,7 +144,11 @@ export default function AssistantPage() {
         return
       }
 
-      setMessages(prev => [...prev, { role: 'assistant', content: data.content }])
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: data.content,
+        action: data.action || undefined,
+      }])
     } catch (e: any) {
       console.error('[Chat] Fetch error:', e)
       setError('Impossible de contacter le serveur')
@@ -220,6 +236,41 @@ export default function AssistantPage() {
                 : msg.content
               }
             </div>
+
+            {/* Carte action "Veille créée" */}
+            {msg.action?.type === 'watch_created' && (
+              <div className="mt-2 ml-8 bg-green-50 border border-green-200 rounded-xl p-3 max-w-[85%]">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 size={14} className="text-green-600 flex-shrink-0" />
+                  <span className="text-xs font-semibold text-green-800">Veille créée avec succès</span>
+                </div>
+                <div className="text-xs text-green-700 font-medium mb-1">
+                  {msg.action.watchName}
+                </div>
+                {(msg.action.sectors?.length || msg.action.countries?.length) && (
+                  <div className="text-[11px] text-green-600 mb-2">
+                    {msg.action.sectors?.join(', ')}
+                    {msg.action.sectors?.length && msg.action.countries?.length ? ' · ' : ''}
+                    {msg.action.countries?.join(', ')}
+                    {msg.action.companiesCount ? ` · ${msg.action.companiesCount} entreprise${msg.action.companiesCount > 1 ? 's' : ''}` : ''}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Link
+                    href="/veilles"
+                    className="flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-100 hover:bg-green-200 px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    <Eye size={11} /> Mes veilles
+                  </Link>
+                  <Link
+                    href={`/veilles/${msg.action.watchId}/edit`}
+                    className="flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    Modifier <ArrowRight size={11} />
+                  </Link>
+                </div>
+              </div>
+            )}
           </div>
         ))}
 

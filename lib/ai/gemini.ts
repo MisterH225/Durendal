@@ -122,16 +122,23 @@ export interface ChatMessage {
   content: string
 }
 
+export interface GeminiFunctionCall {
+  name: string
+  args: Record<string, any>
+}
+
+export interface GeminiChatResult {
+  text: string
+  tokensUsed: number
+  functionCall?: GeminiFunctionCall
+}
+
 /**
- * Appel Gemini en mode conversation multi-tour (proper multi-turn).
+ * Appel Gemini en mode conversation multi-tour avec support du function calling.
  *
- * Utilise le format natif Gemini :
- *   systemInstruction (séparé du contexte conversationnel)
- *   contents = [{role:"user",...}, {role:"model",...}, ...]
- *
- * Contrairement à callGemini() qui concatène tout dans un seul string,
- * cette fonction exploite le vrai mécanisme de session Gemini.
- * L'historique doit être fourni par l'appelant (stocké côté serveur/DB).
+ * Si Gemini décide d'appeler un outil, `functionCall` est retourné dans le résultat.
+ * L'appelant doit exécuter la fonction et appeler `callGeminiChatWithFunctionResult`
+ * pour obtenir la réponse textuelle finale.
  */
 export async function callGeminiChat(
   systemPrompt: string,
@@ -141,6 +148,82 @@ export async function callGeminiChat(
     model?: GeminiModel
     maxOutputTokens?: number
     temperature?: number
+    tools?: object[]
+  } = {}
+): Promise<GeminiChatResult> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) throw new Error('GEMINI_API_KEY manquant')
+
+  const model           = options.model           ?? 'gemini-2.5-flash'
+  const maxOutputTokens = options.maxOutputTokens ?? 1200
+  const temperature     = options.temperature     ?? 0.5
+
+  const contents = [
+    ...history.map(msg => ({
+      role:  msg.role,
+      parts: [{ text: msg.content }],
+    })),
+    { role: 'user', parts: [{ text: userMessage }] },
+  ]
+
+  const body: any = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    generationConfig: { maxOutputTokens, temperature },
+  }
+  if (options.tools?.length) body.tools = options.tools
+
+  const res = await fetch(
+    `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  )
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText)
+    throw new Error(`Gemini Chat API ${res.status}: ${errText}`)
+  }
+
+  const data       = await res.json()
+  const candidate  = data.candidates?.[0]
+  const tokensUsed = data.usageMetadata?.candidatesTokenCount ?? 0
+  const parts      = candidate?.content?.parts ?? []
+
+  // Détecter un function call dans la réponse
+  const fcPart = parts.find((p: any) => p.functionCall)
+  if (fcPart) {
+    return {
+      text: '',
+      tokensUsed,
+      functionCall: {
+        name: fcPart.functionCall.name,
+        args: fcPart.functionCall.args ?? {},
+      },
+    }
+  }
+
+  const text = parts.find((p: any) => p.text)?.text ?? ''
+  return { text, tokensUsed }
+}
+
+/**
+ * Second appel après exécution d'une fonction — fournit le résultat à Gemini
+ * pour qu'il génère la réponse textuelle finale.
+ */
+export async function callGeminiChatWithFunctionResult(
+  systemPrompt: string,
+  history: ChatMessage[],
+  userMessage: string,
+  functionCall: GeminiFunctionCall,
+  functionResult: Record<string, any>,
+  options: {
+    model?: GeminiModel
+    maxOutputTokens?: number
+    temperature?: number
+    tools?: object[]
   } = {}
 ): Promise<{ text: string; tokensUsed: number }> {
   const apiKey = process.env.GEMINI_API_KEY
@@ -150,37 +233,41 @@ export async function callGeminiChat(
   const maxOutputTokens = options.maxOutputTokens ?? 1200
   const temperature     = options.temperature     ?? 0.5
 
-  // Format natif Gemini : historique + nouveau message utilisateur
+  // L'historique inclut : messages précédents + message utilisateur + appel fonction + résultat
   const contents = [
     ...history.map(msg => ({
       role:  msg.role,
       parts: [{ text: msg.content }],
     })),
-    { role: 'user', parts: [{ text: userMessage }] },
+    { role: 'user',  parts: [{ text: userMessage }] },
+    { role: 'model', parts: [{ functionCall: { name: functionCall.name, args: functionCall.args } }] },
+    { role: 'user',  parts: [{ functionResponse: { name: functionCall.name, response: functionResult } }] },
   ]
+
+  const body: any = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    generationConfig: { maxOutputTokens, temperature },
+  }
+  if (options.tools?.length) body.tools = options.tools
 
   const res = await fetch(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents,
-        generationConfig: { maxOutputTokens, temperature },
-      }),
+      body: JSON.stringify(body),
     }
   )
 
   if (!res.ok) {
     const errText = await res.text().catch(() => res.statusText)
-    throw new Error(`Gemini Chat API ${res.status}: ${errText}`)
+    throw new Error(`Gemini Chat API (function result) ${res.status}: ${errText}`)
   }
 
   const data     = await res.json()
   const text     = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
   const tokensUsed = data.usageMetadata?.candidatesTokenCount ?? 0
-
   return { text, tokensUsed }
 }
 

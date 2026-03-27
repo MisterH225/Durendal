@@ -1,40 +1,71 @@
 import { createClient } from '@/lib/supabase/server'
-import { Bot, CheckCircle2, XCircle, Clock, Zap, Settings2 } from 'lucide-react'
+import {
+  Bot, CheckCircle2, XCircle, Clock, Zap, Settings2,
+  Globe, Newspaper, BarChart2, Search, BrainCircuit, Layers,
+  TrendingUp, Activity,
+} from 'lucide-react'
 
+// ─── Pipeline d'agents (côté admin) ──────────────────────────────────────────
 const AGENTS = [
   {
-    num: 1,
-    name: 'Agent Collecte',
-    description: 'Scrape les sources web, réseaux sociaux et actualités pour collecter les signaux bruts.',
-    color: 'text-green-600',
-    bg: 'bg-green-50',
-    border: 'border-green-200',
+    num:    1,
+    name:   'Agent Collecte Parallèle',
+    model:  'Gemini 2.5 Flash',
+    description: '5 sous-agents lancés simultanément couvrent toutes les entreprises de la veille : scanner web, presse africaine, analyse marché, deep research fixe et deep research itératif (Perplexity-style).',
+    color:  'text-orange-600',
+    bg:     'bg-orange-50',
+    border: 'border-orange-400',
+    subAgents: [
+      { key: 'web_scanner',             icon: Globe,         name: 'Scanner Web' },
+      { key: 'press_monitor',           icon: Newspaper,     name: 'Presse Monitor' },
+      { key: 'analyst',                 icon: BarChart2,     name: 'Analyste' },
+      { key: 'deep_research',           icon: Search,        name: 'Chercheur Multi' },
+      { key: 'deep_research_iterative', icon: BrainCircuit,  name: 'Deep Research IA' },
+    ],
   },
   {
-    num: 2,
-    name: 'Agent Synthèse',
-    description: 'Analyse et résume les signaux collectés en insights actionnables par secteur/pays.',
-    color: 'text-amber-600',
-    bg: 'bg-amber-50',
-    border: 'border-amber-200',
+    num:    2,
+    name:   'Agent Synthèse & Rapport',
+    model:  'Gemini 2.5 Flash',
+    description: 'Synthétise les signaux bruts en rapport structuré avec citations sources vérifiables. Auto-déclenché par l\'Agent 1 (Phase 4) — peut aussi être relancé manuellement.',
+    color:  'text-amber-600',
+    bg:     'bg-amber-50',
+    border: 'border-amber-400',
+    subAgents: [],
   },
   {
-    num: 3,
-    name: 'Agent Analyse Marché',
-    description: 'Identifie les tendances, opportunités et menaces sur les marchés surveillés.',
-    color: 'text-blue-600',
-    bg: 'bg-blue-50',
-    border: 'border-blue-200',
+    num:    3,
+    name:   'Agent Analyse Marché',
+    model:  'Gemini 2.5 Flash',
+    description: 'Identifie les tendances structurelles, acteurs dominants, opportunités et signaux de disruption sur les marchés surveillés.',
+    color:  'text-blue-600',
+    bg:     'bg-blue-50',
+    border: 'border-blue-400',
+    subAgents: [],
   },
   {
-    num: 4,
-    name: 'Agent Stratégie',
-    description: 'Formule des recommandations stratégiques personnalisées basées sur les analyses.',
-    color: 'text-purple-600',
-    bg: 'bg-purple-50',
-    border: 'border-purple-200',
+    num:    4,
+    name:   'Agent Stratégie',
+    model:  'Gemini 2.5 Flash',
+    description: 'Formule des recommandations stratégiques personnalisées, priorisées et scorées, croisées avec les objectifs de la veille.',
+    color:  'text-purple-600',
+    bg:     'bg-purple-50',
+    border: 'border-purple-400',
+    subAgents: [],
   },
 ]
+
+// ─── Formatage durée ──────────────────────────────────────────────────────────
+function fmtDuration(startedAt: string | null, completedAt: string | null): string {
+  if (!startedAt || !completedAt) return '—'
+  const s = Math.round((new Date(completedAt).getTime() - new Date(startedAt).getTime()) / 1000)
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${s % 60}s`
+}
+
+function fmtDate(d: string): string {
+  return new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
 
 export default async function AdminAgentsPage() {
   const supabase = createClient()
@@ -44,33 +75,64 @@ export default async function AdminAgentsPage() {
     { count: totalJobs },
     { count: runningJobs },
     { count: failedJobs },
+    { data: signalsAgg },
   ] = await Promise.all([
-    supabase.from('agent_jobs').select('*, watches(name)').order('created_at', { ascending: false }).limit(20),
+    supabase
+      .from('agent_jobs')
+      .select('*, watches(name)')
+      .order('started_at', { ascending: false })
+      .limit(30),
     supabase.from('agent_jobs').select('*', { count: 'exact', head: true }),
     supabase.from('agent_jobs').select('*', { count: 'exact', head: true }).eq('status', 'running'),
     supabase.from('agent_jobs').select('*', { count: 'exact', head: true }).eq('status', 'error'),
+    supabase.from('agent_jobs').select('signals_count').eq('agent_number', 1).eq('status', 'done'),
   ])
 
-  const jobsByAgent = (recentJobs || []).reduce((acc: Record<number, any[]>, job: any) => {
+  const totalSignals = (signalsAgg ?? []).reduce((sum: number, j: any) => sum + (j.signals_count ?? 0), 0)
+
+  // Groupe les jobs récents par numéro d'agent
+  const jobsByAgent = (recentJobs ?? []).reduce((acc: Record<number, any[]>, job: any) => {
     const n = job.agent_number || 1
     if (!acc[n]) acc[n] = []
     acc[n].push(job)
     return acc
   }, {})
 
+  // Calcule le breakdown moyen des sous-agents pour Agent 1 (depuis metadata.breakdown_agents)
+  const agent1Jobs = jobsByAgent[1] ?? []
+  const breakdownAvg: Record<string, number> = {}
+  let breakdownCount = 0
+  for (const job of agent1Jobs) {
+    const bd = job.metadata?.breakdown_agents
+    if (!bd) continue
+    breakdownCount++
+    for (const [k, v] of Object.entries(bd)) {
+      breakdownAvg[k] = (breakdownAvg[k] ?? 0) + (v as number)
+    }
+  }
+  if (breakdownCount > 0) {
+    for (const k of Object.keys(breakdownAvg)) {
+      breakdownAvg[k] = Math.round(breakdownAvg[k] / breakdownCount)
+    }
+  }
+
   return (
     <div className="max-w-5xl">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-bold text-neutral-900">Configuration des agents IA</h2>
-        <span className="badge badge-blue text-xs">4 agents disponibles</span>
+        <div>
+          <h2 className="text-lg font-bold text-neutral-900">Configuration des agents IA</h2>
+          <p className="text-xs text-neutral-500 mt-0.5">5 agents de collecte parallèles · Pipeline de synthèse automatique · Gemini 2.5 Flash</p>
+        </div>
+        <span className="badge badge-blue text-xs">5 agents collecte + 3 pipeline</span>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      {/* ── Métriques globales ────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
         {[
-          { label: 'Jobs total', value: totalJobs || 0, icon: Bot, color: 'text-blue-700', bg: 'bg-blue-50' },
-          { label: 'En cours', value: runningJobs || 0, icon: Zap, color: 'text-amber-600', bg: 'bg-amber-50' },
-          { label: 'En erreur', value: failedJobs || 0, icon: XCircle, color: 'text-red-600', bg: 'bg-red-50' },
+          { label: 'Jobs total',       value: totalJobs    || 0, icon: Bot,       color: 'text-blue-600',   bg: 'bg-blue-50'   },
+          { label: 'En cours',         value: runningJobs  || 0, icon: Zap,       color: 'text-amber-600',  bg: 'bg-amber-50'  },
+          { label: 'En erreur',        value: failedJobs   || 0, icon: XCircle,   color: 'text-red-600',    bg: 'bg-red-50'    },
+          { label: 'Signaux collectés',value: totalSignals,       icon: TrendingUp,color: 'text-green-600',  bg: 'bg-green-50'  },
         ].map(({ label, value, icon: Icon, color, bg }) => (
           <div key={label} className="card-lg">
             <div className="flex items-center justify-between mb-3">
@@ -79,56 +141,78 @@ export default async function AdminAgentsPage() {
                 <Icon size={15} className={color} />
               </div>
             </div>
-            <div className="text-2xl font-bold text-neutral-900">{value}</div>
+            <div className="text-2xl font-bold text-neutral-900">{value.toLocaleString('fr-FR')}</div>
           </div>
         ))}
       </div>
 
-      {/* Agents cards */}
+      {/* ── Cartes agents ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        {AGENTS.map(({ num, name, description, color, bg, border }) => {
-          const jobs = jobsByAgent[num] || []
-          const lastJob = jobs[0]
-          const successCount = jobs.filter((j: any) => j.status === 'done').length
-          const isRunning = jobs.some((j: any) => j.status === 'running')
+        {AGENTS.map(({ num, name, model, description, color, bg, border, subAgents }) => {
+          const jobs        = jobsByAgent[num] ?? []
+          const lastJob     = jobs[0]
+          const successRate = jobs.length > 0
+            ? Math.round(jobs.filter((j: any) => j.status === 'done').length / jobs.length * 100)
+            : null
+          const isRunning   = jobs.some((j: any) => j.status === 'running')
+          const avgSignals  = num === 1 && jobs.length > 0
+            ? Math.round(jobs.filter((j: any) => j.signals_count).reduce((s: number, j: any) => s + j.signals_count, 0) / jobs.filter((j: any) => j.signals_count).length || 0)
+            : null
 
           return (
             <div key={num} className={`card-lg border-l-4 ${border}`}>
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-2.5">
-                  <div className={`w-9 h-9 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}>
-                    <Bot size={16} className={color} />
-                  </div>
-                  <div>
-                    <div className="text-sm font-bold text-neutral-900">Agent {num} — {name}</div>
-                    <div className="text-[11px] text-neutral-500 mt-0.5">{description}</div>
-                  </div>
+              <div className="flex items-start gap-2.5 mb-3">
+                <div className={`w-9 h-9 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}>
+                  {num === 1 ? <Layers size={16} className={color} /> : <Bot size={16} className={color} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-bold text-neutral-900">Agent {num} — {name}</div>
+                  <div className="text-[10px] text-neutral-400 mt-0.5">Modèle : {model}</div>
+                  <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">{description}</p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
+              {/* Sous-agents de l'Agent 1 */}
+              {subAgents.length > 0 && (
+                <div className="grid grid-cols-5 gap-1 mb-3 mt-1">
+                  {subAgents.map(({ key, icon: Icon, name: saName }) => (
+                    <div key={key} className={`rounded-lg p-1.5 ${bg} flex flex-col items-center gap-0.5`} title={saName}>
+                      <Icon size={11} className={color} />
+                      <span className={`text-[8px] font-medium text-center leading-tight ${color}`}>{saName.split(' ')[0]}</span>
+                      {breakdownCount > 0 && (
+                        <span className="text-[8px] text-neutral-500 font-bold">
+                          ~{breakdownAvg[key] ?? 0}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center flex-wrap gap-x-3 gap-y-1 pt-3 border-t border-neutral-100">
                 <div className={`flex items-center gap-1 text-xs font-medium ${isRunning ? 'text-amber-600' : 'text-green-600'}`}>
                   {isRunning
                     ? <><Clock size={12} /> En cours</>
-                    : <><CheckCircle2 size={12} /> Disponible</>
-                  }
+                    : <><CheckCircle2 size={12} /> Disponible</>}
                 </div>
                 <span className="text-neutral-200">|</span>
                 <span className="text-xs text-neutral-400">{jobs.length} jobs récents</span>
-                {jobs.length > 0 && (
+                {successRate !== null && (
                   <>
                     <span className="text-neutral-200">|</span>
-                    <span className="text-xs text-neutral-400">
-                      {successCount}/{jobs.length} réussis
-                    </span>
+                    <span className="text-xs text-neutral-400">{successRate}% succès</span>
+                  </>
+                )}
+                {avgSignals !== null && avgSignals > 0 && (
+                  <>
+                    <span className="text-neutral-200">|</span>
+                    <span className="text-xs text-neutral-400">~{avgSignals} signaux/job</span>
                   </>
                 )}
                 {lastJob && (
                   <>
                     <span className="text-neutral-200">|</span>
-                    <span className="text-xs text-neutral-400">
-                      Dernier : {new Date(lastJob.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                    </span>
+                    <span className="text-xs text-neutral-400">Dernier : {fmtDate(lastJob.started_at ?? lastJob.created_at)}</span>
                   </>
                 )}
               </div>
@@ -137,56 +221,81 @@ export default async function AdminAgentsPage() {
         })}
       </div>
 
-      {/* Recent jobs table */}
+      {/* ── Tableau des jobs récents ──────────────────────────────────────── */}
       <div className="card-lg">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-neutral-900">Historique des jobs récents</h3>
+          <div className="flex items-center gap-2">
+            <Activity size={14} className="text-neutral-500" />
+            <h3 className="text-sm font-bold text-neutral-900">Historique des jobs récents</h3>
+          </div>
           <Settings2 size={14} className="text-neutral-400" />
         </div>
 
         {recentJobs && recentJobs.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs min-w-[600px]">
+            <table className="w-full text-xs min-w-[700px]">
               <thead>
                 <tr className="bg-neutral-50 border-b border-neutral-200">
-                  {['Agent', 'Veille', 'Statut', 'Durée', 'Lancé le'].map(h => (
+                  {['Agent', 'Veille', 'Statut', 'Signaux', 'Durée', 'Lancé le'].map(h => (
                     <th key={h} className="text-left py-2.5 px-3 text-neutral-500 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {recentJobs.map((job: any) => {
-                  const duration = job.completed_at && job.created_at
-                    ? Math.round((new Date(job.completed_at).getTime() - new Date(job.created_at).getTime()) / 1000)
-                    : null
+                {recentJobs.map((job: any) => (
+                  <tr key={job.id} className="border-b border-neutral-50 hover:bg-neutral-50 transition-colors">
 
-                  return (
-                    <tr key={job.id} className="border-b border-neutral-50 hover:bg-neutral-50 transition-colors">
-                      <td className="py-2.5 px-3">
-                        <span className={`badge text-[10px] ${
-                          job.agent_number === 1 ? 'badge-green' :
-                          job.agent_number === 2 ? 'badge-amber' :
-                          job.agent_number === 3 ? 'badge-blue' : 'badge-purple'
-                        }`}>A{job.agent_number}</span>
-                      </td>
-                      <td className="py-2.5 px-3 font-medium text-neutral-800">{job.watches?.name || '—'}</td>
-                      <td className="py-2.5 px-3">
-                        <span className={`badge text-[10px] ${
-                          job.status === 'done' ? 'badge-green' :
-                          job.status === 'running' ? 'badge-amber' : 'badge-red'
-                        }`}>
-                          {job.status === 'done' ? 'Terminé' : job.status === 'running' ? 'En cours' : 'Erreur'}
+                    {/* Agent badge */}
+                    <td className="py-2.5 px-3">
+                      <span className={`badge text-[10px] ${
+                        job.agent_number === 1 ? 'bg-orange-100 text-orange-700' :
+                        job.agent_number === 2 ? 'badge-amber' :
+                        job.agent_number === 3 ? 'badge-blue' : 'badge-purple'
+                      }`}>
+                        A{job.agent_number}
+                      </span>
+                    </td>
+
+                    {/* Veille */}
+                    <td className="py-2.5 px-3 font-medium text-neutral-800 max-w-[180px] truncate">
+                      {job.watches?.name || '—'}
+                    </td>
+
+                    {/* Statut */}
+                    <td className="py-2.5 px-3">
+                      <span className={`badge text-[10px] ${
+                        job.status === 'done'    ? 'badge-green' :
+                        job.status === 'running' ? 'badge-amber' : 'badge-red'
+                      }`}>
+                        {job.status === 'done' ? 'Terminé' : job.status === 'running' ? 'En cours' : 'Erreur'}
+                      </span>
+                    </td>
+
+                    {/* Signaux collectés */}
+                    <td className="py-2.5 px-3 text-neutral-600 font-medium">
+                      {job.signals_count != null ? (
+                        <span className="flex items-center gap-1">
+                          {job.signals_count}
+                          {job.metadata?.breakdown_agents && (
+                            <span className="text-neutral-400 font-normal text-[9px]">
+                              (DR:{job.metadata.breakdown_agents.deep_research_iterative ?? 0})
+                            </span>
+                          )}
                         </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-neutral-500">
-                        {duration != null ? `${duration}s` : '—'}
-                      </td>
-                      <td className="py-2.5 px-3 text-neutral-500">
-                        {new Date(job.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                    </tr>
-                  )
-                })}
+                      ) : '—'}
+                    </td>
+
+                    {/* Durée */}
+                    <td className="py-2.5 px-3 text-neutral-500">
+                      {fmtDuration(job.started_at, job.completed_at)}
+                    </td>
+
+                    {/* Date */}
+                    <td className="py-2.5 px-3 text-neutral-500">
+                      {fmtDate(job.started_at ?? job.created_at)}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -194,7 +303,7 @@ export default async function AdminAgentsPage() {
           <div className="py-10 text-center">
             <Bot size={28} className="text-neutral-200 mx-auto mb-3" />
             <p className="text-sm text-neutral-400">Aucun job enregistré pour l&apos;instant.</p>
-            <p className="text-xs text-neutral-400 mt-1">Les agents se déclenchent quand les utilisateurs lancent des scans.</p>
+            <p className="text-xs text-neutral-400 mt-1">Les agents se déclenchent quand les utilisateurs lancent des scans depuis la page Agents.</p>
           </div>
         )}
       </div>

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Bot, Play, Pause, RefreshCw, Trash2, Save, AlertCircle, CheckCircle2,
-  Clock, Loader2, Activity, ChevronDown, ChevronUp, Zap, Globe,
+  Clock, Loader2, Activity, ChevronDown, ChevronUp, Zap, Globe, Copy, ExternalLink,
 } from 'lucide-react'
 
 interface AgentConfig {
@@ -33,10 +33,16 @@ interface AgentRun {
   completed_at: string | null
 }
 
+interface DuplicateGroup {
+  canonicalDomain: string
+  sources: { id: string; name: string; url: string; is_active: boolean; created_at: string }[]
+}
+
 interface Stats {
   totalSources: number
   categorized: number
   pending: number
+  duplicates: number
 }
 
 function fmtDate(d: string | null) {
@@ -57,7 +63,9 @@ function fmtDuration(ms: number | null) {
 export default function CategorizerClient() {
   const [agent, setAgent] = useState<AgentConfig | null>(null)
   const [runs, setRuns] = useState<AgentRun[]>([])
-  const [stats, setStats] = useState<Stats>({ totalSources: 0, categorized: 0, pending: 0 })
+  const [stats, setStats] = useState<Stats>({ totalSources: 0, categorized: 0, pending: 0, duplicates: 0 })
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([])
+  const [showDuplicates, setShowDuplicates] = useState(false)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -78,6 +86,7 @@ export default function CategorizerClient() {
       setAgent(data.agent)
       setRuns(data.runs ?? [])
       setStats(data.stats)
+      setDuplicateGroups(data.duplicateGroups ?? [])
       if (data.agent) {
         setEditPrompt(data.agent.prompt)
         setEditModel(data.agent.model)
@@ -143,7 +152,9 @@ export default function CategorizerClient() {
       if (!res.ok) throw new Error()
       const data = await res.json()
       setRunLogs(data.logs ?? [])
-      setMsg({ type: 'ok', text: `${data.updated}/${data.processed} sources catégorisées` })
+      const parts = [`${data.updated}/${data.processed} catégorisées`]
+      if (data.duplicatesDeactivated > 0) parts.push(`${data.duplicatesDeactivated} doublons nettoyés`)
+      setMsg({ type: 'ok', text: parts.join(' · ') })
       fetchData()
     } catch {
       setMsg({ type: 'err', text: "Erreur lors de l'exécution" })
@@ -226,11 +237,12 @@ export default function CategorizerClient() {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
         {[
           { label: 'Sources totales', value: stats.totalSources, icon: Globe, color: 'text-blue-600', bg: 'bg-blue-50' },
           { label: 'Catégorisées', value: stats.categorized, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' },
           { label: 'En attente', value: stats.pending, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50' },
+          { label: 'Doublons', value: stats.duplicates, icon: Copy, color: stats.duplicates > 0 ? 'text-red-600' : 'text-neutral-400', bg: stats.duplicates > 0 ? 'bg-red-50' : 'bg-neutral-50' },
           { label: 'Exécutions', value: agent.runs_count, icon: Activity, color: 'text-purple-600', bg: 'bg-purple-50' },
         ].map(({ label, value, icon: Icon, color, bg }) => (
           <div key={label} className="card-lg">
@@ -268,6 +280,57 @@ export default function CategorizerClient() {
           )}
         </div>
       </div>
+
+      {/* Doublons détectés */}
+      {duplicateGroups.length > 0 && (
+        <div className="card-lg mb-6 border-l-4 border-red-400">
+          <button
+            onClick={() => setShowDuplicates(!showDuplicates)}
+            className="flex items-center justify-between w-full"
+          >
+            <h3 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+              <Copy size={14} className="text-red-500" />
+              {stats.duplicates} doublon{stats.duplicates > 1 ? 's' : ''} détecté{stats.duplicates > 1 ? 's' : ''} ({duplicateGroups.length} domaine{duplicateGroups.length > 1 ? 's' : ''})
+            </h3>
+            {showDuplicates ? <ChevronUp size={16} className="text-neutral-400" /> : <ChevronDown size={16} className="text-neutral-400" />}
+          </button>
+          <p className="text-[11px] text-neutral-500 mt-1">
+            L&apos;agent désactive automatiquement les doublons lors de chaque exécution (garde le plus ancien).
+          </p>
+
+          {showDuplicates && (
+            <div className="mt-4 space-y-3">
+              {duplicateGroups.map(group => (
+                <div key={group.canonicalDomain} className="bg-neutral-50 rounded-lg p-3 border border-neutral-200">
+                  <div className="text-xs font-bold text-neutral-700 mb-2 flex items-center gap-1.5">
+                    <Globe size={12} className="text-neutral-400" />
+                    {group.canonicalDomain}
+                    <span className="badge badge-red text-[9px] ml-1">{group.sources.length} entrées</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {group.sources.map((src, i) => (
+                      <div key={src.id} className="flex items-center gap-2 text-[11px]">
+                        {i === 0 ? (
+                          <span className="badge badge-green text-[9px] w-14 text-center flex-shrink-0">Gardée</span>
+                        ) : (
+                          <span className={`badge text-[9px] w-14 text-center flex-shrink-0 ${src.is_active ? 'badge-red' : 'badge-gray'}`}>
+                            {src.is_active ? 'Doublon' : 'Inactif'}
+                          </span>
+                        )}
+                        <span className="font-medium text-neutral-800 truncate max-w-[160px]">{src.name}</span>
+                        <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline truncate flex items-center gap-0.5">
+                          {src.url} <ExternalLink size={9} />
+                        </a>
+                        <span className="text-neutral-400 flex-shrink-0 ml-auto">{fmtDate(src.created_at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Controls */}
       <div className="card-lg mb-6">

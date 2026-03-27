@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { runSourceCategorizer } from '@/lib/agents/source-categorizer'
+import { runSourceCategorizer, detectDuplicates } from '@/lib/agents/source-categorizer'
 
 /**
  * POST  → Lancer l'agent (manual / bulk)
@@ -36,19 +36,30 @@ export async function GET() {
   ])
 
   // Stats sources
-  const { count: totalSources } = await db
-    .from('sources').select('*', { count: 'exact', head: true }).eq('is_active', true)
-  const { count: categorized } = await db
-    .from('sources').select('*', { count: 'exact', head: true })
-    .eq('is_active', true).not('ai_categorized_at', 'is', null)
+  const [
+    { count: totalSources },
+    { count: categorized },
+  ] = await Promise.all([
+    db.from('sources').select('*', { count: 'exact', head: true }).eq('is_active', true),
+    db.from('sources').select('*', { count: 'exact', head: true })
+      .eq('is_active', true).not('ai_categorized_at', 'is', null),
+  ])
+
+  // Détection des doublons
+  const duplicateGroups = await detectDuplicates(db)
+  const duplicatesCount = duplicateGroups.reduce(
+    (sum, g) => sum + g.sources.filter(s => s.is_active).length - 1, 0,
+  )
 
   return NextResponse.json({
     agent,
     runs: runs ?? [],
+    duplicateGroups,
     stats: {
-      totalSources: totalSources ?? 0,
-      categorized:  categorized ?? 0,
-      pending:      (totalSources ?? 0) - (categorized ?? 0),
+      totalSources:  totalSources ?? 0,
+      categorized:   categorized ?? 0,
+      pending:       (totalSources ?? 0) - (categorized ?? 0),
+      duplicates:    duplicatesCount,
     },
   })
 }

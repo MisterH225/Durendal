@@ -197,9 +197,12 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
           plans_access: ['free', 'pro', 'business'],
         }),
       })
-      if (!res.ok) throw new Error(await res.text())
-      const { source: newSource } = await res.json()
-      setSources(prev => [newSource, ...prev])
+      const json = await res.json()
+      if (!res.ok) {
+        setError(json.error || "Erreur lors de l'ajout")
+        return
+      }
+      setSources(prev => [json.source, ...prev])
       setSuccess('Source ajoutée !')
       setTimeout(() => { setShowForm(false); resetForm() }, 1500)
     } catch (e: any) {

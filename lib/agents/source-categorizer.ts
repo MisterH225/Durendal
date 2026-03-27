@@ -16,11 +16,124 @@ export interface CategorizationResult {
   categorySuggestion?: string
 }
 
+export interface DuplicateGroup {
+  canonicalDomain: string
+  sources: { id: string; name: string; url: string; is_active: boolean; created_at: string }[]
+}
+
 export interface AgentRunResult {
   processed: number
   updated:   number
+  duplicatesFound: number
+  duplicatesDeactivated: number
   errors:    string[]
   durationMs: number
+}
+
+// ── Normalisation d'URL pour détection de doublons ──────────────────────────
+
+/**
+ * Extrait un domaine canonique comparable à partir d'une URL.
+ * "https://www.example.com/page?q=1" → "example.com"
+ */
+export function canonicalDomain(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`)
+    return url.hostname
+      .replace(/^www\./, '')
+      .replace(/^m\./, '')
+      .replace(/^mobile\./, '')
+      .toLowerCase()
+  } catch {
+    return rawUrl.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+  }
+}
+
+/**
+ * Détecte les doublons parmi toutes les sources actives.
+ * Regroupe par domaine canonique ; les groupes de taille > 1 sont des doublons.
+ */
+export async function detectDuplicates(
+  supabase: any,
+): Promise<DuplicateGroup[]> {
+  const { data: sources } = await supabase
+    .from('sources')
+    .select('id, name, url, is_active, created_at')
+    .not('url', 'is', null)
+    .order('created_at', { ascending: true })
+
+  if (!sources?.length) return []
+
+  const byDomain = new Map<string, typeof sources>()
+  for (const src of sources) {
+    if (!src.url) continue
+    const domain = canonicalDomain(src.url)
+    const group = byDomain.get(domain) ?? []
+    group.push(src)
+    byDomain.set(domain, group)
+  }
+
+  return Array.from(byDomain.entries())
+    .filter(([, group]) => group.length > 1)
+    .map(([canonicalDomain, sources]) => ({ canonicalDomain, sources }))
+}
+
+/**
+ * Désactive les doublons, en gardant la plus ancienne source active.
+ * Retourne le nombre de sources désactivées.
+ */
+export async function deactivateDuplicates(
+  supabase: any,
+  log: (msg: string) => void = console.log,
+): Promise<{ found: number; deactivated: number }> {
+  const groups = await detectDuplicates(supabase)
+  let deactivated = 0
+
+  for (const group of groups) {
+    const activeOnes = group.sources.filter(s => s.is_active)
+    if (activeOnes.length <= 1) continue
+
+    // Garder la plus ancienne active, désactiver les autres
+    const [keeper, ...duplicates] = activeOnes
+    log(`[Dedup] ${group.canonicalDomain}: garde "${keeper.name}" (${keeper.id}), désactive ${duplicates.length} doublon(s)`)
+
+    for (const dup of duplicates) {
+      const { error } = await supabase
+        .from('sources')
+        .update({ is_active: false, admin_notes: `Doublon de "${keeper.name}" (${keeper.id}) — désactivé par l'agent` })
+        .eq('id', dup.id)
+
+      if (!error) {
+        deactivated++
+        log(`  → ✗ "${dup.name}" désactivé`)
+      }
+    }
+  }
+
+  return {
+    found: groups.reduce((sum, g) => sum + g.sources.filter(s => s.is_active).length - 1, 0),
+    deactivated,
+  }
+}
+
+/**
+ * Vérifie si une URL existe déjà dans la bibliothèque (avant insertion).
+ * Retourne la source existante ou null.
+ */
+export async function findExistingSourceByUrl(
+  supabase: any,
+  url: string,
+): Promise<{ id: string; name: string; url: string } | null> {
+  const domain = canonicalDomain(url)
+
+  const { data: allSources } = await supabase
+    .from('sources')
+    .select('id, name, url')
+    .not('url', 'is', null)
+
+  if (!allSources?.length) return null
+
+  return allSources.find((s: any) => s.url && canonicalDomain(s.url) === domain) ?? null
 }
 
 /**
@@ -90,6 +203,8 @@ export async function runSourceCategorizer(
   const errors: string[] = []
   let processed = 0
   let updated = 0
+  let duplicatesFound = 0
+  let duplicatesDeactivated = 0
 
   // Charge la config de l'agent
   const { data: agent } = await supabase
@@ -99,12 +214,12 @@ export async function runSourceCategorizer(
     .single()
 
   if (!agent) {
-    return { processed: 0, updated: 0, errors: ['Agent non configuré'], durationMs: Date.now() - start }
+    return { processed: 0, updated: 0, duplicatesFound: 0, duplicatesDeactivated: 0, errors: ['Agent non configuré'], durationMs: Date.now() - start }
   }
 
   if (agent.status !== 'active') {
     log('[Categorizer] Agent en pause ou désactivé — skip')
-    return { processed: 0, updated: 0, errors: ['Agent inactif'], durationMs: Date.now() - start }
+    return { processed: 0, updated: 0, duplicatesFound: 0, duplicatesDeactivated: 0, errors: ['Agent inactif'], durationMs: Date.now() - start }
   }
 
   // Crée un run log
@@ -117,7 +232,26 @@ export async function runSourceCategorizer(
     })
     .select().single()
 
-  // Charge les sources à catégoriser
+  // ── Phase 1 : Détection et nettoyage des doublons ───────────────────
+  log('[Categorizer] Phase 1 — Détection des doublons...')
+  try {
+    const dedupResult = await deactivateDuplicates(supabase, log)
+    duplicatesFound = dedupResult.found
+    duplicatesDeactivated = dedupResult.deactivated
+    if (duplicatesDeactivated > 0) {
+      log(`[Categorizer] ${duplicatesDeactivated} doublon(s) désactivé(s)`)
+    } else {
+      log('[Categorizer] Aucun doublon détecté')
+    }
+  } catch (e: any) {
+    const msg = `Erreur détection doublons: ${e?.message ?? 'inconnue'}`
+    errors.push(msg)
+    log(`[Categorizer] ${msg}`)
+  }
+
+  // ── Phase 2 : Catégorisation IA ─────────────────────────────────────
+  log('[Categorizer] Phase 2 — Catégorisation IA...')
+
   let query = supabase
     .from('sources')
     .select('id, url, name, source_category, sectors')
@@ -144,7 +278,7 @@ export async function runSourceCategorizer(
       }).eq('id', run.id)
     }
 
-    return { processed: 0, updated: 0, errors, durationMs: Date.now() - start }
+    return { processed: 0, updated: 0, duplicatesFound, duplicatesDeactivated, errors, durationMs: Date.now() - start }
   }
 
   log(`[Categorizer] ${sources.length} source(s) à catégoriser`)
@@ -185,11 +319,12 @@ export async function runSourceCategorizer(
   // Met à jour le run et l'agent
   if (run?.id) {
     await supabase.from('admin_agent_runs').update({
-      status:            errors.length === 0 ? 'done' : 'done',
+      status:            'done',
       sources_processed: processed,
       sources_updated:   updated,
       duration_ms:       durationMs,
       error_message:     errors.length > 0 ? errors.join('; ') : null,
+      metadata:          { duplicatesFound, duplicatesDeactivated },
       completed_at:      new Date().toISOString(),
     }).eq('id', run.id)
   }
@@ -201,7 +336,7 @@ export async function runSourceCategorizer(
     updated_at:   new Date().toISOString(),
   }).eq('id', 'source_categorizer')
 
-  log(`[Categorizer] ✓ ${updated}/${processed} sources catégorisées en ${durationMs}ms`)
+  log(`[Categorizer] ✓ ${updated}/${processed} sources catégorisées, ${duplicatesDeactivated} doublons nettoyés — ${durationMs}ms`)
 
-  return { processed, updated, errors, durationMs }
+  return { processed, updated, duplicatesFound, duplicatesDeactivated, errors, durationMs }
 }

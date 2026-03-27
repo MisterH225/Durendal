@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound }     from 'next/navigation'
 import Link             from 'next/link'
-import { ArrowLeft, FileText, Zap, AlertTriangle, Plus, ExternalLink, Globe, Search, BrainCircuit, BarChart2, Newspaper } from 'lucide-react'
+import { ArrowLeft, FileText, Zap, AlertTriangle, Plus, ExternalLink, Globe, Search, BrainCircuit, BarChart2, Newspaper, ChevronRight } from 'lucide-react'
 import RunAgentsButton  from './RunAgentsButton'
 import ScanHistory      from './ScanHistory'
 
@@ -195,22 +195,47 @@ export default async function WatchDetailPage({ params }: { params: { id: string
             <div className="card-lg">
               <h3 className="text-sm font-bold text-neutral-900 mb-4">Rapports générés</h3>
               <div className="space-y-2">
-                {reports.map((r: any) => (
-                  <div key={r.id} className="flex items-center gap-3 p-3 bg-neutral-50 rounded-lg border border-neutral-200 hover:border-blue-300 transition-colors">
-                    <FileText size={16} className="text-blue-700 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold text-neutral-900 truncate">{r.title}</div>
-                      <div className="text-[10px] text-neutral-400 mt-0.5">
-                        {r.type === 'synthesis' || r.type === 'analyse' ? 'Synthèse' : r.type === 'market' ? 'Analyse marché' : 'Stratégie'} ·{' '}
-                        {fmtDate(r.created_at)}
+                {reports.map((r: any) => {
+                  const excerpt =
+                    typeof r.summary === 'string' && r.summary.length > 0
+                      ? `${r.summary.slice(0, 96)}${r.summary.length > 96 ? '…' : ''}`
+                      : null
+                  return (
+                    <Link
+                      key={r.id}
+                      href={`/veilles/${params.id}/reports/${r.id}`}
+                      className="flex items-center gap-3 p-3 bg-neutral-50 rounded-lg border border-neutral-200 hover:border-blue-300 hover:bg-neutral-100/80 transition-colors group"
+                    >
+                      <FileText size={16} className="text-blue-700 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-neutral-900 truncate group-hover:text-blue-800">
+                          {r.title}
+                        </div>
+                        <div className="text-[10px] text-neutral-400 mt-0.5 line-clamp-2">
+                          {r.type === 'synthesis' || r.type === 'analyse'
+                            ? 'Synthèse'
+                            : r.type === 'market'
+                              ? 'Analyse marché'
+                              : 'Stratégie'}
+                          {' · '}
+                          {fmtDate(r.generated_at ?? r.created_at)}
+                          {excerpt ? ` — ${excerpt}` : ''}
+                        </div>
                       </div>
-                    </div>
-                    {!r.is_read && <span className="w-2 h-2 rounded-full bg-blue-700 flex-shrink-0" />}
-                    <span className={`badge text-[10px] ${r.type === 'synthesis' || r.type === 'analyse' ? 'badge-blue' : r.type === 'market' ? 'badge-green' : 'badge-purple'}`}>
-                      Agent {r.agent_used ?? 2}
-                    </span>
-                  </div>
-                ))}
+                      {!r.is_read && <span className="w-2 h-2 rounded-full bg-blue-700 flex-shrink-0" title="Non lu" />}
+                      <span
+                        className={`badge text-[10px] ${r.type === 'synthesis' || r.type === 'analyse' ? 'badge-blue' : r.type === 'market' ? 'badge-green' : 'badge-purple'}`}
+                      >
+                        Agent {r.agent_used ?? 2}
+                      </span>
+                      <ChevronRight
+                        size={16}
+                        className="text-neutral-300 group-hover:text-blue-600 flex-shrink-0 transition-colors"
+                        aria-hidden
+                      />
+                    </Link>
+                  )
+                })}
               </div>
             </div>
           )}

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { callGemini } from '@/lib/ai/gemini'
+import { callGeminiChat } from '@/lib/ai/gemini'
+
+// Nombre maximum de tours conservés en mémoire (1 tour = 1 message user + 1 model)
+const MAX_HISTORY_TURNS = 15
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,77 +11,177 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
 
-    const { messages } = await req.json()
+    const { message, watchId } = await req.json()
+    if (!message?.trim()) return NextResponse.json({ error: 'Message vide' }, { status: 400 })
 
+    // ── Contexte utilisateur ────────────────────────────────────────────────
     const { data: profile } = await supabase
-      .from('profiles').select('account_id').eq('id', user.id).single()
+      .from('profiles')
+      .select('account_id, full_name')
+      .eq('id', user.id)
+      .single()
 
+    // Veilles actives (avec id pour la query signals)
     const { data: watches } = await supabase
-      .from('watches').select('name, sectors, countries').eq('account_id', profile?.account_id)
+      .from('watches')
+      .select('id, name, sectors, countries')
+      .eq('account_id', profile?.account_id)
 
-    const { data: recentSignals } = await supabase
-      .from('signals')
-      .select('title, raw_content, companies(name)')
-      .in('watch_id', (watches || []).map((w: any) => w.id))
-      .order('collected_at', { ascending: false })
-      .limit(10)
+    // Signaux récents (top 15, avec source URL)
+    const watchIds = (watches || []).map((w: any) => w.id).filter(Boolean)
+    const { data: recentSignals } = watchIds.length > 0
+      ? await supabase
+          .from('signals')
+          .select('title, raw_content, url, source_name, companies(name)')
+          .in('watch_id', watchIds)
+          .order('collected_at', { ascending: false })
+          .limit(15)
+      : { data: [] }
 
-    const watchContext = watches?.map((w: any) =>
-      `- ${w.name} (${w.sectors?.join(', ')} · ${w.countries?.join(', ')})`
-    ).join('\n') || 'Aucune veille configurée'
+    // Rapports récents pour contexte enrichi
+    const { data: recentReports } = watchIds.length > 0
+      ? await supabase
+          .from('reports')
+          .select('title, summary, type')
+          .in('watch_id', watchIds)
+          .order('generated_at', { ascending: false })
+          .limit(5)
+      : { data: [] }
 
-    const signalContext = recentSignals?.map((s: any) =>
-      `- [${s.companies?.name}] ${s.title || s.raw_content?.slice(0, 100)}`
-    ).join('\n') || 'Aucun signal récent'
+    // ── Mémoire : historique chargé depuis la base de données ──────────────
+    // La persistance est côté serveur — indépendante du navigateur/client
+    const { data: dbHistory } = await supabase
+      .from('chat_messages')
+      .select('role, content')
+      .eq('account_id', profile?.account_id)
+      .order('created_at', { ascending: true })
+      .limit(MAX_HISTORY_TURNS * 2)  // 2 messages par tour
 
-    // Construit le prompt complet pour Gemini (system + historique + message utilisateur)
-    const systemBlock = `Tu es l'assistant IA de MarketLens, une plateforme de veille concurrentielle pour les marchés africains (Côte d'Ivoire, Sénégal, Ghana et autres pays africains).
-Tu aides les utilisateurs à analyser leurs données de veille, comprendre leurs marchés et prendre des décisions stratégiques.
+    // Convertit les messages DB au format Gemini multi-tour
+    // (role 'assistant' en DB → 'model' pour Gemini)
+    const history = (dbHistory || []).map((msg: any) => ({
+      role:    msg.role === 'assistant' ? 'model' : 'user',
+      content: msg.content,
+    })) as { role: 'user' | 'model'; content: string }[]
+
+    // ── Contexte injecté dans le system prompt (pas dans l'historique) ─────
+    const watchContext = (watches || []).length > 0
+      ? (watches || []).map((w: any) =>
+          `• ${w.name} (${w.sectors?.join(', ')} · ${w.countries?.join(', ')})`
+        ).join('\n')
+      : 'Aucune veille configurée'
+
+    const signalContext = (recentSignals || []).length > 0
+      ? (recentSignals || []).map((s: any) => {
+          const company = (s as any).companies?.name
+          const source  = s.source_name || (s.url ? (() => { try { return new URL(s.url).hostname } catch { return '' } })() : '')
+          return `• [${company || '?'}] ${s.title || s.raw_content?.slice(0, 100)}${source ? ` — via ${source}` : ''}${s.url ? ` (${s.url})` : ''}`
+        }).join('\n')
+      : 'Aucun signal récent'
+
+    const reportContext = (recentReports || []).length > 0
+      ? (recentReports || []).map((r: any) =>
+          `• [${r.type}] ${r.title} : ${r.summary?.slice(0, 150)}`
+        ).join('\n')
+      : ''
+
+    const systemPrompt = `Tu es l'assistant IA de MarketLens, plateforme de veille concurrentielle pour les marchés africains.
+Tu aides ${profile?.full_name || 'l\'utilisateur'} à analyser ses données de veille, comprendre ses marchés et prendre des décisions stratégiques.
 
 VEILLES ACTIVES :
 ${watchContext}
 
-DERNIERS SIGNAUX COLLECTÉS :
+DERNIERS SIGNAUX COLLECTÉS (avec sources) :
 ${signalContext}
 
-INSTRUCTIONS :
+${reportContext ? `RAPPORTS RÉCENTS :\n${reportContext}\n` : ''}
+RÈGLES :
 - Réponds toujours en français
-- Sois précis, concis et actionnable
-- Cite les données de veille disponibles quand pertinent
-- Si tu n'as pas assez de données, dis-le clairement et propose des pistes
-- Adopte un ton professionnel mais accessible
-- Termine tes réponses importantes par 1-2 actions concrètes recommandées`
+- Sois factuel : cite les données de veille ci-dessus quand pertinent, avec la source si disponible
+- Si tu cites une URL de signal, mentionne-la comme référence vérifiable
+- Si tu manques de données, dis-le et propose de lancer un agent de collecte
+- Ton style est professionnel mais accessible, direct et actionnable
+- Termine les réponses importantes par 1-2 recommandations concrètes`
 
-    // Formate l'historique de conversation
-    const historyBlock = (messages as any[]).slice(0, -1).map((m: any) =>
-      `${m.role === 'user' ? 'Utilisateur' : 'Assistant'} : ${m.content}`
-    ).join('\n\n')
+    // ── Appel Gemini en mode multi-tour natif ──────────────────────────────
+    const { text: reply, tokensUsed } = await callGeminiChat(
+      systemPrompt,
+      history,
+      message.trim(),
+      { maxOutputTokens: 1200, temperature: 0.5 }
+    )
 
-    const lastMessage = messages[messages.length - 1]?.content || ''
+    const replyText = reply.trim() || "Désolé, je n'ai pas pu générer une réponse."
 
-    const fullPrompt = `${systemBlock}
-
-${historyBlock ? `HISTORIQUE DE LA CONVERSATION :\n${historyBlock}\n\n` : ''}Utilisateur : ${lastMessage}
-
-Assistant :`
-
-    const { text: content, tokensUsed } = await callGemini(fullPrompt, {
-      maxOutputTokens: 1000,
-      temperature: 0.5,
-    })
-
-    const reply = content.trim() || 'Désolé, je n\'ai pas pu générer une réponse.'
-
+    // ── Sauvegarde en base (persistance de la mémoire) ─────────────────────
     if (profile?.account_id) {
       await supabase.from('chat_messages').insert([
-        { account_id: profile.account_id, user_id: user.id, role: 'user', content: lastMessage },
-        { account_id: profile.account_id, user_id: user.id, role: 'assistant', content: reply, tokens_used: tokensUsed },
+        {
+          account_id: profile.account_id,
+          user_id:    user.id,
+          role:       'user',
+          content:    message.trim(),
+        },
+        {
+          account_id:  profile.account_id,
+          user_id:     user.id,
+          role:        'assistant',
+          content:     replyText,
+          tokens_used: tokensUsed,
+        },
       ])
     }
 
-    return NextResponse.json({ content: reply })
+    return NextResponse.json({ content: replyText, tokensUsed })
   } catch (error) {
     console.error('[Chat] Erreur:', error)
+    return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 })
+  }
+}
+
+// ── Endpoint GET : récupère l'historique complet ────────────────────────────
+export async function GET(req: NextRequest) {
+  try {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
+
+    const { data: profile } = await supabase
+      .from('profiles').select('account_id').eq('id', user.id).single()
+
+    const url    = new URL(req.url)
+    const limit  = parseInt(url.searchParams.get('limit') || '50')
+
+    const { data: messages } = await supabase
+      .from('chat_messages')
+      .select('id, role, content, created_at, tokens_used')
+      .eq('account_id', profile?.account_id)
+      .order('created_at', { ascending: true })
+      .limit(limit)
+
+    return NextResponse.json({ messages: messages || [] })
+  } catch (error) {
+    return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 })
+  }
+}
+
+// ── Endpoint DELETE : efface l'historique (réinitialise la mémoire) ─────────
+export async function DELETE() {
+  try {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
+
+    const { data: profile } = await supabase
+      .from('profiles').select('account_id').eq('id', user.id).single()
+
+    await supabase
+      .from('chat_messages')
+      .delete()
+      .eq('account_id', profile?.account_id)
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
     return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 })
   }
 }

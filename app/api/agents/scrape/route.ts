@@ -196,6 +196,8 @@ export async function POST(req: NextRequest) {
       .select().single()
 
     let totalSignals = 0
+    let totalGroundingSources = 0
+    let sumRelevance = 0
     const stats = { grounding: 0, website: 0, linkedin_profiles: 0, linkedin_posts: 0, sources_lib: 0, duplicates_skipped: 0 }
 
     for (const company of companies) {
@@ -226,7 +228,9 @@ export async function POST(req: NextRequest) {
         })
         totalSignals++
         stats.grounding++
+        sumRelevance += signal.relevance
       }
+      totalGroundingSources += groundedSignals.length
 
       // Pause pour respecter les quotas Gemini
       await new Promise(r => setTimeout(r, 500))
@@ -362,7 +366,14 @@ export async function POST(req: NextRequest) {
 
     // ── Finalisation ────────────────────────────────────────────────────────
     await supabase.from('agent_jobs').update({
-      status: 'done', completed_at: new Date().toISOString(),
+      status:        'done',
+      completed_at:  new Date().toISOString(),
+      signals_count: totalSignals,
+      metadata: {
+        breakdown:         stats,
+        grounding_sources: totalGroundingSources,
+        avg_relevance:     totalSignals > 0 ? Math.round((sumRelevance / totalSignals) * 100) / 100 : 0,
+      },
     }).eq('id', job?.id)
 
     await supabase.from('watches').update({

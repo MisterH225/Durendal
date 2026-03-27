@@ -116,6 +116,73 @@ export async function callGeminiWithSearch(
   return { text, sources, tokensUsed }
 }
 
+export interface ChatMessage {
+  role: 'user' | 'model'
+  content: string
+}
+
+/**
+ * Appel Gemini en mode conversation multi-tour (proper multi-turn).
+ *
+ * Utilise le format natif Gemini :
+ *   systemInstruction (séparé du contexte conversationnel)
+ *   contents = [{role:"user",...}, {role:"model",...}, ...]
+ *
+ * Contrairement à callGemini() qui concatène tout dans un seul string,
+ * cette fonction exploite le vrai mécanisme de session Gemini.
+ * L'historique doit être fourni par l'appelant (stocké côté serveur/DB).
+ */
+export async function callGeminiChat(
+  systemPrompt: string,
+  history: ChatMessage[],
+  userMessage: string,
+  options: {
+    model?: GeminiModel
+    maxOutputTokens?: number
+    temperature?: number
+  } = {}
+): Promise<{ text: string; tokensUsed: number }> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) throw new Error('GEMINI_API_KEY manquant')
+
+  const model           = options.model           ?? 'gemini-2.0-flash'
+  const maxOutputTokens = options.maxOutputTokens ?? 1200
+  const temperature     = options.temperature     ?? 0.5
+
+  // Format natif Gemini : historique + nouveau message utilisateur
+  const contents = [
+    ...history.map(msg => ({
+      role:  msg.role,
+      parts: [{ text: msg.content }],
+    })),
+    { role: 'user', parts: [{ text: userMessage }] },
+  ]
+
+  const res = await fetch(
+    `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents,
+        generationConfig: { maxOutputTokens, temperature },
+      }),
+    }
+  )
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText)
+    throw new Error(`Gemini Chat API ${res.status}: ${errText}`)
+  }
+
+  const data     = await res.json()
+  const text     = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+  const tokensUsed = data.usageMetadata?.candidatesTokenCount ?? 0
+
+  return { text, tokensUsed }
+}
+
 /**
  * Extrait un objet JSON depuis la réponse texte de Gemini.
  * Gemini peut encadrer le JSON dans des blocs ```json ... ```.

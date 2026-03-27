@@ -90,12 +90,7 @@ export default function AssistantPage() {
         setError(errMsg)
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `⚠️ ${errMsg.includes('GEMINI') || errMsg.includes('API')
-            ? 'La clé Gemini n\'est pas configurée sur le serveur. Contactez l\'administrateur.'
-            : errMsg.includes('autorisé')
-              ? 'Vous devez être connecté pour utiliser l\'assistant.'
-              : 'Une erreur est survenue. Réessayez dans quelques secondes.'
-          }`
+          content: `⚠️ Erreur : ${errMsg}`
         }])
         return
       }

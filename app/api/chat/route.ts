@@ -81,10 +81,16 @@ export async function POST(req: NextRequest) {
 
     // Convertit les messages DB au format Gemini multi-tour
     // (role 'assistant' en DB → 'model' pour Gemini)
-    const history = dbHistory.map((msg: any) => ({
+    // Gemini exige : alternance user/model, commence toujours par user
+    const rawHistory = dbHistory.map((msg: any) => ({
       role:    msg.role === 'assistant' ? 'model' : 'user',
       content: msg.content,
     })) as { role: 'user' | 'model'; content: string }[]
+
+    // Supprimer les messages initiaux model pour que ça commence par user
+    let startIdx = 0
+    while (startIdx < rawHistory.length && rawHistory[startIdx].role === 'model') startIdx++
+    const history = rawHistory.slice(startIdx)
 
     // ── Contexte injecté dans le system prompt (pas dans l'historique) ─────
     const watchContext = (watches || []).length > 0
@@ -158,12 +164,8 @@ RÈGLES :
   } catch (error: any) {
     const msg = error?.message || String(error)
     console.error('[Chat] Erreur:', msg)
-    // En dev on expose le message, en prod on le logue seulement
-    const isDev = process.env.NODE_ENV !== 'production'
-    return NextResponse.json(
-      { error: isDev ? msg : 'Erreur serveur' },
-      { status: 500 }
-    )
+    // On expose toujours le message pour faciliter le debug
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 

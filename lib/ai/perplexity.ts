@@ -136,6 +136,59 @@ export async function perplexitySearch(
   return data.results ?? []
 }
 
+// ── Embeddings API ───────────────────────────────────────────────────────────
+
+/**
+ * Génère des vecteurs d'embeddings pour un tableau de textes.
+ * Modèle : pplx-embed-v1-4b (4 milliards de paramètres, performant pour similarité sémantique)
+ *
+ * Retourne un tableau de vecteurs float[] dans le même ordre que l'input.
+ * Utile pour filtrer les résultats de recherche par pertinence avant appel Gemini.
+ */
+export async function perplexityEmbed(texts: string[]): Promise<number[][]> {
+  const apiKey = process.env.PERPLEXITY_API_KEY
+  if (!apiKey) throw new Error('PERPLEXITY_API_KEY manquant')
+  if (texts.length === 0) return []
+
+  const res = await fetch(`${PERPLEXITY_BASE}/v1/embeddings`, {
+    method:  'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization:  `Bearer ${apiKey}`,
+    },
+    body:   JSON.stringify({ input: texts, model: 'pplx-embed-v1-4b' }),
+    signal: AbortSignal.timeout(10_000),
+  })
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText)
+    throw new Error(`Perplexity Embeddings API ${res.status}: ${err}`)
+  }
+
+  const data = await res.json()
+  // Format : { data: [{ index: 0, embedding: number[] }, ...] }
+  return (data.data as { index: number; embedding: number[] }[])
+    .sort((a, b) => a.index - b.index)
+    .map(d => d.embedding)
+}
+
+/**
+ * Similarité cosinus entre deux vecteurs.
+ * Retourne une valeur entre -1 (opposés) et 1 (identiques).
+ * Seuil recommandé pour filtrage de pertinence : 0.15–0.25
+ */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (!a || !b || a.length !== b.length || a.length === 0) return 0
+  let dot = 0, normA = 0, normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot   += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB)
+  return denom === 0 ? 0 : dot / denom
+}
+
 // ── Adaptateur pour collector-engine ─────────────────────────────────────────
 
 /**

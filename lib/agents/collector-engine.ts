@@ -15,8 +15,8 @@
  * avec des stratégies de requêtes différentes.
  */
 
-import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
-import { perplexityWebSearch }          from '@/lib/ai/perplexity'
+import { callGemini, parseGeminiJson }                         from '@/lib/ai/gemini'
+import { perplexityWebSearch, perplexityEmbed, cosineSimilarity } from '@/lib/ai/perplexity'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,14 +59,13 @@ const COUNTRY_NAMES: Record<string, string> = {
   BJ: 'Bénin',         BF: 'Burkina Faso',  ML: 'Mali',       TG: 'Togo',
 }
 
-// ─── 1. Moteurs de recherche (cascade : Perplexity → Firecrawl → DDG) ────────
+// ─── 1. Moteurs de recherche (cascade : Perplexity → Firecrawl) ──────────────
 //
 // Hiérarchie :
-//   1. Perplexity Search API  — résultats structurés {title,url,snippet,date}
-//                               endpoint dédié /search, pas d'inférence LLM
-//                               → plus rapide, moins cher, fonctionne depuis VPS
-//   2. Firecrawl Search       — résultats bruts, fonctionne depuis VPS
-//   3. DDG Lite               — fallback local (bloqué sur datacenter)
+//   1. Perplexity Responses/Search API — synthèse + citations, fonctionne depuis VPS
+//   2. Firecrawl Search                — résultats bruts, fonctionne depuis VPS
+//
+// DDG Lite supprimé : bloqué systématiquement depuis les IP datacenter/VPS.
 //
 // Résultat enrichi : { title, url, snippet, fullContent? }
 // Quand `fullContent` est présent, on SKIP fetchPageContent (contenu déjà extrait).
@@ -122,58 +121,18 @@ async function firecrawlWebSearch(
   }
 }
 
-// ── 1c. DuckDuckGo Lite (fallback local uniquement) ───────────────────────────
-async function ddgWebSearch(
-  query:      string,
-  maxResults: number,
-): Promise<SearchResult[]> {
-  try {
-    const params = new URLSearchParams({ q: query, kl: 'fr-fr' })
-    const res = await fetch(`https://lite.duckduckgo.com/lite/?${params}`, {
-      headers: {
-        'User-Agent':      'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
-        'Accept':          'text/html,application/xhtml+xml',
-        'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
-      },
-      signal: AbortSignal.timeout(8_000),
-    })
-    if (!res.ok) return []
-    const html    = await res.text()
-    const results: SearchResult[] = []
-    const rows    = html.match(/<tr[\s\S]*?<\/tr>/gi) || []
-
-    for (const row of rows) {
-      if (results.length >= maxResults) break
-      const linkM = row.match(/href="(https?:\/\/(?!.*duckduckgo)[^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
-      if (!linkM) continue
-      const url   = linkM[1].split('&rut=')[0]
-      const title = linkM[2].replace(/<[^>]+>/g, '').trim()
-      if (!url || !title || url.includes('duckduckgo.com')) continue
-      const snipM   = row.match(/class="result-snippet"[^>]*>([\s\S]*?)<\/td>/i)
-      const snippet = snipM ? snipM[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : ''
-      results.push({ title, url, snippet })
-    }
-    return results
-  } catch {
-    return []
-  }
-}
-
 // ── Orchestrateur principal ───────────────────────────────────────────────────
 export async function webSearch(
   query:      string,
   maxResults = 3,
 ): Promise<SearchResult[]> {
-  // Niveau 1 : Perplexity Search API (résultats structurés, fonctionne depuis VPS)
+  // Niveau 1 : Perplexity (Responses API → /search API, fonctionne depuis VPS)
   const pplx = await perplexitySearch(query, maxResults)
   if (pplx.length > 0) return pplx
 
   // Niveau 2 : Firecrawl (résultats bruts, fonctionne depuis VPS)
-  const fc = await firecrawlWebSearch(query, maxResults)
-  if (fc.length > 0) return fc
-
-  // Niveau 3 : DDG Lite (fallback local, souvent bloqué en production)
-  return ddgWebSearch(query, maxResults)
+  return firecrawlWebSearch(query, maxResults)
+  // DDG supprimé : bloqué depuis les IP datacenter/VPS
 }
 
 // ─── 2. Extraction texte depuis une page HTML ─────────────────────────────────
@@ -265,6 +224,71 @@ export function buildQueriesForAgent(
   }
 }
 
+// ─── 3b. Filtrage par embeddings (pre-Gemini) ────────────────────────────────
+//
+// Avant d'appeler Gemini (coûteux), on vérifie sémantiquement si le contenu
+// est pertinent pour l'entreprise surveillée via similarité cosinus.
+//
+// Flux : Perplexity Search → [embed batch] → filtre cos > seuil → Gemini extract
+// Gain : évite les appels Gemini sur du contenu hors sujet (moins cher + plus rapide)
+
+// Cache d'embeddings de contexte entreprise — durée de vie = une session agent
+const _embeddingCache = new Map<string, number[]>()
+
+/**
+ * Filtre les résultats de recherche par pertinence sémantique.
+ * Retourne uniquement les résultats dont la similarité cosinus avec le
+ * contexte entreprise dépasse le seuil (défaut 0.15).
+ *
+ * - Si l'API embeddings échoue → tous les résultats passent (pas de perte)
+ * - Batch : company context + tous les snippets en UN seul appel API
+ */
+async function filterByRelevance(
+  results:     SearchResult[],
+  companyName: string,
+  sectors:     string[],
+  countries:   string[],
+  threshold  = 0.15,
+): Promise<SearchResult[]> {
+  if (!process.env.PERPLEXITY_API_KEY || results.length === 0) return results
+
+  const cacheKey     = `${companyName}|${sectors.join(',')}|${countries.join(',')}`
+  const contextText  = `${companyName} ${sectors.join(' ')} ${countries.join(' ')} Afrique`
+  const snippetTexts = results.map(r =>
+    `${r.title} ${(r.fullContent ?? r.snippet).slice(0, 400)}`,
+  )
+
+  try {
+    let companyEmb: number[]
+
+    // Récupère ou calcule l'embedding du contexte entreprise
+    if (_embeddingCache.has(cacheKey)) {
+      companyEmb = _embeddingCache.get(cacheKey)!
+    } else {
+      const allTexts = [contextText, ...snippetTexts]
+      const embeddings = await perplexityEmbed(allTexts)
+      companyEmb = embeddings[0]
+      _embeddingCache.set(cacheKey, companyEmb)
+
+      // Filtre en utilisant les embeddings déjà calculés
+      return results.filter((_, i) => {
+        const sim = cosineSimilarity(companyEmb, embeddings[i + 1])
+        return sim >= threshold
+      })
+    }
+
+    // Cache hit : on n'embed que les snippets
+    const snippetEmbs = await perplexityEmbed(snippetTexts)
+    return results.filter((_, i) => {
+      const sim = cosineSimilarity(companyEmb, snippetEmbs[i])
+      return sim >= threshold
+    })
+  } catch {
+    // En cas d'erreur (quota, timeout...) → pas de filtrage, on garde tout
+    return results
+  }
+}
+
 // ─── 4. Extraction de signaux via Gemini Flash ────────────────────────────────
 export async function extractSignalsFromContent(
   content:        string,
@@ -319,21 +343,29 @@ export async function runAgentType(
 
     for (const query of queries) {
       try {
-        const webResults = await webSearch(query, 3)
+        const rawResults = await webSearch(query, 3)
         queriesRun++
 
-        for (const result of webResults) {
-          // Extrait le contenu de la page (comme VeilleCI fetchPageContent)
-          let pageContent = await fetchPageContent(result.url)
-          if (pageContent.length < 100) {
-            // Fallback : utilise le titre + snippet DDG
-            pageContent = `${result.title}\n\n${result.snippet}`
-          }
-          if (pageContent.length < 30) continue
+        // ★ Filtre par pertinence sémantique (embeddings) avant Gemini
+        const webResults = await filterByRelevance(
+          rawResults, company.name, sectors, watchCountries,
+        )
+        if (rawResults.length > webResults.length) {
+          log(`    [${type}] embed-filter: ${rawResults.length} → ${webResults.length} résultats`)
+        }
 
-          const extracted = await extractSignalsFromContent(
-            pageContent, company.name, watchCountries,
-          )
+        // ★ Fetches en parallèle ; skip fetchPageContent si Perplexity a le contenu
+        const jobs = webResults.map(async (result) => {
+          let pageContent: string
+          if (result.fullContent && result.fullContent.length > 80) {
+            pageContent = result.fullContent          // Perplexity a déjà extrait le contenu
+          } else {
+            pageContent = await fetchPageContent(result.url)
+            if (pageContent.length < 100) pageContent = `${result.title}\n\n${result.snippet}`
+          }
+          if (pageContent.length < 30) return
+
+          const extracted = await extractSignalsFromContent(pageContent, company.name, watchCountries)
           for (const s of extracted) {
             let hostname = result.url
             try { hostname = new URL(result.url).hostname } catch {}
@@ -347,9 +379,9 @@ export async function runAgentType(
               type:        s.type,
             })
           }
-        }
-        // Délai anti-spam
-        await new Promise(r => setTimeout(r, 200))
+        })
+        await Promise.allSettled(jobs)
+        await new Promise(r => setTimeout(r, 150))
       } catch (e: any) {
         const msg = `[${type}] "${query.slice(0, 40)}…" → ${e?.message ?? e}`
         errors.push(msg)
@@ -484,8 +516,13 @@ export async function runDeepResearchAgent(
 
       for (const query of currentQueries) {
         try {
-          const webResults = await webSearch(query, 3)
+          const rawResults = await webSearch(query, 3)
           queriesRun++
+
+          // Filtrage sémantique avant Gemini
+          const webResults = await filterByRelevance(
+            rawResults, company.name, sectors, watchCountries,
+          )
 
           // ★ Fetches EN PARALLÈLE ; skip fetchPageContent si Perplexity a déjà le contenu
           const drJobs = webResults.map(async (result) => {

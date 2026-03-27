@@ -50,17 +50,46 @@ function formatMessage(text: string) {
   })
 }
 
+const WELCOME: Message = {
+  role: 'assistant',
+  content: 'Bonjour ! Je suis votre assistant MarketLens. Je peux vous aider à analyser vos données de veille, comprendre vos concurrents, ou explorer de nouvelles opportunités de marché. Que souhaitez-vous explorer ?'
+}
+
 export default function AssistantPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      content: 'Bonjour ! Je suis votre assistant MarketLens. Je peux vous aider à analyser vos données de veille, comprendre vos concurrents, ou explorer de nouvelles opportunités de marché. Que souhaitez-vous explorer ?'
-    }
-  ])
+  const [messages, setMessages] = useState<Message[]>([WELCOME])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(true)
   const [error, setError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const initialized = useRef(false)
+
+  // Charger l'historique depuis la DB au montage
+  useEffect(() => {
+    if (initialized.current) return
+    initialized.current = true
+
+    async function loadHistory() {
+      try {
+        const res = await fetch('/api/chat?limit=60')
+        if (!res.ok) return
+        const data = await res.json()
+        const history: Message[] = (data.messages || []).map((m: any) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        }))
+        if (history.length > 0) {
+          setMessages(history)
+        }
+      } catch {
+        // Silencieux — on garde le message d'accueil par défaut
+      } finally {
+        setHistoryLoading(false)
+      }
+    }
+
+    loadHistory()
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -160,7 +189,21 @@ export default function AssistantPage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-1">
-        {messages.map((msg, i) => (
+
+        {/* Chargement initial de l'historique */}
+        {historyLoading && (
+          <div className="flex items-center justify-center py-8 gap-2 text-neutral-400">
+            <div className="flex gap-1">
+              {[0,1,2].map(i => (
+                <div key={i} className="w-1.5 h-1.5 rounded-full bg-neutral-300 animate-bounce"
+                  style={{ animationDelay: `${i * 0.15}s` }} />
+              ))}
+            </div>
+            <span className="text-xs">Chargement de l&apos;historique...</span>
+          </div>
+        )}
+
+        {!historyLoading && messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             {msg.role === 'assistant' && (
               <div className="w-6 h-6 rounded-full bg-blue-700 flex items-center justify-center mr-2 flex-shrink-0 mt-1">
@@ -180,8 +223,8 @@ export default function AssistantPage() {
           </div>
         ))}
 
-        {/* Indicateur de chargement */}
-        {loading && (
+        {/* Indicateur de chargement réponse en cours */}
+        {!historyLoading && loading && (
           <div className="flex justify-start">
             <div className="w-6 h-6 rounded-full bg-blue-700 flex items-center justify-center mr-2 flex-shrink-0 mt-1">
               <Sparkles size={12} className="text-white" />
@@ -197,8 +240,8 @@ export default function AssistantPage() {
           </div>
         )}
 
-        {/* Suggestions (affichées seulement au début) */}
-        {messages.length === 1 && !loading && (
+        {/* Suggestions — affichées seulement si historique vide (1 seul message = l'accueil) */}
+        {!historyLoading && messages.length === 1 && !loading && (
           <div className="flex flex-wrap gap-2 mt-2">
             {suggestions.map(s => (
               <button key={s} onClick={() => sendMessage(s)}

@@ -49,7 +49,8 @@ export default async function WatchDetailPage({ params }: { params: { id: string
       .limit(8),
   ])
 
-  const companies  = watch.watch_companies?.map((wc: any) => wc.companies).filter(Boolean) ?? []
+  const companies =
+    (watch.watch_companies ?? []).map((wc: any) => wc.companies).filter(Boolean)
   const noCompanies = companies.length === 0
 
   // Dernier job Agent 1 avec son breakdown

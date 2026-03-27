@@ -28,12 +28,13 @@ interface Props {
 export default function ScanHistory({ jobs }: Props) {
   const [open, setOpen] = useState(false)
 
-  if (!jobs || jobs.length === 0) return null
+  const list = Array.isArray(jobs) ? jobs : []
+  if (list.length === 0) return null
 
   // Résumé pour l'état replié
-  const lastJob   = jobs[0]
+  const lastJob   = list[0]
   const lastDate  = fmtDate(lastJob?.started_at)
-  const doneCount = jobs.filter((j: any) => j.status === 'done').length
+  const doneCount = list.filter((j: any) => j.status === 'done').length
 
   return (
     <div className="card-lg">
@@ -44,12 +45,12 @@ export default function ScanHistory({ jobs }: Props) {
       >
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-bold text-neutral-900">Derniers scans</h3>
-          <span className="badge badge-gray text-[9px]">{jobs.length}</span>
+          <span className="badge badge-gray text-[9px]">{list.length}</span>
         </div>
         <div className="flex items-center gap-2">
           {!open && (
             <span className="text-[10px] text-neutral-400">
-              {lastDate} · {doneCount}/{jobs.length} ok
+              {lastDate} · {doneCount}/{list.length} ok
             </span>
           )}
           <div className="w-5 h-5 rounded-full bg-neutral-100 group-hover:bg-neutral-200 flex items-center justify-center transition-colors flex-shrink-0">
@@ -63,7 +64,7 @@ export default function ScanHistory({ jobs }: Props) {
       {/* Contenu dépliable */}
       {open && (
         <div className="space-y-2.5 mt-3 pt-3 border-t border-neutral-100">
-          {jobs.map((job: any) => {
+          {list.map((job: any) => {
             const dur = fmtDuration(job.started_at, job.completed_at)
             const bd  = job.metadata?.breakdown_agents as Record<string, number> | undefined
             return (

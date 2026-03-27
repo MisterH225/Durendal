@@ -196,7 +196,7 @@ export async function POST(req: NextRequest) {
 
     const watchCountries: string[] = watch.countries ?? []
     const watchSectors: string[]   = watch.sectors   ?? []
-    const realCompanies: any[]     = watch.watch_companies?.map((wc: any) => wc.companies).filter(Boolean) ?? []
+    const realCompanies: any[]     = (watch.watch_companies ?? []).map((wc: any) => wc.companies).filter(Boolean)
     const companies: any[] = realCompanies.length > 0
       ? realCompanies
       : [{ id: 'sector-' + watchId, name: watchSectors.length > 0 ? watchSectors.join(', ') : (watch.name ?? 'secteur'), website: null, linkedin_url: null, country: watchCountries[0] ?? null }]
@@ -417,11 +417,10 @@ export async function POST(req: NextRequest) {
     // ══════════════════════════════════════════════════════════════════════
     log(`\n[Scrape] ══ RÉSUMÉ COLLECTE ══`)
     log(`  Agents parallèles : ${statsBySource.parallel_agents}`)
-    log(`    web_scanner             : ${engineResult.breakdown.web_scanner               ?? 0}`)
-    log(`    press_monitor           : ${engineResult.breakdown.press_monitor             ?? 0}`)
-    log(`    analyst                 : ${engineResult.breakdown.analyst                   ?? 0}`)
-    log(`    deep_research           : ${engineResult.breakdown.deep_research             ?? 0}`)
-    log(`    deep_research_iterative : ${engineResult.breakdown.deep_research_iterative   ?? 0}`)
+    log(`    web_scanner     : ${engineResult.breakdown.web_scanner   ?? 0}`)
+    log(`    press_monitor   : ${engineResult.breakdown.press_monitor ?? 0}`)
+    log(`    analyst         : ${engineResult.breakdown.analyst       ?? 0}`)
+    log(`    deep_research   : ${engineResult.breakdown.deep_research ?? 0}`)
     log(`  Perplexity        : ${statsBySource.perplexity}`)
     log(`  Firecrawl         : ${statsBySource.firecrawl}`)
     log(`  Site officiel     : ${statsBySource.website}`)

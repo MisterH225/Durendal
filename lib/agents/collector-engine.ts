@@ -19,7 +19,12 @@ import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AgentType = 'web_scanner' | 'press_monitor' | 'analyst' | 'deep_research'
+export type AgentType =
+  | 'web_scanner'
+  | 'press_monitor'
+  | 'analyst'
+  | 'deep_research'
+  | 'deep_research_iterative'
 
 export interface CollectedSignal {
   company_id:  string
@@ -179,6 +184,10 @@ export function buildQueriesForAgent(
         `"${companyName}" concurrents compétiteurs analyse`,
         `${companyName} Africa ${sector} growth expansion partnership ${year}`,
       ]
+
+    // deep_research_iterative gère ses propres requêtes dynamiquement
+    default:
+      return []
   }
 }
 
@@ -280,7 +289,198 @@ export async function runAgentType(
   return { type, signals, queriesRun, errors, durationMs }
 }
 
-// ─── 6. Orchestrateur principal : 4 agents en parallèle ──────────────────────
+// ─── 6. Deep Research Itératif (Perplexity-style) ────────────────────────────
+//
+// Contrairement aux 4 agents avec requêtes fixes, cet agent :
+//  1. Demande à Gemini de GÉNÉRER les sous-questions de recherche
+//  2. Recherche et extrait pour chaque sous-question
+//  3. Demande à Gemini d'ÉVALUER les gaps restants
+//  4. Lance une 2ème itération ciblée sur les gaps
+//
+// C'est l'équivalent du "Perplexity Deep Research" :
+// le LLM pilote lui-même la stratégie de recherche.
+
+/** ÉTAPE 1 : Gemini génère des sous-questions de recherche ciblées */
+async function generateSubQuestions(
+  companyName:  string,
+  sectors:      string[],
+  countryNames: string[],
+): Promise<string[]> {
+  const primary = countryNames[0] || 'Afrique'
+  const sector  = sectors.slice(0, 2).join(', ')
+  const year    = new Date().getFullYear()
+
+  const prompt = `Tu es un expert en intelligence économique africaine.
+Pour analyser l'entreprise "${companyName}" (secteur : ${sector}, marché principal : ${primary}),
+génère exactement 5 sous-questions de recherche web précises et COMPLÉMENTAIRES.
+
+Chaque question doit couvrir un angle différent :
+- Situation financière et levées de fonds récentes
+- Contrats, appels d'offres et partenariats en ${year - 1}-${year}
+- Positionnement et concurrents directs en Afrique
+- Expansion géographique, nouveaux marchés ou produits
+- Actualités opérationnelles (recrutements, dirigeants, projets)
+
+Formule les questions comme des REQUÊTES DE RECHERCHE WEB efficaces.
+Réponds UNIQUEMENT en JSON : {"questions":["requête 1","requête 2","requête 3","requête 4","requête 5"]}`
+
+  try {
+    const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 600 })
+    const parsed   = parseGeminiJson<{ questions: string[] }>(text)
+    return (parsed?.questions ?? []).slice(0, 5).filter(q => q.length > 5)
+  } catch {
+    // Fallback : requêtes génériques si Gemini échoue
+    return [
+      `"${companyName}" ${primary} financement résultats ${year}`,
+      `"${companyName}" contrat partenariat ${year}`,
+      `"${companyName}" concurrents ${sector}`,
+      `"${companyName}" expansion nouveaux marchés ${year}`,
+      `"${companyName}" actualités ${year}`,
+    ]
+  }
+}
+
+/** ÉTAPE 3 : Gemini évalue les gaps et génère des requêtes de suivi */
+async function evaluateGapsAndFollowUp(
+  companyName:  string,
+  sectors:      string[],
+  countryNames: string[],
+  findings:     string[],
+): Promise<string[]> {
+  if (findings.length === 0) return []
+  const primary = countryNames[0] || 'Afrique'
+  const sector  = sectors.slice(0, 2).join(', ')
+
+  const prompt = `Tu analyses les informations collectées sur "${companyName}" (${sector}, ${primary}).
+
+RÉSULTATS COLLECTÉS (itération 1) :
+${findings.slice(0, 25).map((f, i) => `[${i + 1}] ${f.slice(0, 250)}`).join('\n')}
+
+Identifie les LACUNES importantes — aspects non couverts ou insuffisamment documentés.
+Pour chaque lacune pertinente, génère UNE requête de recherche web précise pour la combler.
+Maximum 3 requêtes de suivi.
+
+Réponds UNIQUEMENT en JSON :
+{"gaps":["description du gap 1","gap 2"],"followup_queries":["requête web 1","requête web 2","requête web 3"]}
+
+Si les informations sont suffisantes et complètes, réponds : {"gaps":[],"followup_queries":[]}`
+
+  try {
+    const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 500 })
+    const parsed   = parseGeminiJson<{ gaps: string[]; followup_queries: string[] }>(text)
+    return (parsed?.followup_queries ?? []).slice(0, 3).filter(q => q.length > 5)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Agent Deep Research Itératif
+ * 5ème agent parallèle — le LLM pilote sa propre stratégie de recherche.
+ * Reproduit le comportement "Perplexity Deep Research".
+ */
+export async function runDeepResearchAgent(
+  companies:      any[],
+  sectors:        string[],
+  watchCountries: string[],
+  log:            (msg: string) => void,
+): Promise<AgentResult> {
+  const start        = Date.now()
+  const allSignals:  CollectedSignal[] = []
+  const errors:      string[]          = []
+  let   queriesRun   = 0
+  const countryNames = watchCountries.map(c => COUNTRY_NAMES[c] || c)
+  const MAX_ITER     = 2 // profondeur max : 2 itérations (extensible)
+
+  log(`  [deep_research_iterative] ★ Démarrage — ${companies.length} entreprise(s)`)
+
+  for (const company of companies) {
+    log(`\n  [deep_research_iterative] ══ "${company.name}" ══`)
+
+    // ── ITER 0 : Gemini génère les sous-questions ──────────────────────────
+    log(`  [deep_research_iterative] Génération des sous-questions (Gemini)...`)
+    const subQuestions = await generateSubQuestions(company.name, sectors, countryNames)
+    log(`  [deep_research_iterative] ${subQuestions.length} sous-questions :`)
+    subQuestions.forEach((q, i) => log(`    ${i + 1}. ${q}`))
+
+    const allFindings: string[] = [] // résumés accumulés pour l'analyse de gaps
+    let currentQueries = subQuestions
+
+    for (let iter = 0; iter < MAX_ITER; iter++) {
+      if (currentQueries.length === 0) break
+      log(`  [deep_research_iterative] Itération ${iter + 1}/${MAX_ITER} — ${currentQueries.length} requêtes`)
+
+      for (const query of currentQueries) {
+        try {
+          const webResults = await webSearch(query, 4)
+          queriesRun++
+
+          for (const result of webResults) {
+            let pageContent = await fetchPageContent(result.url)
+            if (pageContent.length < 100) pageContent = `${result.title}\n\n${result.snippet}`
+            if (pageContent.length < 30) continue
+
+            // Accumule pour l'analyse de gaps (résumé court)
+            allFindings.push(`${result.title}: ${pageContent.slice(0, 300)}`)
+
+            // Extrait les signaux commerciaux
+            const extracted = await extractSignalsFromContent(pageContent, company.name, watchCountries)
+            for (const s of extracted) {
+              let hostname = result.url
+              try { hostname = new URL(result.url).hostname } catch {}
+              allSignals.push({
+                company_id:  company.id,
+                title:       s.title || result.title,
+                content:     s.content,
+                url:         result.url,
+                source_name: hostname,
+                relevance:   s.relevance,
+                type:        s.type,
+              })
+            }
+          }
+          await new Promise(r => setTimeout(r, 200))
+        } catch (e: any) {
+          const msg = `[DR-iter${iter + 1}] "${query.slice(0, 40)}…": ${e?.message ?? e}`
+          errors.push(msg)
+          log(`    ⚠ ${msg}`)
+        }
+      }
+
+      // ── Analyse des gaps après l'itération 1 seulement ────────────────
+      if (iter === 0) {
+        log(`  [deep_research_iterative] Analyse des gaps (Gemini)...`)
+        const followUps = await evaluateGapsAndFollowUp(
+          company.name, sectors, countryNames, allFindings,
+        )
+        if (followUps.length > 0) {
+          log(`  [deep_research_iterative] ${followUps.length} requêtes de suivi :`)
+          followUps.forEach((q, i) => log(`    ↳ ${i + 1}. ${q}`))
+          currentQueries = followUps
+        } else {
+          log(`  [deep_research_iterative] Pas de gaps — recherche complète ✓`)
+          break
+        }
+      }
+    }
+
+    const companySignals = allSignals.filter(s => s.company_id === company.id)
+    log(`  [deep_research_iterative] "${company.name}" → ${companySignals.length} signaux | ${queriesRun} requêtes`)
+  }
+
+  const durationMs = Date.now() - start
+  log(`  [deep_research_iterative] ✓ TOTAL ${allSignals.length} signaux | ${queriesRun} requêtes | ${durationMs}ms`)
+
+  return {
+    type:       'deep_research_iterative',
+    signals:    allSignals,
+    queriesRun,
+    errors,
+    durationMs,
+  }
+}
+
+// ─── 7. Orchestrateur principal : 5 agents en parallèle ──────────────────────
 // Reproduit runAllWatchAgents() de VeilleCI (Promise.all sur les 4 types)
 export async function runAllAgentsParallel(
   companies:      any[],
@@ -289,26 +489,41 @@ export async function runAllAgentsParallel(
   log:            (msg: string) => void = console.log,
 ): Promise<EngineResult> {
   const start = Date.now()
-  const agentTypes: AgentType[] = ['web_scanner', 'press_monitor', 'analyst', 'deep_research']
 
-  log(`[Engine] ★ Lancement de ${agentTypes.length} agents en PARALLÈLE`)
+  log(`[Engine] ★ Lancement de 5 agents en PARALLÈLE`)
   log(`[Engine]   Entreprises  : ${companies.map((c: any) => c.name).join(', ')}`)
   log(`[Engine]   Secteurs     : ${sectors.join(', ')}`)
   log(`[Engine]   Pays         : ${watchCountries.join(', ')}`)
+  log(`[Engine]   Agents       : web_scanner | press_monitor | analyst | deep_research | deep_research_iterative`)
 
-  // ★ Exécution concurrente — comme Promise.all(agentIds.map(runAgentCollector))
-  const promises = agentTypes.map(type =>
+  // ★ Agents 1–4 : requêtes fixes par type (VeilleCI)
+  const fixedTypes: AgentType[] = ['web_scanner', 'press_monitor', 'analyst', 'deep_research']
+  const fixedPromises = fixedTypes.map(type =>
     runAgentType(type, companies, sectors, watchCountries, log).catch((e: any): AgentResult => {
       log(`  [${type}] ✗ FATAL: ${e?.message ?? e}`)
       return { type, signals: [], queriesRun: 0, errors: [`Fatal: ${e?.message}`], durationMs: 0 }
     }),
   )
 
-  const settled = await Promise.allSettled(promises)
+  // ★ Agent 5 : deep research itératif (Perplexity-style)
+  const deepResearchPromise = runDeepResearchAgent(companies, sectors, watchCountries, log)
+    .catch((e: any): AgentResult => {
+      log(`  [deep_research_iterative] ✗ FATAL: ${e?.message ?? e}`)
+      return {
+        type:       'deep_research_iterative',
+        signals:    [],
+        queriesRun: 0,
+        errors:     [`Fatal: ${e?.message}`],
+        durationMs: 0,
+      }
+    })
 
-  const allSignals: CollectedSignal[]             = []
+  // Tous en parallèle — si un agent échoue, les 4 autres continuent
+  const settled = await Promise.allSettled([...fixedPromises, deepResearchPromise])
+
+  const allSignals: CollectedSignal[]               = []
   const breakdown: Partial<Record<AgentType, number>> = {}
-  const errors:    string[]                        = []
+  const errors:    string[]                          = []
 
   for (const result of settled) {
     if (result.status === 'fulfilled') {
@@ -324,11 +539,12 @@ export async function runAllAgentsParallel(
 
   const durationMs = Date.now() - start
   log(`[Engine] ══ COLLECTE TERMINÉE ══`)
-  log(`[Engine]   web_scanner   : ${breakdown.web_scanner   ?? 0} signaux`)
-  log(`[Engine]   press_monitor : ${breakdown.press_monitor ?? 0} signaux`)
-  log(`[Engine]   analyst       : ${breakdown.analyst       ?? 0} signaux`)
-  log(`[Engine]   deep_research : ${breakdown.deep_research ?? 0} signaux`)
-  log(`[Engine]   TOTAL         : ${allSignals.length} signaux en ${durationMs}ms`)
+  log(`[Engine]   web_scanner             : ${breakdown.web_scanner               ?? 0} signaux`)
+  log(`[Engine]   press_monitor           : ${breakdown.press_monitor             ?? 0} signaux`)
+  log(`[Engine]   analyst                 : ${breakdown.analyst                   ?? 0} signaux`)
+  log(`[Engine]   deep_research           : ${breakdown.deep_research             ?? 0} signaux`)
+  log(`[Engine]   deep_research_iterative : ${breakdown.deep_research_iterative   ?? 0} signaux`)
+  log(`[Engine]   TOTAL                   : ${allSignals.length} signaux en ${durationMs}ms`)
 
   return { allSignals, breakdown, durationMs, errors }
 }

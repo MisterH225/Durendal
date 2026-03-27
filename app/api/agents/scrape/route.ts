@@ -108,7 +108,7 @@ async function researchWithPerplexity(
     const query = `Actualités récentes ${year - 1}-${year} sur "${companyName}" en Afrique (${countryNames}). Secteurs : ${sectorStr}. Cherche : levées de fonds, nouveaux produits, partenariats stratégiques, expansion géographique, résultats financiers, contrats.`
     log(`  [perplexity] "${companyName}" — recherche web...`)
 
-    const { text, citations } = await perplexityResponses(query, 'quality-search')
+    const { text, citations } = await perplexityResponses(query)
 
     if (!text || text.trim().length < 80) {
       log(`  [perplexity] "${companyName}" → réponse vide`)

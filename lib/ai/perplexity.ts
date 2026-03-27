@@ -3,55 +3,45 @@
  * Client Perplexity — Responses API (/v1/responses) + Search API (/search).
  *
  * Responses API (endpoint principal) :
- *   POST /v1/responses
- *   preset: "fast-search" | "quality-search"
- *   → retourne une réponse synthétisée + annotations (citations URL)
- *   → 1 seul appel = recherche web + synthèse → idéal pour agents
+ *   POST /v1/responses  { preset: "fast-search", input: "..." }
+ *   → output[0]: search_results (URLs)
+ *   → output[1]: message → content[0].text (synthèse avec citations inline [1][2])
+ *   → top-level: text (raccourci)
  *
  * Search API (fallback) :
- *   POST /search
- *   → retourne des résultats structurés {title, url, snippet}
+ *   POST /search { query, max_results, max_tokens_per_page }
+ *   → results[]: {title, url, snippet}
  */
 
 const PERPLEXITY_BASE = 'https://api.perplexity.ai'
 
-// ── Types : Responses API ─────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface PerplexityUrlCitation {
-  type:        'url_citation'
-  url:         string
-  title:       string
-  start_index?: number
-  end_index?:   number
+export interface PerplexityCitation {
+  url:   string
+  title: string
 }
 
 export interface PerplexityResponseResult {
   text:      string
-  citations: PerplexityUrlCitation[]
+  citations: PerplexityCitation[]
 }
-
-// ── Types : Search API ────────────────────────────────────────────────────────
 
 export interface PerplexitySearchResult {
   title:         string
   url:           string
   snippet:       string
   date?:         string | null
-  last_updated?: string | null
 }
 
 // ── Responses API (principal) ─────────────────────────────────────────────────
 
 /**
  * Appel à la Perplexity Responses API.
- * Retourne une réponse synthétisée + citations web.
- *
- * @param input   Requête / question pour l'agent
- * @param preset  "fast-search" (rapide) | "quality-search" (meilleure qualité)
+ * Retourne une réponse synthétisée + URLs sources.
  */
 export async function perplexityResponses(
-  input:  string,
-  preset: 'fast-search' | 'quality-search' = 'fast-search',
+  input: string,
 ): Promise<PerplexityResponseResult> {
   const apiKey = process.env.PERPLEXITY_API_KEY
   if (!apiKey) throw new Error('PERPLEXITY_API_KEY manquant')
@@ -62,8 +52,8 @@ export async function perplexityResponses(
       'Content-Type': 'application/json',
       Authorization:  `Bearer ${apiKey}`,
     },
-    body:   JSON.stringify({ preset, input }),
-    signal: AbortSignal.timeout(20_000),
+    body:   JSON.stringify({ preset: 'fast-search', input }),
+    signal: AbortSignal.timeout(25_000),
   })
 
   if (!res.ok) {
@@ -73,38 +63,53 @@ export async function perplexityResponses(
 
   const data = await res.json()
 
-  // Extrait le texte synthétisé depuis output[].content[].text
-  const outputMsg   = data.output?.find((o: any) => o.type === 'message')
-  const contentPart = outputMsg?.content?.find((c: any) => c.type === 'output_text')
-  const text        = contentPart?.text ?? data.output_text ?? data.text ?? ''
+  // ── Extraire le texte ─────────────────────────────────────────────────
+  // Priorité : top-level `text` > output[message].content[output_text].text
+  let text = data.text ?? ''
+  if (!text) {
+    const outputMsg   = data.output?.find((o: any) => o.type === 'message')
+    const contentPart = outputMsg?.content?.find((c: any) => c.type === 'output_text')
+    text = contentPart?.text ?? ''
+  }
 
-  // Extrait les citations (annotations de type url_citation)
-  const annotations: any[] = contentPart?.annotations ?? data.annotations ?? []
-  const citations: PerplexityUrlCitation[] = annotations
-    .filter((a: any) => a.type === 'url_citation' && a.url)
-    .map((a: any) => ({
-      type:  'url_citation' as const,
-      url:   a.url,
-      title: a.title ?? '',
-    }))
-    // Déduplique par URL
-    .filter((c, i, arr) => arr.findIndex(x => x.url === c.url) === i)
+  // ── Extraire les citations/URLs ───────────────────────────────────────
+  // Source 1 : output[search_results].results[]
+  const searchOutput = data.output?.find((o: any) => o.type === 'search_results')
+  const searchResults: any[] = searchOutput?.results ?? []
+
+  // Source 2 : annotations sur output_text (certaines versions de l'API)
+  const outputMsg2   = data.output?.find((o: any) => o.type === 'message')
+  const contentPart2 = outputMsg2?.content?.find((c: any) => c.type === 'output_text')
+  const annotations: any[] = contentPart2?.annotations ?? []
+
+  const citations: PerplexityCitation[] = []
+
+  // D'abord les search_results (plus fiable)
+  for (const r of searchResults) {
+    const url   = r.url ?? r.link ?? ''
+    const title = r.title ?? r.name ?? ''
+    if (url && !citations.some(c => c.url === url)) {
+      citations.push({ url, title })
+    }
+  }
+
+  // Puis les annotations (complémentaire)
+  for (const a of annotations) {
+    if (a.url && !citations.some(c => c.url === a.url)) {
+      citations.push({ url: a.url, title: a.title ?? '' })
+    }
+  }
 
   return { text, citations }
 }
 
 // ── Search API (fallback) ─────────────────────────────────────────────────────
 
-/**
- * Appel à la Perplexity Search API (fallback si /v1/responses échoue).
- * Retourne des résultats web structurés {title, url, snippet}.
- */
 export async function perplexitySearch(
   query: string,
   options: {
     maxResults?:       number
     maxTokensPerPage?: number
-    recency?:          'hour' | 'day' | 'week' | 'month' | 'year'
   } = {},
 ): Promise<PerplexitySearchResult[]> {
   const apiKey = process.env.PERPLEXITY_API_KEY
@@ -115,7 +120,6 @@ export async function perplexitySearch(
     max_results:         options.maxResults       ?? 5,
     max_tokens_per_page: options.maxTokensPerPage ?? 512,
   }
-  if (options.recency) body.search_recency_filter = options.recency
 
   const res = await fetch(`${PERPLEXITY_BASE}/search`, {
     method:  'POST',
@@ -138,13 +142,6 @@ export async function perplexitySearch(
 
 // ── Embeddings API ───────────────────────────────────────────────────────────
 
-/**
- * Génère des vecteurs d'embeddings pour un tableau de textes.
- * Modèle : pplx-embed-v1-4b (4 milliards de paramètres, performant pour similarité sémantique)
- *
- * Retourne un tableau de vecteurs float[] dans le même ordre que l'input.
- * Utile pour filtrer les résultats de recherche par pertinence avant appel Gemini.
- */
 export async function perplexityEmbed(texts: string[]): Promise<number[][]> {
   const apiKey = process.env.PERPLEXITY_API_KEY
   if (!apiKey) throw new Error('PERPLEXITY_API_KEY manquant')
@@ -166,17 +163,11 @@ export async function perplexityEmbed(texts: string[]): Promise<number[][]> {
   }
 
   const data = await res.json()
-  // Format : { data: [{ index: 0, embedding: number[] }, ...] }
   return (data.data as { index: number; embedding: number[] }[])
     .sort((a, b) => a.index - b.index)
     .map(d => d.embedding)
 }
 
-/**
- * Similarité cosinus entre deux vecteurs.
- * Retourne une valeur entre -1 (opposés) et 1 (identiques).
- * Seuil recommandé pour filtrage de pertinence : 0.15–0.25
- */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (!a || !b || a.length !== b.length || a.length === 0) return 0
   let dot = 0, normA = 0, normB = 0
@@ -193,11 +184,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
 /**
  * Interface unifiée pour le collector-engine.
- * Essaie Responses API (/v1/responses) en premier, puis /search en fallback.
- *
- * Retourne des SearchResult avec :
- *   - fullContent : texte synthétisé (riche, ~500 mots) → skip fetchPageContent
- *   - url/title  : première citation si disponible, sinon URL factice
+ * Essaie Responses API d'abord, puis /search en fallback.
  */
 export async function perplexityWebSearch(
   query:      string,
@@ -205,24 +192,20 @@ export async function perplexityWebSearch(
 ): Promise<{ title: string; url: string; snippet: string; fullContent?: string }[]> {
   // ── Niveau 1 : Responses API ────────────────────────────────────────────────
   try {
-    const { text, citations } = await perplexityResponses(query, 'fast-search')
+    const { text, citations } = await perplexityResponses(query)
 
     if (text && text.length > 100) {
-      // La réponse synthétisée est le contenu principal
-      // Les citations deviennent les "résultats" individuels (max maxResults)
       const sources = citations.slice(0, maxResults)
 
       if (sources.length > 0) {
-        // Un résultat par citation, tous avec le même contenu synthétisé
         return sources.map((c, i) => ({
           title:       c.title || `Source ${i + 1}`,
           url:         c.url,
           snippet:     text.slice(0, 300),
-          fullContent: text,  // texte complet partagé entre toutes les sources
+          fullContent: text,
         }))
       }
 
-      // Réponse sans citation — on retourne un résultat synthétique
       return [{
         title:       query.slice(0, 80),
         url:         `https://perplexity.ai/search?q=${encodeURIComponent(query)}`,
@@ -231,7 +214,7 @@ export async function perplexityWebSearch(
       }]
     }
   } catch {
-    // Silence — tombe en fallback /search
+    // Fallback /search
   }
 
   // ── Niveau 2 : Search API ────────────────────────────────────────────────────

@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
   if (process.env.PERPLEXITY_API_KEY) {
     try {
       const t0  = Date.now()
-      const res = await perplexityResponses(query, 'fast-search')
+      const res = await perplexityResponses(query)
       report.steps.perplexity_responses = {
         status:     res.text.length > 100 ? 'ok' : 'empty',
         durationMs: Date.now() - t0,

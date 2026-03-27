@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { Check, X, Edit } from 'lucide-react'
+import PlanEditTable from './PlanEditTable'
 
 export default async function AdminPlansPage() {
   const supabase = createClient()
@@ -80,56 +81,7 @@ export default async function AdminPlansPage() {
         ))}
       </div>
 
-      {/* Raw edit table */}
-      <div className="card-lg">
-        <h3 className="text-sm font-bold text-neutral-900 mb-4">Modifier les limites directement</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[600px]">
-            <thead>
-              <tr className="bg-neutral-50 border-b border-neutral-200">
-                {['Plan', 'Prix/mois', 'Max veilles', 'Max entreprises', 'Max rapports', 'Membres', ''].map(h => (
-                  <th key={h} className="text-left py-2.5 px-3 text-neutral-500 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {plans?.map((plan: any) => (
-                <tr key={plan.id} className="border-b border-neutral-50">
-                  <td className="py-2.5 px-3 font-bold text-neutral-900">{plan.display_name}</td>
-                  <td className="py-2.5 px-3">
-                    <input defaultValue={plan.price_monthly / 100} type="number"
-                      className="w-16 px-2 py-1 border border-neutral-200 rounded text-xs" />€
-                  </td>
-                  <td className="py-2.5 px-3">
-                    <input defaultValue={plan.max_watches} type="number"
-                      className="w-16 px-2 py-1 border border-neutral-200 rounded text-xs" />
-                  </td>
-                  <td className="py-2.5 px-3">
-                    <input defaultValue={plan.max_companies} type="number"
-                      className="w-16 px-2 py-1 border border-neutral-200 rounded text-xs" />
-                  </td>
-                  <td className="py-2.5 px-3">
-                    <input defaultValue={plan.max_reports_per_month} type="number"
-                      className="w-16 px-2 py-1 border border-neutral-200 rounded text-xs" />
-                  </td>
-                  <td className="py-2.5 px-3">
-                    <input defaultValue={plan.max_team_members || 1} type="number"
-                      className="w-16 px-2 py-1 border border-neutral-200 rounded text-xs" />
-                  </td>
-                  <td className="py-2.5 px-3">
-                    <button className="text-[10px] px-2.5 py-1 bg-blue-700 text-white rounded font-semibold hover:bg-blue-800 transition-colors">
-                      Sauvegarder
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="text-[11px] text-neutral-400 mt-3">
-          Les modifications sont appliquées instantanément à tous les utilisateurs du plan concerné.
-        </p>
-      </div>
+      <PlanEditTable plans={plans || []} />
     </div>
   )
 }

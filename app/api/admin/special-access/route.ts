@@ -10,19 +10,38 @@ export async function POST(req: NextRequest) {
   if (profile?.role !== 'superadmin') return NextResponse.json({ error: 'Accès refusé' }, { status: 403 })
 
   const body = await req.json()
-  const { type, account_id, granted_plan, duration_days, on_expiry, admin_note } = body
+  const { type, account_id, email, granted_plan, duration_days, expires_at, on_expiry, admin_note } = body
 
-  if (!type || !account_id || !granted_plan || !duration_days) {
+  if (!type || !granted_plan) {
     return NextResponse.json({ error: 'Champs requis manquants' }, { status: 400 })
+  }
+
+  // Résoudre account_id depuis email si nécessaire
+  let resolvedAccountId = account_id
+  if (!resolvedAccountId && email) {
+    const { data: profile } = await supabase.from('profiles').select('id').eq('email', email).single()
+    if (!profile) return NextResponse.json({ error: `Aucun compte trouvé pour ${email}` }, { status: 404 })
+    const { data: account } = await supabase.from('accounts').select('id').eq('id', profile.id).single()
+    if (!account) return NextResponse.json({ error: 'Compte introuvable' }, { status: 404 })
+    resolvedAccountId = account.id
+  }
+
+  if (!resolvedAccountId) {
+    return NextResponse.json({ error: 'account_id ou email requis' }, { status: 400 })
   }
 
   // Récupère le plan actuel du compte
   const { data: account } = await supabase
-    .from('accounts').select('plans(name)').eq('id', account_id).single()
+    .from('accounts').select('plans(name)').eq('id', resolvedAccountId).single()
   const originalPlan = (account as any)?.plans?.name || 'free'
 
-  const expiresAt = new Date()
-  expiresAt.setDate(expiresAt.getDate() + parseInt(duration_days))
+  let expiresAt: Date
+  if (expires_at) {
+    expiresAt = new Date(expires_at)
+  } else {
+    expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + parseInt(duration_days || '30'))
+  }
 
   // Génère un lien d'activation unique pour les upgrades
   const activationLink = type === 'plan_upgrade'
@@ -30,7 +49,7 @@ export async function POST(req: NextRequest) {
     : null
 
   const { data, error } = await supabase.from('special_access').insert({
-    account_id, type, granted_plan, original_plan: originalPlan,
+    account_id: resolvedAccountId, type, granted_plan, original_plan: originalPlan,
     expires_at: expiresAt.toISOString(),
     on_expiry: on_expiry || 'downgrade',
     admin_note, activation_link: activationLink,
@@ -43,7 +62,7 @@ export async function POST(req: NextRequest) {
   if (type === 'test_profile') {
     const { data: newPlan } = await supabase.from('plans').select('id').eq('name', granted_plan).single()
     if (newPlan) {
-      await supabase.from('accounts').update({ plan_id: newPlan.id }).eq('id', account_id)
+      await supabase.from('accounts').update({ plan_id: newPlan.id }).eq('id', resolvedAccountId)
     }
   }
 

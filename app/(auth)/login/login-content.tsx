@@ -82,11 +82,8 @@ export default function LoginContent() {
       <div className="bg-white border border-neutral-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-7">
           <div className="flex items-center gap-2.5 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-blue-700 flex items-center justify-center flex-shrink-0">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="3" fill="white"/>
-                <circle cx="8" cy="8" r="6.5" stroke="white" strokeWidth="1" strokeDasharray="2 2"/>
-              </svg>
+            <div className="w-9 h-9 rounded-xl overflow-hidden flex-shrink-0 bg-black flex items-center justify-center">
+              <img src="/logo.png" alt="MarketLens" className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="text-base font-bold text-neutral-900 tracking-tight">MarketLens</div>

@@ -5,6 +5,10 @@ export const metadata: Metadata = {
   title: 'MarketLens — Veille concurrentielle Afrique',
   description: 'La plateforme de veille concurrentielle et d\'analyse de marché pour les entreprises africaines.',
   keywords: 'veille concurrentielle, analyse marché, Afrique, Côte d\'Ivoire, fintech, intelligence économique',
+  icons: {
+    icon: '/logo.png',
+    apple: '/logo.png',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -1,10 +1,27 @@
 'use client'
-import { useState } from 'react'
-import { Plus, Globe, FileText, Database, X, AlertCircle, Check } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { Plus, Globe, FileText, Database, X, AlertCircle, Check, Upload, Loader2 } from 'lucide-react'
 
 const SECTORS = ['Fintech','E-commerce','Télécom','Logistique','BTP / Immobilier','Santé','EdTech','Énergie','Agriculture','Autre']
 const COUNTRIES = ['CI','SN','GH','NG','KE','CM','MA','ZA','BJ','BF','ML','TG']
 const METHOD_LABELS: Record<string, string> = { rss: 'RSS', scraping: 'Scraping', api: 'API' }
+
+function extractDomainName(url: string): string {
+  try {
+    const hostname = new URL(url.startsWith('http') ? url : `https://${url}`).hostname
+    return hostname.replace(/^www\./, '').replace(/\.[^.]+$/, '').replace(/\./g, ' ')
+      .split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+  } catch {
+    return url
+  }
+}
+
+function normalizeUrl(raw: string): string {
+  const trimmed = raw.trim()
+  return trimmed.startsWith('http') ? trimmed : `https://${trimmed}`
+}
+
+type BulkRow = { url: string; name: string; valid: boolean; error?: string }
 
 type Source = {
   id: string
@@ -22,10 +39,22 @@ type Source = {
 export default function SourcesClient({ initialSources }: { initialSources: Source[] }) {
   const [sources, setSources] = useState(initialSources)
   const [showForm, setShowForm] = useState(false)
+  const [showBulk, setShowBulk] = useState(false)
   const [toggling, setToggling] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+
+  // Bulk import state
+  const [bulkText, setBulkText] = useState('')
+  const [bulkRows, setBulkRows] = useState<BulkRow[]>([])
+  const [bulkCountries, setBulkCountries] = useState<string[]>([])
+  const [bulkSectors, setBulkSectors] = useState<string[]>([])
+  const [bulkMethod, setBulkMethod] = useState('scraping')
+  const [bulkReliability, setBulkReliability] = useState(3)
+  const [bulkImporting, setBulkImporting] = useState(false)
+  const [bulkResult, setBulkResult] = useState<{ ok: number; failed: number } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
@@ -47,6 +76,87 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
     setName(''); setUrl(''); setRssUrl(''); setMethod('rss')
     setSelectedCountries([]); setSelectedSectors([]); setReliability(3)
     setError(''); setSuccess('')
+  }
+
+  function resetBulk() {
+    setBulkText(''); setBulkRows([]); setBulkCountries([]); setBulkSectors([])
+    setBulkMethod('scraping'); setBulkReliability(3); setBulkResult(null); setError('')
+  }
+
+  function parseBulkText(text: string) {
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+    const rows: BulkRow[] = lines.map(line => {
+      // Formats acceptés:
+      // https://example.com
+      // https://example.com | Nom personnalisé
+      // example.com,Nom personnalisé  (CSV)
+      const [rawUrl, customName] = line.includes('|')
+        ? line.split('|').map(s => s.trim())
+        : line.includes(',')
+          ? line.split(',').map(s => s.trim())
+          : [line, '']
+      const url = normalizeUrl(rawUrl)
+      try {
+        new URL(url)
+        return { url, name: customName || extractDomainName(url), valid: true }
+      } catch {
+        return { url: rawUrl, name: customName || rawUrl, valid: false, error: 'URL invalide' }
+      }
+    })
+    setBulkRows(rows)
+  }
+
+  function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const text = (ev.target?.result as string) || ''
+      // Ignorer la ligne d'en-tête si elle commence par "url" ou "URL"
+      const lines = text.split('\n')
+      const data = lines[0]?.toLowerCase().startsWith('url') ? lines.slice(1) : lines
+      setBulkText(data.join('\n'))
+      parseBulkText(data.join('\n'))
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  async function importBulk() {
+    const validRows = bulkRows.filter(r => r.valid)
+    if (validRows.length === 0) { setError('Aucune URL valide à importer'); return }
+    setBulkImporting(true); setError('')
+    let ok = 0; let failed = 0
+    const added: Source[] = []
+    for (const row of validRows) {
+      try {
+        const res = await fetch('/api/admin/sources', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: row.name,
+            url: row.url,
+            type: 'web',
+            scraping_method: bulkMethod,
+            countries: bulkCountries,
+            sectors: bulkSectors,
+            reliability_score: bulkReliability,
+            is_active: true,
+            plans_access: ['free', 'pro', 'business'],
+          }),
+        })
+        if (!res.ok) throw new Error()
+        const { source } = await res.json()
+        if (source) added.push(source)
+        ok++
+      } catch {
+        failed++
+      }
+    }
+    setSources(prev => [...added, ...prev])
+    setBulkResult({ ok, failed })
+    setBulkImporting(false)
+    if (failed === 0) setTimeout(() => { setShowBulk(false); resetBulk() }, 2000)
   }
 
   async function toggleActive(source: Source) {
@@ -107,6 +217,9 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
           <p className="text-xs text-neutral-500 mt-1">{sources.length} sources configurées</p>
         </div>
         <div className="flex gap-2">
+          <button onClick={() => { resetBulk(); setShowBulk(true) }} className="btn-ghost text-xs flex items-center gap-1.5 px-3 py-2">
+            <Upload size={13} /> Import en masse
+          </button>
           <button onClick={() => { resetForm(); setShowForm(true) }} className="btn-primary text-xs flex items-center gap-1.5 px-3 py-2">
             <Plus size={13} /> Source web
           </button>
@@ -328,6 +441,140 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
                 {saving ? 'Ajout...' : 'Ajouter la source'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal import en masse ─────────────────────────── */}
+      {showBulk && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mx-4 p-6 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between mb-5 flex-shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-neutral-900">Import en masse de sources</h3>
+                <p className="text-xs text-neutral-500 mt-0.5">Collez des URLs (1 par ligne) ou importez un fichier CSV</p>
+              </div>
+              <button onClick={() => { setShowBulk(false); resetBulk() }} className="w-7 h-7 rounded-lg bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center">
+                <X size={14} />
+              </button>
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-xs text-red-700 flex-shrink-0">
+                <AlertCircle size={13} /> {error}
+              </div>
+            )}
+
+            {bulkResult ? (
+              <div className="flex-1 flex flex-col items-center justify-center py-8 text-center">
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 ${bulkResult.failed === 0 ? 'bg-green-100' : 'bg-amber-100'}`}>
+                  <Check size={28} className={bulkResult.failed === 0 ? 'text-green-600' : 'text-amber-600'} />
+                </div>
+                <div className="text-lg font-bold text-neutral-900 mb-1">{bulkResult.ok} source{bulkResult.ok > 1 ? 's' : ''} importée{bulkResult.ok > 1 ? 's' : ''}</div>
+                {bulkResult.failed > 0 && <div className="text-sm text-red-500">{bulkResult.failed} échec{bulkResult.failed > 1 ? 's' : ''}</div>}
+                <button onClick={() => { setShowBulk(false); resetBulk() }} className="btn-primary mt-6 px-6 py-2.5 text-sm">Fermer</button>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto flex flex-col gap-4">
+                {/* Zone de saisie */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="label mb-0">URLs à importer</label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-neutral-400">ou</span>
+                      <button onClick={() => fileRef.current?.click()} className="text-[10px] text-blue-700 hover:underline flex items-center gap-1">
+                        <Upload size={10} /> Importer CSV
+                      </button>
+                      <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleCsvUpload} />
+                    </div>
+                  </div>
+                  <textarea
+                    className="input font-mono text-xs resize-none"
+                    rows={7}
+                    value={bulkText}
+                    onChange={e => { setBulkText(e.target.value); parseBulkText(e.target.value) }}
+                    placeholder={"https://jeuneafrique.com\nhttps://mondafrique.com | Mondafrique\nhttps://allafrique.com, All Africa\nfinancial-afrik.com"}
+                  />
+                  <p className="text-[10px] text-neutral-400 mt-1">
+                    Formats acceptés : <code className="bg-neutral-100 px-1 rounded">URL</code> · <code className="bg-neutral-100 px-1 rounded">URL | Nom</code> · <code className="bg-neutral-100 px-1 rounded">URL,Nom</code> · Fichier CSV (colonne url en première)
+                  </p>
+                </div>
+
+                {/* Aperçu des URLs parsées */}
+                {bulkRows.length > 0 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="label mb-0">Aperçu ({bulkRows.filter(r => r.valid).length} valides, {bulkRows.filter(r => !r.valid).length} invalides)</label>
+                    </div>
+                    <div className="border border-neutral-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
+                      {bulkRows.map((row, i) => (
+                        <div key={i} className={`flex items-center gap-3 px-3 py-2 text-xs border-b border-neutral-100 last:border-0 ${row.valid ? '' : 'bg-red-50'}`}>
+                          {row.valid
+                            ? <Check size={12} className="text-green-500 flex-shrink-0" />
+                            : <AlertCircle size={12} className="text-red-500 flex-shrink-0" />}
+                          <span className="font-semibold text-neutral-900 w-36 truncate flex-shrink-0">{row.name}</span>
+                          <span className="text-neutral-400 truncate flex-1">{row.url}</span>
+                          {!row.valid && <span className="text-red-500 flex-shrink-0">{row.error}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Paramètres communs */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="label">Méthode par défaut</label>
+                    <select className="input" value={bulkMethod} onChange={e => setBulkMethod(e.target.value)}>
+                      <option value="scraping">Scraping</option>
+                      <option value="rss">RSS</option>
+                      <option value="api">API</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Fiabilité par défaut : {bulkReliability}/5</label>
+                    <input type="range" min={1} max={5} value={bulkReliability} onChange={e => setBulkReliability(Number(e.target.value))} className="w-full mt-2 accent-blue-700" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label mb-2">Pays (appliqués à toutes)</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {COUNTRIES.map(c => (
+                      <button key={c} type="button" onClick={() => setBulkCountries(prev => toggleMulti(prev, c))}
+                        className={`px-2.5 py-1 rounded text-xs font-medium border transition-all ${bulkCountries.includes(c) ? 'bg-blue-700 text-white border-blue-700' : 'border-neutral-200 text-neutral-600 hover:border-blue-300'}`}>
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label mb-2">Secteurs (appliqués à toutes)</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SECTORS.map(s => (
+                      <button key={s} type="button" onClick={() => setBulkSectors(prev => toggleMulti(prev, s))}
+                        className={`px-2.5 py-1 rounded text-xs font-medium border transition-all ${bulkSectors.includes(s) ? 'bg-blue-700 text-white border-blue-700' : 'border-neutral-200 text-neutral-600 hover:border-blue-300'}`}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!bulkResult && (
+              <div className="flex gap-3 mt-5 flex-shrink-0 pt-4 border-t border-neutral-100">
+                <button onClick={() => { setShowBulk(false); resetBulk() }} className="btn-ghost flex-1 text-sm py-2.5">Annuler</button>
+                <button
+                  onClick={importBulk}
+                  disabled={bulkImporting || bulkRows.filter(r => r.valid).length === 0}
+                  className="btn-primary flex-1 text-sm py-2.5 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {bulkImporting ? <><Loader2 size={14} className="animate-spin" /> Import en cours...</> : `Importer ${bulkRows.filter(r => r.valid).length} source${bulkRows.filter(r => r.valid).length > 1 ? 's' : ''}`}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

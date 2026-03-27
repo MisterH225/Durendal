@@ -89,20 +89,13 @@ async function fetchLinkedInPosts(linkedinUrl: string) {
   } catch { return [] }
 }
 
-// ─── Perplexity Research (Phase 2) ───────────────────────────────────────────
-//
-// Sources spécialisées pour la recherche approfondie (max 20 domaines)
-const PHASE2_DOMAINS = [
-  'jeuneafrique.com', 'theafricareport.com', 'financialafrik.com',
-  'agenceecofin.com', 'africanews.com', 'allafrica.com',
-  'reuters.com', 'bloomberg.com', 'lemonde.fr', 'ft.com',
-  'afdb.org', 'worldbank.org',
-]
+// ─── Perplexity Research (Phase 2) — domaines = table `sources` (admin)
 
 async function researchWithPerplexity(
   companyName: string,
   countries:   string[],
   sectors:     string[],
+  domains:     string[],
   log:         (msg: string) => void,
 ): Promise<{ title: string; content: string; relevance: number; type: string; url: string; source_name: string }[]> {
   if (!process.env.PERPLEXITY_API_KEY) {
@@ -115,10 +108,10 @@ async function researchWithPerplexity(
 
   try {
     const query = `Actualités récentes ${year - 1}-${year} sur "${companyName}" en Afrique (${countryNames}). Secteurs : ${sectorStr}. Cherche : contrats, appels d'offres, partenariats stratégiques, levées de fonds, expansion géographique, résultats financiers.`
-    log(`  [perplexity] "${companyName}" — recherche web (${PHASE2_DOMAINS.length} domaines ciblés)...`)
+    log(`  [perplexity] "${companyName}" — recherche (${domains.length} domaines sources admin)...`)
 
     const { text, citations } = await perplexityResponses(query, {
-      domains:   PHASE2_DOMAINS,
+      ...(domains.length > 0 ? { domains } : {}),
       recency:   'year',
       languages: ['fr', 'en'],
       country:   countries[0] || undefined,
@@ -201,11 +194,32 @@ export async function POST(req: NextRequest) {
       ? realCompanies
       : [{ id: 'sector-' + watchId, name: watchSectors.length > 0 ? watchSectors.join(', ') : (watch.name ?? 'secteur'), website: null, linkedin_url: null, country: watchCountries[0] ?? null }]
 
+    const { data: allWebSources } = await supabase
+      .from('sources')
+      .select('*')
+      .eq('is_active', true)
+      .eq('type', 'web')
+
+    const watchSources: SourceRecord[] = (allWebSources ?? []).filter((s: any) =>
+      s.countries?.some((c: string) => watchCountries.includes(c)) ||
+      s.sectors?.some((sec: string) => watchSectors.includes(sec)),
+    ) as SourceRecord[]
+
+    const sourceDomains = watchSources
+      .sort((a, b) => (b.reliability_score ?? 3) - (a.reliability_score ?? 3))
+      .map(s => {
+        try { return new URL(s.url!).hostname.replace(/^www\./, '') } catch { return '' }
+      })
+      .filter(Boolean)
+      .filter((d, i, arr) => arr.indexOf(d) === i)
+      .slice(0, 20)
+
     log(`\n[Scrape] ════════════════════════════════`)
     log(`[Scrape] Veille     : ${watch.name ?? watchId}`)
     log(`[Scrape] Entreprises: ${companies.map((c: any) => c.name).join(', ')}`)
     log(`[Scrape] Pays       : ${watchCountries.join(', ')}`)
     log(`[Scrape] Secteurs   : ${watchSectors.join(', ')}`)
+    log(`[Scrape] Sources DB : ${watchSources.length} (moteur + Perplexity phase 2)`)
     log(`[Scrape] APIs       : PERPLEXITY=${!!process.env.PERPLEXITY_API_KEY} | GEMINI=${!!process.env.GEMINI_API_KEY} | FIRECRAWL=${!!process.env.FIRECRAWL_API_KEY}`)
 
     const { data: job } = await supabase
@@ -253,7 +267,7 @@ export async function POST(req: NextRequest) {
     // ══════════════════════════════════════════════════════════════════════
     log(`\n[Scrape] ── PHASE 1 : Agents parallèles ──`)
     const engineResult = await runAllAgentsParallel(
-      companies, watchSectors, watchCountries, log,
+      companies, watchSectors, watchCountries, watchSources, log,
     )
 
     for (const signal of engineResult.allSignals) {
@@ -268,7 +282,7 @@ export async function POST(req: NextRequest) {
     log(`\n[Scrape] ── PHASE 2 : Perplexity Research ──`)
     for (const company of companies) {
       const pplxSignals = await researchWithPerplexity(
-        company.name, watchCountries, watchSectors, log,
+        company.name, watchCountries, watchSectors, sourceDomains, log,
       )
       for (const s of pplxSignals) {
         const ok = await insertSignal({
@@ -376,15 +390,7 @@ export async function POST(req: NextRequest) {
       await new Promise(r => setTimeout(r, 200))
     }
 
-    const { data: libSources } = await supabase
-      .from('sources').select('*').eq('is_active', true).eq('type', 'web')
-
-    const relevantSources = (libSources ?? []).filter((s: any) =>
-      s.countries?.some((c: string) => watchCountries.includes(c)) ||
-      s.sectors?.some((sec: string) => watchSectors.includes(sec)),
-    )
-
-    for (const source of relevantSources.slice(0, 5)) {
+    for (const source of watchSources.slice(0, 5)) {
       const urlToFetch = source.rss_url || source.url
       if (!urlToFetch) continue
       try {
@@ -417,10 +423,11 @@ export async function POST(req: NextRequest) {
     // ══════════════════════════════════════════════════════════════════════
     log(`\n[Scrape] ══ RÉSUMÉ COLLECTE ══`)
     log(`  Agents parallèles : ${statsBySource.parallel_agents}`)
-    log(`    web_scanner     : ${engineResult.breakdown.web_scanner   ?? 0}`)
-    log(`    press_monitor   : ${engineResult.breakdown.press_monitor ?? 0}`)
-    log(`    analyst         : ${engineResult.breakdown.analyst       ?? 0}`)
-    log(`    deep_research   : ${engineResult.breakdown.deep_research ?? 0}`)
+    log(`    web_scanner             : ${engineResult.breakdown.web_scanner               ?? 0}`)
+    log(`    press_monitor           : ${engineResult.breakdown.press_monitor             ?? 0}`)
+    log(`    analyst                 : ${engineResult.breakdown.analyst                   ?? 0}`)
+    log(`    deep_research           : ${engineResult.breakdown.deep_research             ?? 0}`)
+    log(`    deep_research_iterative : ${engineResult.breakdown.deep_research_iterative   ?? 0}`)
     log(`  Perplexity        : ${statsBySource.perplexity}`)
     log(`  Firecrawl         : ${statsBySource.firecrawl}`)
     log(`  Site officiel     : ${statsBySource.website}`)

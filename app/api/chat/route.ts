@@ -27,39 +27,61 @@ export async function POST(req: NextRequest) {
       .select('id, name, sectors, countries')
       .eq('account_id', profile?.account_id)
 
-    // Signaux récents (top 15, avec source URL)
+    // Signaux récents — on essaie d'abord avec source_name (migration 003),
+    // sinon on retombe sur les colonnes de base (robustesse si migration non appliquée)
     const watchIds = (watches || []).map((w: any) => w.id).filter(Boolean)
-    const { data: recentSignals } = watchIds.length > 0
-      ? await supabase
+    let recentSignals: any[] = []
+    if (watchIds.length > 0) {
+      const { data: s1, error: e1 } = await supabase
+        .from('signals')
+        .select('title, raw_content, url, source_name, companies(name)')
+        .in('watch_id', watchIds)
+        .order('collected_at', { ascending: false })
+        .limit(15)
+      if (!e1) {
+        recentSignals = s1 || []
+      } else {
+        // Fallback sans source_name (si colonne absente)
+        console.warn('[Chat] source_name absent, fallback sans cette colonne:', e1.message)
+        const { data: s2 } = await supabase
           .from('signals')
-          .select('title, raw_content, url, source_name, companies(name)')
+          .select('title, raw_content, url, companies(name)')
           .in('watch_id', watchIds)
           .order('collected_at', { ascending: false })
           .limit(15)
-      : { data: [] }
+        recentSignals = s2 || []
+      }
+    }
 
     // Rapports récents pour contexte enrichi
-    const { data: recentReports } = watchIds.length > 0
-      ? await supabase
-          .from('reports')
-          .select('title, summary, type')
-          .in('watch_id', watchIds)
-          .order('generated_at', { ascending: false })
-          .limit(5)
-      : { data: [] }
+    let recentReports: any[] = []
+    if (watchIds.length > 0) {
+      const { data: r } = await supabase
+        .from('reports')
+        .select('title, summary, type')
+        .in('watch_id', watchIds)
+        .order('generated_at', { ascending: false })
+        .limit(5)
+      recentReports = r || []
+    }
 
     // ── Mémoire : historique chargé depuis la base de données ──────────────
     // La persistance est côté serveur — indépendante du navigateur/client
-    const { data: dbHistory } = await supabase
-      .from('chat_messages')
-      .select('role, content')
-      .eq('account_id', profile?.account_id)
-      .order('created_at', { ascending: true })
-      .limit(MAX_HISTORY_TURNS * 2)  // 2 messages par tour
+    let dbHistory: any[] = []
+    if (profile?.account_id) {
+      const { data: h, error: he } = await supabase
+        .from('chat_messages')
+        .select('role, content')
+        .eq('account_id', profile.account_id)
+        .order('created_at', { ascending: true })
+        .limit(MAX_HISTORY_TURNS * 2)
+      if (he) console.warn('[Chat] Impossible de charger l\'historique:', he.message)
+      else dbHistory = h || []
+    }
 
     // Convertit les messages DB au format Gemini multi-tour
     // (role 'assistant' en DB → 'model' pour Gemini)
-    const history = (dbHistory || []).map((msg: any) => ({
+    const history = dbHistory.map((msg: any) => ({
       role:    msg.role === 'assistant' ? 'model' : 'user',
       content: msg.content,
     })) as { role: 'user' | 'model'; content: string }[]
@@ -71,16 +93,16 @@ export async function POST(req: NextRequest) {
         ).join('\n')
       : 'Aucune veille configurée'
 
-    const signalContext = (recentSignals || []).length > 0
-      ? (recentSignals || []).map((s: any) => {
-          const company = (s as any).companies?.name
+    const signalContext = recentSignals.length > 0
+      ? recentSignals.map((s: any) => {
+          const company = s.companies?.name
           const source  = s.source_name || (s.url ? (() => { try { return new URL(s.url).hostname } catch { return '' } })() : '')
           return `• [${company || '?'}] ${s.title || s.raw_content?.slice(0, 100)}${source ? ` — via ${source}` : ''}${s.url ? ` (${s.url})` : ''}`
         }).join('\n')
       : 'Aucun signal récent'
 
-    const reportContext = (recentReports || []).length > 0
-      ? (recentReports || []).map((r: any) =>
+    const reportContext = recentReports.length > 0
+      ? recentReports.map((r: any) =>
           `• [${r.type}] ${r.title} : ${r.summary?.slice(0, 150)}`
         ).join('\n')
       : ''
@@ -133,9 +155,15 @@ RÈGLES :
     }
 
     return NextResponse.json({ content: replyText, tokensUsed })
-  } catch (error) {
-    console.error('[Chat] Erreur:', error)
-    return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 })
+  } catch (error: any) {
+    const msg = error?.message || String(error)
+    console.error('[Chat] Erreur:', msg)
+    // En dev on expose le message, en prod on le logue seulement
+    const isDev = process.env.NODE_ENV !== 'production'
+    return NextResponse.json(
+      { error: isDev ? msg : 'Erreur serveur' },
+      { status: 500 }
+    )
   }
 }
 

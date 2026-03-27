@@ -17,6 +17,8 @@ import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 import { perplexityResponses }         from '@/lib/ai/perplexity'
 import { runAllAgentsParallel, CollectedSignal, SourceRecord } from '@/lib/agents/collector-engine'
 import { generateWatchReport }         from '@/lib/agents/report-generator'
+import { generateMarketAnalysis }      from '@/lib/agents/market-analyst'
+import { generateStrategyReport }      from '@/lib/agents/strategy-advisor'
 
 const COUNTRY_NAMES: Record<string, string> = {
   CI: "Côte d'Ivoire", SN: 'Sénégal',      GH: 'Ghana',      NG: 'Nigeria',
@@ -451,15 +453,37 @@ export async function POST(req: NextRequest) {
     log(`  TOTAL             : ${totalSignals} signaux insérés`)
 
     // ══════════════════════════════════════════════════════════════════════
-    //  PHASE 4 — Génération inline du rapport
+    //  PHASE 4 — Agent 2 : Rapport concurrentiel
     // ══════════════════════════════════════════════════════════════════════
     let reportResult: { reportId: string | null; insights: number; sources: number; skipped: boolean; reason?: string } = { reportId: null, insights: 0, sources: 0, skipped: false }
+    let marketReportId: string | null = null
+    let strategyReportId: string | null = null
 
     if (totalSignals > 0) {
-      log(`\n[Scrape] ── PHASE 4 : Génération rapport inline ──`)
+      log(`\n[Scrape] ── PHASE 4 : Agent 2 — Rapport concurrentiel ──`)
       reportResult = await generateWatchReport(supabase, watchId, watch, true, log)
+
+      // ══════════════════════════════════════════════════════════════════
+      //  PHASE 5 — Agent 3 : Analyse de marché (déclenché après Agent 2)
+      // ══════════════════════════════════════════════════════════════════
+      if (reportResult.reportId) {
+        log(`\n[Scrape] ── PHASE 5 : Agent 3 — Analyse de marché ──`)
+        const marketResult = await generateMarketAnalysis(
+          supabase, watchId, watch, reportResult.reportId, log,
+        )
+        marketReportId = marketResult.reportId
+
+        // ══════════════════════════════════════════════════════════════════
+        //  PHASE 6 — Agent 4 : Stratégie (déclenché après Agents 2 + 3)
+        // ══════════════════════════════════════════════════════════════════
+        log(`\n[Scrape] ── PHASE 6 : Agent 4 — Plan stratégique ──`)
+        const strategyResult = await generateStrategyReport(
+          supabase, watchId, watch, reportResult.reportId, marketReportId, log,
+        )
+        strategyReportId = strategyResult.reportId
+      }
     } else {
-      log(`\n[Scrape] Phase 4 ignorée (0 signaux collectés)`)
+      log(`\n[Scrape] Phases 4-6 ignorées (0 signaux collectés)`)
     }
 
     await supabase.from('agent_jobs').update({
@@ -472,6 +496,8 @@ export async function POST(req: NextRequest) {
         engine_duration:  engineResult.durationMs,
         avg_relevance:    totalSignals > 0 ? Math.round((sumRelevance / totalSignals) * 100) / 100 : 0,
         report_id:        reportResult.reportId,
+        market_report_id: marketReportId,
+        strategy_report_id: strategyReportId,
         errors:           engineResult.errors.slice(0, 20),
       },
     }).eq('id', job?.id)
@@ -494,8 +520,10 @@ export async function POST(req: NextRequest) {
       success:       true,
       total_signals: totalSignals,
       breakdown:     { ...statsBySource, agents: engineResult.breakdown },
-      report_id:     reportResult.reportId,
-      report_ready:  !reportResult.skipped,
+      report_id:           reportResult.reportId,
+      market_report_id:    marketReportId,
+      strategy_report_id:  strategyReportId,
+      report_ready:        !reportResult.skipped,
     })
 
   } catch (error: any) {

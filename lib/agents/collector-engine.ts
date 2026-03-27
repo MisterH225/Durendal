@@ -17,6 +17,7 @@
 
 import { callGemini, parseGeminiJson }                                            from '@/lib/ai/gemini'
 import { perplexityWebSearch, perplexityEmbed, cosineSimilarity, PerplexityFilters, PerplexityCitation } from '@/lib/ai/perplexity'
+import { countryName } from '@/lib/countries'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,14 +73,6 @@ export interface SourceRecord {
   is_active:         boolean
 }
 
-// ─── Mapping ISO → noms complets ─────────────────────────────────────────────
-const COUNTRY_NAMES: Record<string, string> = {
-  CI: "Côte d'Ivoire", SN: 'Sénégal',      GH: 'Ghana',      NG: 'Nigeria',
-  KE: 'Kenya',         CM: 'Cameroun',      MA: 'Maroc',      ZA: 'Afrique du Sud',
-  BJ: 'Bénin',         BF: 'Burkina Faso',  ML: 'Mali',       TG: 'Togo',
-  CD: 'RDC',           GA: 'Gabon',         NE: 'Niger',      GN: 'Guinée',
-  MG: 'Madagascar',    TN: 'Tunisie',       DZ: 'Algérie',    ET: 'Éthiopie',
-}
 
 // ─── Extraction dynamique de domaines depuis la table `sources` (admin) ─────
 //
@@ -279,7 +272,7 @@ export function buildQueriesForAgent(
   year:           number,
   sources:        SourceRecord[],
 ): AgentQuery[] {
-  const primary = countryNames[0] || 'Afrique'
+  const primary = countryNames[0] || 'international'
   const sector  = sectors.slice(0, 2).join(' ')
 
   const domains   = getDomainsForAgent(type, sources, watchCountries, sectors)
@@ -310,8 +303,8 @@ export function buildQueriesForAgent(
     case 'press_monitor':
       return [
         q(`${companyName} ${primary} actualités presse ${year}`),
-        q(`${sector} Afrique actualités marché contrat ${year}`),
-        q(`${companyName} Afrique partenariat investissement ${year}`),
+        q(`${sector} ${primary} actualités marché contrat ${year}`),
+        q(`${companyName} ${primary} partenariat investissement ${year}`),
         q(`${sector} ${primary} appel d'offres projet ${year}`),
       ]
 
@@ -319,7 +312,7 @@ export function buildQueriesForAgent(
       return [
         q(`${sector} marché tendances analyse ${primary} ${year}`),
         q(`${companyName} stratégie acquisitions résultats financiers ${year}`),
-        q(`${sector} Africa market competitive landscape forecast ${year}`),
+        q(`${sector} ${primary} market competitive landscape forecast ${year}`),
         q(`${companyName} rapport annuel résultats chiffre d'affaires ${year}`),
       ]
 
@@ -328,7 +321,7 @@ export function buildQueriesForAgent(
         q(`${companyName} dernières actualités ${year}`, { recency: 'month' }),
         q(`${sector} ${primary} opportunités investissement projets ${year}`),
         q(`${companyName} concurrents analyse compétitive ${primary}`),
-        q(`${companyName} Africa ${sector} growth expansion partnership ${year}`),
+        q(`${companyName} ${primary} ${sector} growth expansion partnership ${year}`),
       ]
 
     default:
@@ -391,7 +384,7 @@ export async function extractSignalsFromContent(
 ): Promise<ExtractedSignal[]> {
   if (!content.trim() || content.length < 50) return []
   try {
-    const countryList = watchCountries.map(c => COUNTRY_NAMES[c] || c).join(', ')
+    const countryList = watchCountries.map(c => countryName(c)).join(', ')
 
     let sourcesBlock = ''
     if (availableSources && availableSources.length > 0) {
@@ -400,7 +393,7 @@ export async function extractSignalsFromContent(
         + '\n'
     }
 
-    const prompt = `Tu es un analyste de veille concurrentielle pour les marchés africains (${countryList}).
+    const prompt = `Tu es un analyste de veille concurrentielle pour les marchés suivants : ${countryList}.
 Extrais les informations pertinentes sur "${companyName}". Concentre-toi sur : financement, produits, partenariats, expansion, résultats, appels d'offres, contrats.
 ${sourcesBlock}
 Contenu :
@@ -451,7 +444,7 @@ export async function runAgentType(
   const signals:     CollectedSignal[] = []
   const errors:      string[]          = []
   let   queriesRun   = 0
-  const countryNames = watchCountries.map(c => COUNTRY_NAMES[c] || c)
+  const countryNames = watchCountries.map(c => countryName(c))
   const year         = new Date().getFullYear()
 
   log(`  [${type}] Démarrage — ${companies.length} entreprise(s)`)
@@ -537,18 +530,18 @@ async function generateSubQuestions(
   sectors:      string[],
   countryNames: string[],
 ): Promise<string[]> {
-  const primary = countryNames[0] || 'Afrique'
+  const primary = countryNames[0] || 'international'
   const sector  = sectors.slice(0, 2).join(', ')
   const year    = new Date().getFullYear()
 
-  const prompt = `Tu es un expert en intelligence économique africaine.
+  const prompt = `Tu es un expert en intelligence économique internationale.
 Pour analyser l'entreprise "${companyName}" (secteur : ${sector}, marché principal : ${primary}),
 génère exactement 5 sous-questions de recherche web précises et COMPLÉMENTAIRES.
 
 Chaque question doit couvrir un angle différent :
 - Situation financière et levées de fonds récentes
 - Contrats, appels d'offres et partenariats en ${year - 1}-${year}
-- Positionnement et concurrents directs en Afrique
+- Positionnement et concurrents directs sur les marchés cibles
 - Expansion géographique, nouveaux marchés ou produits
 - Actualités opérationnelles (recrutements, dirigeants, projets)
 
@@ -577,7 +570,7 @@ async function evaluateGapsAndFollowUp(
   findings:     string[],
 ): Promise<string[]> {
   if (findings.length === 0) return []
-  const primary = countryNames[0] || 'Afrique'
+  const primary = countryNames[0] || 'international'
   const sector  = sectors.slice(0, 2).join(', ')
 
   const prompt = `Tu analyses les informations collectées sur "${companyName}" (${sector}, ${primary}).
@@ -619,7 +612,7 @@ export async function runDeepResearchAgent(
   const allSignals:  CollectedSignal[] = []
   const errors:      string[]          = []
   let   queriesRun   = 0
-  const countryNames = watchCountries.map(c => COUNTRY_NAMES[c] || c)
+  const countryNames = watchCountries.map(c => countryName(c))
   const MAX_ITER     = 1 // ★ Budget temps : 1 seule itération sur Nginx (60s)
 
   log(`  [deep_research_iterative] ★ Démarrage — ${companies.length} entreprise(s)`)

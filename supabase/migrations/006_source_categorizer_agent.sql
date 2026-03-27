@@ -51,7 +51,7 @@ insert into admin_agents (id, name, description, status, prompt, model) values (
   'Catégoriseur de sources',
   'Analyse les sites web de la bibliothèque de sources pour les catégoriser automatiquement par domaine d''activité (construction, banque, presse, mines, etc.). Se déclenche à chaque ajout de source.',
   'active',
-  'Tu es un analyste expert en classification de sources d''information pour la veille concurrentielle en Afrique.
+  'Tu es un analyste expert en classification de sources d''information pour la veille concurrentielle internationale.
 
 Analyse ce site web et détermine ses DOMAINES DE COUVERTURE principaux.
 

@@ -88,7 +88,7 @@ export async function generateWatchReport(
   const sectorsStr = (watch.sectors ?? []).join(', ')
 
   // ── Prompt d'analyse concurrentielle profonde ────────────────────────────
-  const prompt = `Tu es un analyste senior en intelligence économique et veille concurrentielle, spécialisé dans les marchés africains.
+  const prompt = `Tu es un analyste senior en intelligence économique et veille concurrentielle.
 
 CONTEXTE DE LA VEILLE :
 - Entreprises surveillées : ${companiesStr} (${companyCount} entreprises)

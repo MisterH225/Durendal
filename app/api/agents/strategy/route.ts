@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
       `[${r.type.toUpperCase()}] ${r.title}\n${r.summary || JSON.stringify(r.content).slice(0, 800)}`
     ).join('\n\n---\n\n')
 
-    const prompt = `Tu es un consultant senior en stratégie de marché africain, spécialisé dans les marchés : ${watch.countries?.join(', ')}.
+    const prompt = `Tu es un consultant senior en stratégie de marché, spécialisé dans les marchés : ${watch.countries?.join(', ')}.
 
 Sur la base de ces analyses de veille concurrentielle :
 ${reportsContext}

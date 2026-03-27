@@ -2,8 +2,10 @@
 import { useState, useRef } from 'react'
 import { Plus, Globe, FileText, Database, X, AlertCircle, Check, Upload, Loader2 } from 'lucide-react'
 
-const SECTORS = ['Fintech','E-commerce','Télécom','Logistique','BTP / Immobilier','Santé','EdTech','Énergie','Agriculture','Autre']
-const COUNTRIES = ['CI','SN','GH','NG','KE','CM','MA','ZA','BJ','BF','ML','TG']
+import { ALL_COUNTRIES } from '@/lib/countries'
+
+const SECTORS = ['Fintech','E-commerce','Télécom','Logistique','BTP / Immobilier','Santé','EdTech','Énergie','Agriculture','Mines','Banque / Assurance','Transport','Autre']
+const COUNTRIES = ALL_COUNTRIES.map(c => c.code)
 const METHOD_LABELS: Record<string, string> = { rss: 'RSS', scraping: 'Scraping', api: 'API' }
 
 function extractDomainName(url: string): string {

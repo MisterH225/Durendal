@@ -70,7 +70,7 @@ export async function generateStrategyReport(
   const parentContent = JSON.stringify(parentReport.content).slice(0, 8_000)
 
   // ── Prompt expert stratégie ─────────────────────────────────────────────
-  const prompt = `Tu es un consultant senior en stratégie d'entreprise, expert en pénétration de marchés émergents africains.
+  const prompt = `Tu es un consultant senior en stratégie d'entreprise, expert en pénétration de marchés émergents et internationaux.
 Tu travailles avec une minutie exceptionnelle. Tes recommandations sont précises, chiffrées quand possible, et immédiatement actionnables.
 Tu as un grand sens du détail et tu produis des documents de niveau cabinet de conseil international (McKinsey, BCG).
 
@@ -194,7 +194,7 @@ RÈGLES ABSOLUES :
 - NE PAS inventer de faits. Base-toi UNIQUEMENT sur les données fournies.
 - Chaque point SWOT doit citer un signal [N] comme source.
 - Les recommandations doivent être ACTIONNABLES, pas des généralités.
-- Les timelines doivent être RÉALISTES pour des marchés africains.
+- Les timelines doivent être RÉALISTES pour les marchés ciblés.
 - Les estimations d'investissement doivent être proportionnées au contexte.
 - Réponds en français.`
 

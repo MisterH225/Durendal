@@ -1,44 +1,27 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, ArrowRight, Check, Plus, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Plus, X, Search, Loader2, Eye } from 'lucide-react'
+import { ALL_COUNTRIES, type Country } from '@/lib/countries'
 
-const sectors = ['Fintech','E-commerce','Télécom','Logistique','BTP / Immobilier','Santé','EdTech','Énergie','Agriculture','Autre']
-const countries = [
-  { code: 'CI', name: 'Côte d\'Ivoire', flag: '🇨🇮' },
-  { code: 'SN', name: 'Sénégal', flag: '🇸🇳' },
-  { code: 'GH', name: 'Ghana', flag: '🇬🇭' },
-  { code: 'NG', name: 'Nigeria', flag: '🇳🇬' },
-  { code: 'KE', name: 'Kenya', flag: '🇰🇪' },
-  { code: 'CM', name: 'Cameroun', flag: '🇨🇲' },
-  { code: 'MA', name: 'Maroc', flag: '🇲🇦' },
-  { code: 'ZA', name: 'Afrique du Sud', flag: '🇿🇦' },
-  { code: 'BJ', name: 'Bénin', flag: '🇧🇯' },
-  { code: 'BF', name: 'Burkina Faso', flag: '🇧🇫' },
-  { code: 'ML', name: 'Mali', flag: '🇲🇱' },
-  { code: 'TG', name: 'Togo', flag: '🇹🇬' },
+const sectors = ['Fintech','E-commerce','Télécom','Logistique','BTP / Immobilier','Santé','EdTech','Énergie','Agriculture','Mines','Banque / Assurance','Transport','Autre']
+
+const SUGGESTED_ASPECTS = [
+  'Importations','Exportations','Livraisons','Partenariats','Actions sociales / RSE',
+  'Recrutement','Levées de fonds','Contrats publics','Expansion géographique',
+  'Innovation / R&D','Résultats financiers','Appels d\'offres',
 ]
 
-const suggestedCompanies: Record<string, { name: string; country: string; sector: string }[]> = {
-  'Fintech': [
-    { name: 'Wave Mobile Money', country: 'SN', sector: 'Fintech' },
-    { name: 'MTN MoMo', country: 'GH', sector: 'Fintech' },
-    { name: 'Orange Money', country: 'CI', sector: 'Fintech' },
-    { name: 'Flutterwave', country: 'NG', sector: 'Fintech' },
-    { name: 'PayDunya', country: 'CI', sector: 'Fintech' },
-    { name: 'Ecobank Digital', country: 'CI', sector: 'Fintech' },
-  ],
-  'E-commerce': [
-    { name: 'Jumia CI', country: 'CI', sector: 'E-commerce' },
-    { name: 'Jiji CI', country: 'CI', sector: 'E-commerce' },
-    { name: 'Afrimarket', country: 'CI', sector: 'E-commerce' },
-  ],
-  'Télécom': [
-    { name: 'Orange CI', country: 'CI', sector: 'Télécom' },
-    { name: 'MTN CI', country: 'CI', sector: 'Télécom' },
-    { name: 'Moov Africa', country: 'CI', sector: 'Télécom' },
-  ],
+type CompanyEntry = {
+  name:      string
+  country:   string
+  sector:    string
+  website?:  string
+  logo_url?: string
+  aspects:   string[]
 }
+
+type SearchResult = { name: string; domain: string; logo_url: string | null }
 
 const steps = ['Informations', 'Secteurs & Pays', 'Entreprises', 'Configuration']
 
@@ -48,35 +31,119 @@ export default function NewWatchPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Form state
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [selectedSectors, setSelectedSectors] = useState<string[]>([])
   const [selectedCountries, setSelectedCountries] = useState<string[]>([])
-  const [companies, setCompanies] = useState<{ name: string; country: string; sector: string }[]>([])
-  const [newCompanyName, setNewCompanyName] = useState('')
+  const [companies, setCompanies] = useState<CompanyEntry[]>([])
   const [frequency, setFrequency] = useState('daily')
   const [isShared, setIsShared] = useState(false)
 
-  const suggestions = selectedSectors.flatMap(s => suggestedCompanies[s] || [])
-    .filter(s => !companies.find(c => c.name === s.name))
+  // Country search
+  const [countrySearch, setCountrySearch] = useState('')
+  const filteredCountries = countrySearch.trim().length > 0
+    ? ALL_COUNTRIES.filter(c =>
+        c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
+        c.code.toLowerCase().includes(countrySearch.toLowerCase()))
+    : ALL_COUNTRIES
+
+  // Company search / disambiguation
+  const [newCompanyName, setNewCompanyName] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const [showResults, setShowResults] = useState(false)
+  const searchRef = useRef<HTMLDivElement>(null)
+
+  // Aspects editing
+  const [editingAspectsFor, setEditingAspectsFor] = useState<string | null>(null)
+  const [aspectInput, setAspectInput] = useState('')
 
   function toggleSector(s: string) {
     setSelectedSectors(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
   }
-  function toggleCountry(c: string) {
-    setSelectedCountries(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])
+  function toggleCountry(code: string) {
+    setSelectedCountries(prev => prev.includes(code) ? prev.filter(x => x !== code) : [...prev, code])
   }
-  function addCompany(co: { name: string; country: string; sector: string }) {
-    if (!companies.find(c => c.name === co.name)) setCompanies(prev => [...prev, co])
+
+  const searchCompanies = useCallback(async (query: string) => {
+    if (query.length < 2) { setSearchResults([]); return }
+    setSearching(true)
+    try {
+      const res = await fetch(`/api/companies/search?q=${encodeURIComponent(query)}`)
+      const data = await res.json()
+      setSearchResults(data.results ?? [])
+      setShowResults(true)
+    } catch {
+      setSearchResults([])
+    } finally {
+      setSearching(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (newCompanyName.trim().length >= 2) searchCompanies(newCompanyName.trim())
+      else { setSearchResults([]); setShowResults(false) }
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [newCompanyName, searchCompanies])
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setShowResults(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  function addCompanyFromSearch(result: SearchResult) {
+    if (companies.find(c => c.name === result.name)) return
+    setCompanies(prev => [...prev, {
+      name:     result.name,
+      country:  selectedCountries[0] || '',
+      sector:   selectedSectors[0] || 'Autre',
+      website:  result.domain ? `https://${result.domain}` : undefined,
+      logo_url: result.logo_url ?? undefined,
+      aspects:  [],
+    }])
+    setNewCompanyName('')
+    setShowResults(false)
   }
-  function removeCompany(name: string) {
-    setCompanies(prev => prev.filter(c => c.name !== name))
-  }
+
   function addCustomCompany() {
     if (!newCompanyName.trim()) return
-    addCompany({ name: newCompanyName.trim(), country: selectedCountries[0] || 'CI', sector: selectedSectors[0] || 'Autre' })
+    if (companies.find(c => c.name === newCompanyName.trim())) return
+    setCompanies(prev => [...prev, {
+      name:    newCompanyName.trim(),
+      country: selectedCountries[0] || '',
+      sector:  selectedSectors[0] || 'Autre',
+      aspects: [],
+    }])
     setNewCompanyName('')
+    setShowResults(false)
+  }
+
+  function removeCompany(companyName: string) {
+    setCompanies(prev => prev.filter(c => c.name !== companyName))
+    if (editingAspectsFor === companyName) setEditingAspectsFor(null)
+  }
+
+  function toggleAspect(companyName: string, aspect: string) {
+    setCompanies(prev => prev.map(c => {
+      if (c.name !== companyName) return c
+      const has = c.aspects.includes(aspect)
+      return { ...c, aspects: has ? c.aspects.filter(a => a !== aspect) : [...c.aspects, aspect] }
+    }))
+  }
+
+  function addCustomAspect(companyName: string) {
+    const trimmed = aspectInput.trim()
+    if (!trimmed) return
+    setCompanies(prev => prev.map(c => {
+      if (c.name !== companyName || c.aspects.includes(trimmed)) return c
+      return { ...c, aspects: [...c.aspects, trimmed] }
+    }))
+    setAspectInput('')
   }
 
   function canProceed() {
@@ -90,35 +157,37 @@ export default function NewWatchPage() {
     setLoading(true)
     setError('')
     try {
-      // ── Tout passe par l'API serveur (contourne le RLS pour companies / watch_companies)
       const res = await fetch('/api/watches', {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
           description,
-          sectors:    selectedSectors,
-          countries:  selectedCountries,
-          companies,
+          sectors:   selectedSectors,
+          countries: selectedCountries,
+          companies: companies.map(c => ({
+            name:     c.name,
+            country:  c.country,
+            sector:   c.sector,
+            website:  c.website,
+            logo_url: c.logo_url,
+            aspects:  c.aspects,
+          })),
           frequency,
-          is_shared:  isShared,
+          is_shared: isShared,
         }),
       })
-
       const data = await res.json()
       if (!res.ok || data.error) throw new Error(data.error ?? `Erreur ${res.status}`)
 
       const watchId = data.watch?.id
-
-      // Lancer les 5 agents en parallèle (fire-and-forget, Agent 1 déclenche Agent 2)
       if (watchId) {
         fetch('/api/agents/scrape', {
-          method:  'POST',
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ watchId }),
+          body: JSON.stringify({ watchId }),
         }).catch(e => console.error('[AutoRun]', e))
       }
-
       router.push('/veilles')
     } catch (err: any) {
       setError(err.message || 'Erreur lors de la création')
@@ -126,9 +195,10 @@ export default function NewWatchPage() {
     }
   }
 
+  const countryLabel = (code: string) => ALL_COUNTRIES.find(c => c.code === code)
+
   return (
     <div className="max-w-2xl mx-auto pb-20 lg:pb-0">
-      {/* Back */}
       <button onClick={() => step > 0 ? setStep(s => s - 1) : router.back()}
         className="flex items-center gap-1.5 text-sm text-neutral-500 hover:text-neutral-700 mb-5 transition-colors">
         <ArrowLeft size={14} /> {step > 0 ? 'Étape précédente' : 'Mes veilles'}
@@ -159,7 +229,7 @@ export default function NewWatchPage() {
             <div className="space-y-4">
               <div>
                 <label className="label">Nom de la veille *</label>
-                <input className="input" placeholder="Ex: Veille Fintech Afrique de l'Ouest"
+                <input className="input" placeholder="Ex: Veille Fintech Europe, Veille BTP Afrique de l'Ouest..."
                   value={name} onChange={e => setName(e.target.value)} autoFocus />
               </div>
               <div>
@@ -192,18 +262,52 @@ export default function NewWatchPage() {
             </div>
 
             <div>
-              <label className="label mb-2">Pays *</label>
-              <div className="p-3 bg-blue-50 rounded-lg border border-blue-100 text-xs text-blue-800 mb-3">
-                Conseil : pour la fintech, CI + SN + GH concentrent 68% des levées de fonds régionales.
+              <label className="label mb-2">Pays * ({selectedCountries.length} sélectionné{selectedCountries.length > 1 ? 's' : ''})</label>
+
+              {/* Selected countries chips */}
+              {selectedCountries.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {selectedCountries.map(code => {
+                    const c = countryLabel(code)
+                    return (
+                      <span key={code} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-700 text-white">
+                        {c?.flag} {c?.name ?? code}
+                        <button onClick={() => toggleCountry(code)} className="ml-0.5 hover:text-blue-200">
+                          <X size={11} />
+                        </button>
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Search input */}
+              <div className="relative mb-3">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                <input
+                  className="input pl-9"
+                  placeholder="Rechercher un pays..."
+                  value={countrySearch}
+                  onChange={e => setCountrySearch(e.target.value)}
+                />
               </div>
-              <div className="flex flex-wrap gap-2">
-                {countries.map(({ code, name: cname, flag }) => (
-                  <button key={code} onClick={() => toggleCountry(code)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all
-                      ${selectedCountries.includes(code) ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-neutral-600 border-neutral-200 hover:border-blue-300'}`}>
-                    <span>{flag}</span>{cname}
-                  </button>
-                ))}
+
+              {/* Countries grid */}
+              <div className="max-h-52 overflow-y-auto border border-neutral-200 rounded-lg p-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {filteredCountries.map(({ code, name: cname, flag }) => (
+                    <button key={code} onClick={() => toggleCountry(code)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all
+                        ${selectedCountries.includes(code)
+                          ? 'bg-blue-700 text-white border-blue-700'
+                          : 'bg-white text-neutral-600 border-neutral-200 hover:border-blue-300'}`}>
+                      <span>{flag}</span>{cname}
+                    </button>
+                  ))}
+                  {filteredCountries.length === 0 && (
+                    <p className="text-xs text-neutral-400 py-3 w-full text-center">Aucun pays trouvé pour &quot;{countrySearch}&quot;</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -213,63 +317,121 @@ export default function NewWatchPage() {
         {step === 2 && (
           <div>
             <h2 className="text-base font-bold text-neutral-900 mb-1">Entreprises à surveiller</h2>
-            <p className="text-sm text-neutral-500 mb-4">Ajoutez les concurrents à suivre.</p>
+            <p className="text-sm text-neutral-500 mb-4">Ajoutez les concurrents à suivre. Vous pouvez optionnellement préciser des aspects à surveiller pour chaque entreprise.</p>
 
             {/* Selected companies */}
             {companies.length > 0 && (
               <div className="mb-4 space-y-2">
                 {companies.map(co => (
-                  <div key={co.name} className="flex items-center gap-2.5 p-2.5 bg-green-50 border border-green-200 rounded-lg">
-                    <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700 text-[10px] font-bold flex-shrink-0">
-                      {co.name.slice(0,2).toUpperCase()}
+                  <div key={co.name} className="p-2.5 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center gap-2.5">
+                      {co.logo_url ? (
+                        <img src={co.logo_url} alt="" className="w-7 h-7 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700 text-[10px] font-bold flex-shrink-0">
+                          {co.name.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-neutral-900 truncate">{co.name}</div>
+                        <div className="text-[10px] text-neutral-500">
+                          {co.sector}{co.website && ` · ${co.website.replace('https://', '')}`}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setEditingAspectsFor(editingAspectsFor === co.name ? null : co.name)}
+                        className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 flex-shrink-0 px-2 py-1 rounded hover:bg-blue-50 transition-colors"
+                      >
+                        <Eye size={11} /> Aspects
+                        {co.aspects.length > 0 && <span className="bg-blue-600 text-white rounded-full px-1.5 text-[9px]">{co.aspects.length}</span>}
+                      </button>
+                      <button onClick={() => removeCompany(co.name)} className="text-neutral-400 hover:text-red-500 transition-colors flex-shrink-0">
+                        <X size={14} />
+                      </button>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold text-neutral-900 truncate">{co.name}</div>
-                      <div className="text-[10px] text-neutral-500">{co.sector} · {co.country}</div>
-                    </div>
-                    <button onClick={() => removeCompany(co.name)} className="text-neutral-400 hover:text-red-500 transition-colors">
-                      <X size={14} />
-                    </button>
+
+                    {/* Aspects panel */}
+                    {editingAspectsFor === co.name && (
+                      <div className="mt-2.5 pt-2.5 border-t border-green-200">
+                        <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1.5">Aspects à surveiller (optionnel)</div>
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {SUGGESTED_ASPECTS.map(asp => (
+                            <button key={asp} onClick={() => toggleAspect(co.name, asp)}
+                              className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-all ${
+                                co.aspects.includes(asp)
+                                  ? 'bg-blue-600 text-white border-blue-600'
+                                  : 'bg-white text-neutral-600 border-neutral-200 hover:border-blue-300'
+                              }`}>
+                              {asp}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-1.5">
+                          <input className="input text-[11px] flex-1 py-1" placeholder="Aspect personnalisé..."
+                            value={aspectInput} onChange={e => setAspectInput(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { addCustomAspect(co.name); e.preventDefault() } }} />
+                          <button onClick={() => addCustomAspect(co.name)} className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-[10px] font-medium hover:bg-blue-200">
+                            <Plus size={10} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Suggestions */}
-            {suggestions.length > 0 && (
-              <div className="mb-4">
-                <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-2">
-                  Suggestions — {selectedSectors.join(', ')}
+            {/* Company search + add */}
+            <div className="border-t border-neutral-100 pt-4" ref={searchRef}>
+              <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-2">Rechercher ou ajouter une entreprise</div>
+              <div className="relative">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                    <input
+                      className="input pl-9 text-sm"
+                      placeholder="Nom de l'entreprise..."
+                      value={newCompanyName}
+                      onChange={e => setNewCompanyName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') addCustomCompany() }}
+                      onFocus={() => { if (searchResults.length > 0) setShowResults(true) }}
+                    />
+                    {searching && <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 animate-spin" />}
+                  </div>
+                  <button onClick={addCustomCompany} className="btn-primary px-3 py-2 flex items-center gap-1" title="Ajouter manuellement">
+                    <Plus size={14} />
+                  </button>
                 </div>
-                <div className="space-y-1.5">
-                  {suggestions.map(co => (
-                    <button key={co.name} onClick={() => addCompany(co)}
-                      className="w-full flex items-center gap-2.5 p-2.5 border border-neutral-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-all text-left">
-                      <div className="w-7 h-7 rounded-lg bg-neutral-100 flex items-center justify-center text-neutral-600 text-[10px] font-bold flex-shrink-0">
-                        {co.name.slice(0,2).toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-semibold text-neutral-900">{co.name}</div>
-                        <div className="text-[10px] text-neutral-400">{co.sector} · {co.country}</div>
-                      </div>
-                      <span className="text-xs text-blue-700 font-medium flex-shrink-0">+ Ajouter</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
 
-            {/* Add custom */}
-            <div className="border-t border-neutral-100 pt-4">
-              <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-2">Ajouter manuellement</div>
-              <div className="flex gap-2">
-                <input className="input flex-1 text-sm" placeholder="Nom de l'entreprise..."
-                  value={newCompanyName} onChange={e => setNewCompanyName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addCustomCompany()} />
-                <button onClick={addCustomCompany} className="btn-primary px-3 py-2 flex items-center gap-1">
-                  <Plus size={14} />
-                </button>
+                {/* Search results dropdown */}
+                {showResults && searchResults.length > 0 && (
+                  <div className="absolute z-20 left-0 right-12 mt-1 bg-white border border-neutral-200 rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
+                    <div className="px-3 py-2 bg-neutral-50 border-b border-neutral-100 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+                      {searchResults.length} résultat{searchResults.length > 1 ? 's' : ''} — cliquez pour sélectionner
+                    </div>
+                    {searchResults.map((r, i) => (
+                      <button key={i} onClick={() => addCompanyFromSearch(r)}
+                        className="w-full flex items-center gap-3 p-3 hover:bg-blue-50 transition-colors text-left border-b border-neutral-50 last:border-0">
+                        {r.logo_url ? (
+                          <img src={r.logo_url} alt="" className="w-8 h-8 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center text-neutral-500 text-[10px] font-bold flex-shrink-0">
+                            {r.name.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-semibold text-neutral-900">{r.name}</div>
+                          <div className="text-[10px] text-neutral-400">{r.domain}</div>
+                        </div>
+                        <span className="text-[10px] text-blue-700 font-medium flex-shrink-0">+ Ajouter</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
+              <p className="text-[10px] text-neutral-400 mt-1.5">
+                Tapez un nom pour rechercher l&apos;entreprise avec son logo. Appuyez sur <kbd className="bg-neutral-100 px-1 rounded">+</kbd> pour ajouter manuellement.
+              </p>
             </div>
           </div>
         )}
@@ -317,7 +479,7 @@ export default function NewWatchPage() {
               {[
                 { label: 'Nom', value: name },
                 { label: 'Secteurs', value: selectedSectors.join(', ') },
-                { label: 'Pays', value: selectedCountries.join(', ') },
+                { label: 'Pays', value: selectedCountries.map(c => countryLabel(c)?.name ?? c).join(', ') },
                 { label: 'Entreprises', value: `${companies.length} entreprise${companies.length > 1 ? 's' : ''}` },
                 { label: 'Fréquence', value: frequency === 'realtime' ? 'Temps réel' : frequency === 'daily' ? 'Quotidienne' : 'Hebdomadaire' },
               ].map(({ label, value }) => (
@@ -326,6 +488,16 @@ export default function NewWatchPage() {
                   <span className="font-semibold text-neutral-900 text-right max-w-[60%]">{value}</span>
                 </div>
               ))}
+              {companies.some(c => c.aspects.length > 0) && (
+                <div className="pt-2 border-t border-neutral-200 mt-2">
+                  <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">Aspects surveillés</div>
+                  {companies.filter(c => c.aspects.length > 0).map(c => (
+                    <div key={c.name} className="text-[11px] text-neutral-600 mb-0.5">
+                      <span className="font-semibold">{c.name}</span> : {c.aspects.join(', ')}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {error && (

@@ -19,12 +19,8 @@ import { runAllAgentsParallel, CollectedSignal, SourceRecord } from '@/lib/agent
 import { generateWatchReport }         from '@/lib/agents/report-generator'
 import { generateMarketAnalysis }      from '@/lib/agents/market-analyst'
 import { generateStrategyReport }      from '@/lib/agents/strategy-advisor'
+import { countryName }                  from '@/lib/countries'
 
-const COUNTRY_NAMES: Record<string, string> = {
-  CI: "Côte d'Ivoire", SN: 'Sénégal',      GH: 'Ghana',      NG: 'Nigeria',
-  KE: 'Kenya',         CM: 'Cameroun',      MA: 'Maroc',      ZA: 'Afrique du Sud',
-  BJ: 'Bénin',         BF: 'Burkina Faso',  ML: 'Mali',       TG: 'Togo',
-}
 
 // ─── Firecrawl ───────────────────────────────────────────────────────────────
 async function firecrawlSearch(query: string): Promise<{ title: string; url: string; content: string }[]> {
@@ -99,17 +95,21 @@ async function researchWithPerplexity(
   sectors:     string[],
   domains:     string[],
   log:         (msg: string) => void,
+  companyAspects?: string[],
 ): Promise<{ title: string; content: string; relevance: number; type: string; url: string; source_name: string }[]> {
   if (!process.env.PERPLEXITY_API_KEY) {
     log(`  [perplexity] clé absente — skip`)
     return []
   }
-  const countryNames = countries.map(c => COUNTRY_NAMES[c] || c).join(', ')
+  const countryNames = countries.map(c => countryName(c)).join(', ')
   const sectorStr    = sectors.join(', ')
   const year         = new Date().getFullYear()
 
   try {
-    const query = `Actualités récentes ${year - 1}-${year} sur "${companyName}" en Afrique (${countryNames}). Secteurs : ${sectorStr}. Cherche : contrats, appels d'offres, partenariats stratégiques, levées de fonds, expansion géographique, résultats financiers.`
+    const aspectsFocus = companyAspects && companyAspects.length > 0
+      ? ` Focus particulier : ${companyAspects.join(', ')}.`
+      : ''
+    const query = `Actualités récentes ${year - 1}-${year} sur "${companyName}" (${countryNames}). Secteurs : ${sectorStr}. Cherche : contrats, appels d'offres, partenariats stratégiques, levées de fonds, expansion géographique, résultats financiers.${aspectsFocus}`
     log(`  [perplexity] "${companyName}" — recherche (${domains.length} domaines sources admin)...`)
 
     const { text, citations } = await perplexityResponses(query, {
@@ -175,8 +175,8 @@ async function extractSignalsFromContent(
 ): Promise<{ title: string; content: string; relevance: number; type: string }[]> {
   if (!content.trim() || content.length < 50) return []
   try {
-    const countryList = watchCountries.map(c => COUNTRY_NAMES[c] || c).join(', ')
-    const prompt = `Extrais les informations pertinentes sur "${companyName}" dans ce contenu pour la veille africaine (${countryList}).
+    const countryList = watchCountries.map(c => countryName(c)).join(', ')
+    const prompt = `Extrais les informations pertinentes sur "${companyName}" dans ce contenu pour la veille concurrentielle (${countryList}).
 Contenu : ${content.slice(0, 5_000)}
 JSON : {"signals":[{"title":"...","content":"...","relevance":0.8,"type":"funding|product|partnership|contract|news|financial"}]}
 Si rien : {"signals":[]}`
@@ -198,7 +198,7 @@ export async function POST(req: NextRequest) {
 
     const { data: watch } = await supabase
       .from('watches')
-      .select('*, watch_companies(companies(id, name, website, linkedin_url, country))')
+      .select('*, watch_companies(aspects, companies(id, name, website, linkedin_url, country))')
       .eq('id', watchId)
       .single()
 
@@ -206,7 +206,10 @@ export async function POST(req: NextRequest) {
 
     const watchCountries: string[] = watch.countries ?? []
     const watchSectors: string[]   = watch.sectors   ?? []
-    const realCompanies: any[]     = (watch.watch_companies ?? []).map((wc: any) => wc.companies).filter(Boolean)
+    const realCompanies: any[]     = (watch.watch_companies ?? []).map((wc: any) => ({
+      ...wc.companies,
+      aspects: wc.aspects ?? [],
+    })).filter(Boolean)
     const companies: any[] = realCompanies.length > 0
       ? realCompanies
       : [{ id: 'sector-' + watchId, name: watchSectors.length > 0 ? watchSectors.join(', ') : (watch.name ?? 'secteur'), website: null, linkedin_url: null, country: watchCountries[0] ?? null }]
@@ -299,7 +302,7 @@ export async function POST(req: NextRequest) {
     log(`\n[Scrape] ── PHASE 2 : Perplexity Research ──`)
     for (const company of companies) {
       const pplxSignals = await researchWithPerplexity(
-        company.name, watchCountries, watchSectors, sourceDomains, log,
+        company.name, watchCountries, watchSectors, sourceDomains, log, company.aspects,
       )
       for (const s of pplxSignals) {
         const ok = await insertSignal({
@@ -321,13 +324,13 @@ export async function POST(req: NextRequest) {
     // ══════════════════════════════════════════════════════════════════════
     log(`\n[Scrape] ── PHASE 3 : Enrichissement ──`)
     const year          = new Date().getFullYear()
-    const countryNames  = watchCountries.map(c => COUNTRY_NAMES[c] || c)
+    const countryNames  = watchCountries.map(c => countryName(c))
 
     for (const company of companies) {
       if (process.env.FIRECRAWL_API_KEY) {
         for (const query of [
           `"${company.name}" ${countryNames[0]} ${year}`,
-          `"${company.name}" Afrique partenariat contrat ${year}`,
+          `"${company.name}" ${countryNames[0] || ''} partenariat contrat ${year}`,
         ]) {
           const results = await firecrawlSearch(query)
           for (const r of results) {

@@ -28,7 +28,7 @@ const CHAT_TOOLS = [
             countries: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Codes pays ISO : CI (Côte d\'Ivoire), SN (Sénégal), GH (Ghana), NG (Nigeria), KE (Kenya), CM (Cameroun), MA (Maroc), ZA (Afrique du Sud), BJ (Bénin), BF (Burkina Faso), ML (Mali), TG (Togo)',
+              description: 'Codes pays ISO 3166-1 alpha-2 (ex : FR, US, CI, SN, GH, NG, DE, BR, JP, CN…). L\'utilisateur peut choisir n\'importe quel pays du monde.',
             },
             companies: {
               type: 'array',
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
         ).join('\n')
       : ''
 
-    const systemPrompt = `Tu es l'assistant IA de MarketLens, plateforme de veille concurrentielle pour les marchés africains.
+    const systemPrompt = `Tu es l'assistant IA de MarketLens, plateforme de veille concurrentielle internationale.
 Tu aides ${profile?.full_name || 'l\'utilisateur'} à analyser ses données de veille, comprendre ses marchés et prendre des décisions stratégiques.
 
 VEILLES ACTIVES :

@@ -96,6 +96,7 @@ export async function POST(req: NextRequest) {
               country:   co.country  || countries[0],
               sector:    co.sector   || sectors[0],
               is_global: true,
+              logo_url:  co.logo_url || null,
             })
             .select('id')
             .single()
@@ -107,7 +108,10 @@ export async function POST(req: NextRequest) {
         if (companyId) {
           const { error: wcErr } = await admin
             .from('watch_companies')
-            .upsert({ watch_id: watch.id, company_id: companyId }, { onConflict: 'watch_id,company_id' })
+            .upsert(
+              { watch_id: watch.id, company_id: companyId, aspects: co.aspects ?? [] },
+              { onConflict: 'watch_id,company_id' },
+            )
 
           if (wcErr) errors.push(`link company "${co.name}": ${wcErr.message}`)
           else linked.push(co.name.trim())

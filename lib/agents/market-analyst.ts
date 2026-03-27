@@ -63,7 +63,7 @@ export async function generateMarketAnalysis(
   const parentContent = JSON.stringify(parentReport.content).slice(0, 8_000)
 
   // ── Prompt expert ──────────────────────────────────────────────────────
-  const prompt = `Tu es un analyste senior en intelligence de marché, spécialisé dans les marchés émergents africains.
+  const prompt = `Tu es un analyste senior en intelligence de marché, spécialisé dans les marchés internationaux et émergents.
 Tu travailles avec minutie, précision et un grand sens du détail. Tes analyses font référence dans le secteur.
 
 ═══════════════════════════════════════════════════════════

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,20 +33,7 @@ export async function POST(req: NextRequest) {
       `[${r.type.toUpperCase()}] ${r.title}\n${r.summary || JSON.stringify(r.content).slice(0, 800)}`
     ).join('\n\n---\n\n')
 
-    // Agent stratégie avec Claude Opus
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: `Tu es un consultant senior en stratégie de marché africain, spécialisé dans les marchés : ${watch.countries?.join(', ')}.
+    const prompt = `Tu es un consultant senior en stratégie de marché africain, spécialisé dans les marchés : ${watch.countries?.join(', ')}.
 
 Sur la base de ces analyses de veille concurrentielle :
 ${reportsContext}
@@ -65,19 +53,11 @@ Génère 3 recommandations stratégiques actionnables en JSON :
     }
   ]
 }`
-        }]
-      }),
-    })
 
-    if (!response.ok) throw new Error('Erreur Claude API')
-    const data = await response.json()
-    const responseText = data.content[0]?.text || ''
+    const { text: responseText, tokensUsed } = await callGemini(prompt, { maxOutputTokens: 2000 })
+    const data = { usage: { output_tokens: tokensUsed } }
 
-    let parsed
-    try {
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null
-    } catch { parsed = null }
+    const parsed = parseGeminiJson<{ recommendations: any[] }>(responseText)
 
     if (!parsed?.recommendations) {
       return NextResponse.json({ error: 'Format de réponse invalide' }, { status: 500 })

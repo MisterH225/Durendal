@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 
 export async function POST(req: NextRequest) {
   try {
@@ -35,20 +36,8 @@ export async function POST(req: NextRequest) {
 
     const companies = watch.watch_companies?.map((wc: any) => wc.companies?.name).join(', ')
 
-    // Génère le rapport avec Claude Sonnet
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: `Tu es un analyste expert en veille concurrentielle pour les marchés africains.
+    // Génère le rapport avec Gemini Flash
+    const prompt = `Tu es un analyste expert en veille concurrentielle pour les marchés africains.
 
 Analyse ces signaux concurrentiels sur les entreprises suivantes : ${companies}
 Marchés : ${watch.countries?.join(', ')} | Secteurs : ${watch.sectors?.join(', ')}
@@ -68,21 +57,14 @@ Génère un rapport de veille structuré en JSON avec ce format exact :
   "period": "Dernières 24-48h",
   "signals_analyzed": ${signals.length}
 }`
-        }]
-      }),
-    })
 
-    if (!response.ok) throw new Error('Erreur Claude API')
-    const data = await response.json()
-    const responseText = data.content[0]?.text || ''
+    const { text: responseText, tokensUsed } = await callGemini(prompt, { maxOutputTokens: 2000 })
 
-    let reportContent
-    try {
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-      reportContent = jsonMatch ? JSON.parse(jsonMatch[0]) : { title: 'Rapport', executive_summary: responseText }
-    } catch {
+    let reportContent = parseGeminiJson<any>(responseText)
+    if (!reportContent) {
       reportContent = { title: 'Rapport de veille', executive_summary: responseText }
     }
+    const data = { usage: { output_tokens: tokensUsed } }
 
     // Sauvegarde le rapport
     const { data: report } = await supabase.from('reports').insert({

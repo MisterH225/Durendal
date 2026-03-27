@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { callGemini } from '@/lib/ai/gemini'
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,7 +10,6 @@ export async function POST(req: NextRequest) {
 
     const { messages } = await req.json()
 
-    // Récupère le contexte de veille de l'utilisateur
     const { data: profile } = await supabase
       .from('profiles').select('account_id').eq('id', user.id).single()
 
@@ -23,7 +23,6 @@ export async function POST(req: NextRequest) {
       .order('collected_at', { ascending: false })
       .limit(10)
 
-    // Contexte injecté dans le system prompt
     const watchContext = watches?.map((w: any) =>
       `- ${w.name} (${w.sectors?.join(', ')} · ${w.countries?.join(', ')})`
     ).join('\n') || 'Aucune veille configurée'
@@ -32,11 +31,11 @@ export async function POST(req: NextRequest) {
       `- [${s.companies?.name}] ${s.title || s.raw_content?.slice(0, 100)}`
     ).join('\n') || 'Aucun signal récent'
 
-    const systemPrompt = `Tu es l'assistant IA de MarketLens, une plateforme de veille concurrentielle pour les marchés africains (Côte d'Ivoire, Sénégal, Ghana et autres pays africains).
+    // Construit le prompt complet pour Gemini (system + historique + message utilisateur)
+    const systemBlock = `Tu es l'assistant IA de MarketLens, une plateforme de veille concurrentielle pour les marchés africains (Côte d'Ivoire, Sénégal, Ghana et autres pays africains).
+Tu aides les utilisateurs à analyser leurs données de veille, comprendre leurs marchés et prendre des décisions stratégiques.
 
-Tu aides les utilisateurs à analyser leurs données de veille concurrentielle, comprendre leurs marchés, et prendre des décisions stratégiques.
-
-VEILLES ACTIVES DE L'UTILISATEUR :
+VEILLES ACTIVES :
 ${watchContext}
 
 DERNIERS SIGNAUX COLLECTÉS :
@@ -50,43 +49,36 @@ INSTRUCTIONS :
 - Adopte un ton professionnel mais accessible
 - Termine tes réponses importantes par 1-2 actions concrètes recommandées`
 
-    // Appel Claude API
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: messages.map((m: any) => ({
-          role: m.role,
-          content: m.content,
-        })),
-      }),
+    // Formate l'historique de conversation
+    const historyBlock = (messages as any[]).slice(0, -1).map((m: any) =>
+      `${m.role === 'user' ? 'Utilisateur' : 'Assistant'} : ${m.content}`
+    ).join('\n\n')
+
+    const lastMessage = messages[messages.length - 1]?.content || ''
+
+    const fullPrompt = `${systemBlock}
+
+${historyBlock ? `HISTORIQUE DE LA CONVERSATION :\n${historyBlock}\n\n` : ''}Utilisateur : ${lastMessage}
+
+Assistant :`
+
+    const { text: content, tokensUsed } = await callGemini(fullPrompt, {
+      maxOutputTokens: 1000,
+      temperature: 0.5,
     })
 
-    if (!response.ok) {
-      throw new Error('Erreur API Claude')
-    }
+    const reply = content.trim() || 'Désolé, je n\'ai pas pu générer une réponse.'
 
-    const data = await response.json()
-    const content = data.content[0]?.text || 'Désolé, je n\'ai pas pu générer une réponse.'
-
-    // Sauvegarde en base
     if (profile?.account_id) {
       await supabase.from('chat_messages').insert([
-        { account_id: profile.account_id, user_id: user.id, role: 'user', content: messages[messages.length-1].content },
-        { account_id: profile.account_id, user_id: user.id, role: 'assistant', content, tokens_used: data.usage?.output_tokens || 0 },
+        { account_id: profile.account_id, user_id: user.id, role: 'user', content: lastMessage },
+        { account_id: profile.account_id, user_id: user.id, role: 'assistant', content: reply, tokens_used: tokensUsed },
       ])
     }
 
-    return NextResponse.json({ content })
+    return NextResponse.json({ content: reply })
   } catch (error) {
-    console.error('Chat error:', error)
+    console.error('[Chat] Erreur:', error)
     return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 })
   }
 }

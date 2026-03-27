@@ -127,6 +127,28 @@ export default function NewWatchPage() {
         }
       }
 
+      // Lancer les agents 1 et 2 en arrière-plan (fire-and-forget)
+      // On n'attend pas la réponse pour ne pas bloquer l'utilisateur
+      if (watch?.id) {
+        const watchIdToRun = watch.id
+        Promise.resolve().then(async () => {
+          try {
+            await fetch('/api/agents/scrape', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ watchId: watchIdToRun }),
+            })
+            await fetch('/api/agents/synthesize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ watchId: watchIdToRun }),
+            })
+          } catch (e) {
+            console.error('[AutoRun] Erreur démarrage agents:', e)
+          }
+        })
+      }
+
       router.push('/veilles')
     } catch (err: any) {
       setError(err.message || 'Erreur lors de la création')

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,19 +38,7 @@ export async function POST(req: NextRequest) {
       `${s.title}\n${s.summary || JSON.stringify(s.content?.key_insights || []).slice(0, 500)}`
     ).join('\n\n---\n\n')
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: `Tu es un expert en analyse de marché africain, spécialisé sur ${watch.countries?.join(', ')}.
+    const prompt = `Tu es un expert en analyse de marché africain, spécialisé sur ${watch.countries?.join(', ')}.
 
 Analyse ces données de veille sur les entreprises : ${companies}
 Secteurs : ${watch.sectors?.join(', ')} | Marchés : ${watch.countries?.join(', ')}
@@ -74,21 +63,14 @@ Produis une analyse de marché structurée en JSON :
   "market_gaps": ["segment non couvert 1", "segment non couvert 2"],
   "signals_analyzed": ${syntheses.length}
 }`
-        }]
-      }),
-    })
 
-    if (!response.ok) throw new Error('Erreur Claude API')
-    const data = await response.json()
-    const responseText = data.content[0]?.text || ''
+    const { text: responseText, tokensUsed } = await callGemini(prompt, { maxOutputTokens: 2000 })
 
-    let reportContent
-    try {
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-      reportContent = jsonMatch ? JSON.parse(jsonMatch[0]) : { title: 'Analyse de marché', executive_summary: responseText }
-    } catch {
+    let reportContent = parseGeminiJson<any>(responseText)
+    if (!reportContent) {
       reportContent = { title: 'Analyse de marché', executive_summary: responseText }
     }
+    const data = { usage: { output_tokens: tokensUsed } }
 
     const { data: report } = await supabase.from('reports').insert({
       watch_id: watchId,

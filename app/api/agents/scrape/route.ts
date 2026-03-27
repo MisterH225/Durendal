@@ -12,7 +12,7 @@ export const maxDuration = 300
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient }              from '@/lib/supabase/server'
+import { createAdminClient }          from '@/lib/supabase/admin'
 import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 import { perplexityResponses }         from '@/lib/ai/perplexity'
 import { runAllAgentsParallel, CollectedSignal } from '@/lib/agents/collector-engine'
@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
   const log = (msg: string) => { console.log(msg); logs.push(msg) }
 
   try {
-    const supabase      = createClient()
+    const supabase      = createAdminClient()
     const { watchId }   = await req.json()
     if (!watchId) return NextResponse.json({ error: 'watchId requis' }, { status: 400 })
 

@@ -65,11 +65,15 @@ export async function perplexityResponses(
 
   // ── Extraire le texte ─────────────────────────────────────────────────
   // Priorité : top-level `text` > output[message].content[output_text].text
-  let text = data.text ?? ''
-  if (!text) {
+  let text = ''
+  // Priorité 1 : champ top-level
+  if (typeof data.text === 'string' && data.text.length > 0) {
+    text = data.text
+  } else {
+    // Priorité 2 : output[message].content[output_text].text
     const outputMsg   = data.output?.find((o: any) => o.type === 'message')
     const contentPart = outputMsg?.content?.find((c: any) => c.type === 'output_text')
-    text = contentPart?.text ?? ''
+    text = typeof contentPart?.text === 'string' ? contentPart.text : ''
   }
 
   // ── Extraire les citations/URLs ───────────────────────────────────────

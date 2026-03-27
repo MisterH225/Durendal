@@ -248,45 +248,11 @@ async function filterByRelevance(
   companyName: string,
   sectors:     string[],
   countries:   string[],
-  threshold  = 0.15,
 ): Promise<SearchResult[]> {
-  if (!process.env.PERPLEXITY_API_KEY || results.length === 0) return results
-
-  const cacheKey     = `${companyName}|${sectors.join(',')}|${countries.join(',')}`
-  const contextText  = `${companyName} ${sectors.join(' ')} ${countries.join(' ')} Afrique`
-  const snippetTexts = results.map(r =>
-    `${r.title} ${(r.fullContent ?? r.snippet).slice(0, 400)}`,
-  )
-
-  try {
-    let companyEmb: number[]
-
-    // Récupère ou calcule l'embedding du contexte entreprise
-    if (_embeddingCache.has(cacheKey)) {
-      companyEmb = _embeddingCache.get(cacheKey)!
-    } else {
-      const allTexts = [contextText, ...snippetTexts]
-      const embeddings = await perplexityEmbed(allTexts)
-      companyEmb = embeddings[0]
-      _embeddingCache.set(cacheKey, companyEmb)
-
-      // Filtre en utilisant les embeddings déjà calculés
-      return results.filter((_, i) => {
-        const sim = cosineSimilarity(companyEmb, embeddings[i + 1])
-        return sim >= threshold
-      })
-    }
-
-    // Cache hit : on n'embed que les snippets
-    const snippetEmbs = await perplexityEmbed(snippetTexts)
-    return results.filter((_, i) => {
-      const sim = cosineSimilarity(companyEmb, snippetEmbs[i])
-      return sim >= threshold
-    })
-  } catch {
-    // En cas d'erreur (quota, timeout...) → pas de filtrage, on garde tout
-    return results
-  }
+  // Désactivé temporairement : le seuil élimine trop de résultats pertinents.
+  // Le filtrage se fera par Gemini lors de l'extraction (relevance >= 0.25).
+  // TODO: réactiver avec un seuil calibré après tests sur données réelles.
+  return results
 }
 
 // ─── 4. Extraction de signaux via Gemini Flash ────────────────────────────────

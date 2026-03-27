@@ -1,31 +1,30 @@
-// ★ Vercel : autorise jusqu'à 5 minutes (plan Pro requis)
 export const maxDuration = 300
 
 /**
  * POST /api/agents/scrape
- * Orchestrateur principal de collecte — architecture inspirée de VeilleCI.
+ * Orchestrateur principal de collecte.
  *
  * Pipeline :
- *  1. runAllAgentsParallel()   → 4 agents en parallèle (Perplexity + fetchPageContent)
+ *  1. runAllAgentsParallel()   → 5 agents en parallèle (Perplexity Search)
  *  2. researchWithPerplexity() → Perplexity Responses API (qualité + citations)
  *  3. Firecrawl / LinkedIn     → enrichissement si clés disponibles
- *  4. generateWatchReport()    → rapport inline (PAS fire-and-forget)
+ *  4. generateWatchReport()    → rapport inline
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient }              from '@/lib/supabase/server'
-import { callGemini, callGeminiWithSearch, parseGeminiJson } from '@/lib/ai/gemini'
+import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
+import { perplexityResponses }         from '@/lib/ai/perplexity'
 import { runAllAgentsParallel, CollectedSignal } from '@/lib/agents/collector-engine'
-import { generateWatchReport }       from '@/lib/agents/report-generator'
+import { generateWatchReport }         from '@/lib/agents/report-generator'
 
-// ─── Mapping ISO → noms complets ─────────────────────────────────────────────
 const COUNTRY_NAMES: Record<string, string> = {
   CI: "Côte d'Ivoire", SN: 'Sénégal',      GH: 'Ghana',      NG: 'Nigeria',
   KE: 'Kenya',         CM: 'Cameroun',      MA: 'Maroc',      ZA: 'Afrique du Sud',
   BJ: 'Bénin',         BF: 'Burkina Faso',  ML: 'Mali',       TG: 'Togo',
 }
 
-// ─── Firecrawl Search (enrichissement si clé disponible) ─────────────────────
+// ─── Firecrawl ───────────────────────────────────────────────────────────────
 async function firecrawlSearch(query: string): Promise<{ title: string; url: string; content: string }[]> {
   const apiKey = process.env.FIRECRAWL_API_KEY
   if (!apiKey) return []
@@ -90,48 +89,54 @@ async function fetchLinkedInPosts(linkedinUrl: string) {
   } catch { return [] }
 }
 
-// ─── Gemini Grounding (2 passes) ─────────────────────────────────────────────
-async function researchWithGrounding(
+// ─── Perplexity Research (Phase 2) ───────────────────────────────────────────
+async function researchWithPerplexity(
   companyName: string,
   countries:   string[],
   sectors:     string[],
   log:         (msg: string) => void,
 ): Promise<{ title: string; content: string; relevance: number; type: string; url: string; source_name: string }[]> {
-  if (!process.env.GEMINI_API_KEY) return []
+  if (!process.env.PERPLEXITY_API_KEY) {
+    log(`  [perplexity] clé absente — skip`)
+    return []
+  }
   const countryNames = countries.map(c => COUNTRY_NAMES[c] || c).join(', ')
   const sectorStr    = sectors.join(', ')
   const year         = new Date().getFullYear()
 
   try {
-    // Pass 1 : recherche en langage naturel + grounding Google Search
-    const query = `Actualités récentes ${year - 1}-${year} sur "${companyName}" en Afrique (${countryNames}). Secteurs : ${sectorStr}. Levées de fonds, produits, partenariats, expansion, résultats.`
-    log(`  [grounding] "${companyName}" — recherche Google...`)
-    const { text, sources } = await callGeminiWithSearch(query, { model: 'gemini-2.5-flash', maxOutputTokens: 2_000 })
+    const query = `Actualités récentes ${year - 1}-${year} sur "${companyName}" en Afrique (${countryNames}). Secteurs : ${sectorStr}. Cherche : levées de fonds, nouveaux produits, partenariats stratégiques, expansion géographique, résultats financiers, contrats.`
+    log(`  [perplexity] "${companyName}" — recherche web...`)
 
-    if (!text || text.trim().length < 80) return []
+    const { text, citations } = await perplexityResponses(query, 'quality-search')
 
-    // Pass 2 : extraction JSON depuis le texte de recherche
-    const extractPrompt = `Extrais les faits récents sur "${companyName}" depuis ce texte.
+    if (!text || text.trim().length < 80) {
+      log(`  [perplexity] "${companyName}" → réponse vide`)
+      return []
+    }
+    log(`  [perplexity] "${companyName}" → ${text.length} chars, ${citations.length} citations`)
+
+    const extractPrompt = `Extrais les faits récents sur "${companyName}" depuis ce texte de recherche.
 TEXTE : ${text.slice(0, 4_000)}
-Réponds UNIQUEMENT en JSON : {"signals":[{"title":"...","content":"...","relevance":0.85,"type":"funding|product|partnership|expansion|contract|news|financial"}]}
+Réponds UNIQUEMENT en JSON : {"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.85,"type":"funding|product|partnership|expansion|contract|news|financial"}]}
 Si rien de concret : {"signals":[]}`
 
     const { text: extracted } = await callGemini(extractPrompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_200 })
-    const parsed = parseGeminiJson<{ signals: any[] }>(extracted)
+    const parsed     = parseGeminiJson<{ signals: any[] }>(extracted)
     const rawSignals = (parsed?.signals ?? []).filter((s: any) => s.relevance >= 0.25)
 
-    log(`  [grounding] "${companyName}" → ${rawSignals.length} signaux, ${sources.length} sources`)
+    log(`  [perplexity] "${companyName}" → ${rawSignals.length} signaux extraits`)
 
     return rawSignals.map((s: any, i: number) => ({
       title:       s.title,
       content:     s.content,
       relevance:   s.relevance,
       type:        s.type ?? 'news',
-      url:         sources[i % Math.max(sources.length, 1)]?.url ?? '',
-      source_name: sources[i % Math.max(sources.length, 1)]?.title ?? 'Google (Gemini)',
+      url:         citations[i % Math.max(citations.length, 1)]?.url   ?? '',
+      source_name: citations[i % Math.max(citations.length, 1)]?.title ?? 'Perplexity',
     }))
   } catch (e: any) {
-    log(`  [grounding] ✗ Erreur: ${e?.message}`)
+    log(`  [perplexity] ✗ Erreur "${companyName}": ${e?.message}`)
     return []
   }
 }
@@ -176,16 +181,16 @@ export async function POST(req: NextRequest) {
     const watchCountries: string[] = watch.countries ?? []
     const watchSectors: string[]   = watch.sectors   ?? []
     const realCompanies: any[]     = watch.watch_companies?.map((wc: any) => wc.companies).filter(Boolean) ?? []
-    // Mode sectoriel si aucune entreprise liée
     const companies: any[] = realCompanies.length > 0
       ? realCompanies
       : [{ id: 'sector-' + watchId, name: watchSectors.length > 0 ? watchSectors.join(', ') : (watch.name ?? 'secteur'), website: null, linkedin_url: null, country: watchCountries[0] ?? null }]
+
     log(`\n[Scrape] ════════════════════════════════`)
     log(`[Scrape] Veille     : ${watch.name ?? watchId}`)
     log(`[Scrape] Entreprises: ${companies.map((c: any) => c.name).join(', ')}`)
     log(`[Scrape] Pays       : ${watchCountries.join(', ')}`)
     log(`[Scrape] Secteurs   : ${watchSectors.join(', ')}`)
-    log(`[Scrape] APIs       : GEMINI=${!!process.env.GEMINI_API_KEY} | FIRECRAWL=${!!process.env.FIRECRAWL_API_KEY} | PROXYCURL=${!!process.env.PROXYCURL_API_KEY}`)
+    log(`[Scrape] APIs       : PERPLEXITY=${!!process.env.PERPLEXITY_API_KEY} | GEMINI=${!!process.env.GEMINI_API_KEY} | FIRECRAWL=${!!process.env.FIRECRAWL_API_KEY}`)
 
     const { data: job } = await supabase
       .from('agent_jobs')
@@ -194,16 +199,14 @@ export async function POST(req: NextRequest) {
 
     let   totalSignals   = 0
     let   sumRelevance   = 0
-    const statsBySource  = { parallel_agents: 0, grounding: 0, firecrawl: 0, website: 0, linkedin: 0, sources_lib: 0 }
+    const statsBySource  = { parallel_agents: 0, perplexity: 0, firecrawl: 0, website: 0, linkedin: 0, sources_lib: 0 }
     const seenUrls       = new Set<string>()
 
-    // Helper : insère un signal avec déduplication en mémoire + DB
     const insertSignal = async (payload: CollectedSignal): Promise<boolean> => {
       const dedupKey = payload.url || `${payload.company_id}:${payload.title}`
       if (seenUrls.has(dedupKey)) return false
       seenUrls.add(dedupKey)
 
-      // Vérification DB (URL exacte)
       if (payload.url) {
         const { count } = await supabase
           .from('signals').select('id', { count: 'exact', head: true })
@@ -230,8 +233,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  PHASE 1 — 4 agents en parallèle (web_scanner, press_monitor,
-    //             analyst, deep_research) comme VeilleCI runAllWatchAgents
+    //  PHASE 1 — 5 agents en parallèle (Perplexity Search → Firecrawl)
     // ══════════════════════════════════════════════════════════════════════
     log(`\n[Scrape] ── PHASE 1 : Agents parallèles ──`)
     const engineResult = await runAllAgentsParallel(
@@ -242,17 +244,17 @@ export async function POST(req: NextRequest) {
       const ok = await insertSignal(signal)
       if (ok) statsBySource.parallel_agents++
     }
-    log(`[Scrape] Phase 1 → ${statsBySource.parallel_agents} signaux insérés (${engineResult.allSignals.length} collectés, doublons dédupliqués)`)
+    log(`[Scrape] Phase 1 → ${statsBySource.parallel_agents} signaux insérés (${engineResult.allSignals.length} collectés)`)
 
     // ══════════════════════════════════════════════════════════════════════
-    //  PHASE 2 — Gemini Grounding (Google Search) pour chaque entreprise
+    //  PHASE 2 — Perplexity Responses API (qualité + citations)
     // ══════════════════════════════════════════════════════════════════════
-    log(`\n[Scrape] ── PHASE 2 : Gemini Grounding ──`)
+    log(`\n[Scrape] ── PHASE 2 : Perplexity Research ──`)
     for (const company of companies) {
-      const groundedSignals = await researchWithGrounding(
+      const pplxSignals = await researchWithPerplexity(
         company.name, watchCountries, watchSectors, log,
       )
-      for (const s of groundedSignals) {
+      for (const s of pplxSignals) {
         const ok = await insertSignal({
           company_id:  company.id,
           title:       s.title,
@@ -262,20 +264,19 @@ export async function POST(req: NextRequest) {
           relevance:   s.relevance,
           type:        s.type,
         })
-        if (ok) statsBySource.grounding++
+        if (ok) statsBySource.perplexity++
       }
     }
-    log(`[Scrape] Phase 2 → ${statsBySource.grounding} signaux Grounding`)
+    log(`[Scrape] Phase 2 → ${statsBySource.perplexity} signaux Perplexity`)
 
     // ══════════════════════════════════════════════════════════════════════
-    //  PHASE 3 — Firecrawl (enrichissement si clé dispo), LinkedIn, Sites
+    //  PHASE 3 — Firecrawl, LinkedIn, Sites
     // ══════════════════════════════════════════════════════════════════════
     log(`\n[Scrape] ── PHASE 3 : Enrichissement ──`)
     const year          = new Date().getFullYear()
     const countryNames  = watchCountries.map(c => COUNTRY_NAMES[c] || c)
 
     for (const company of companies) {
-      // Firecrawl Search
       if (process.env.FIRECRAWL_API_KEY) {
         for (const query of [
           `"${company.name}" ${countryNames[0]} ${year}`,
@@ -298,7 +299,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Site officiel
       if (company.website) {
         log(`  [site] ${company.website}`)
         const siteContent = process.env.FIRECRAWL_API_KEY
@@ -324,7 +324,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // LinkedIn
       if (company.linkedin_url && process.env.PROXYCURL_API_KEY) {
         const profile = await fetchLinkedInCompany(company.linkedin_url)
         if (profile) {
@@ -361,7 +360,6 @@ export async function POST(req: NextRequest) {
       await new Promise(r => setTimeout(r, 200))
     }
 
-    // Bibliothèque de sources
     const { data: libSources } = await supabase
       .from('sources').select('*').eq('is_active', true).eq('type', 'web')
 
@@ -407,7 +405,7 @@ export async function POST(req: NextRequest) {
     log(`    press_monitor   : ${engineResult.breakdown.press_monitor ?? 0}`)
     log(`    analyst         : ${engineResult.breakdown.analyst       ?? 0}`)
     log(`    deep_research   : ${engineResult.breakdown.deep_research ?? 0}`)
-    log(`  Grounding         : ${statsBySource.grounding}`)
+    log(`  Perplexity        : ${statsBySource.perplexity}`)
     log(`  Firecrawl         : ${statsBySource.firecrawl}`)
     log(`  Site officiel     : ${statsBySource.website}`)
     log(`  LinkedIn          : ${statsBySource.linkedin}`)
@@ -415,8 +413,7 @@ export async function POST(req: NextRequest) {
     log(`  TOTAL             : ${totalSignals} signaux insérés`)
 
     // ══════════════════════════════════════════════════════════════════════
-    //  PHASE 4 — Génération inline du rapport (comme generateWatchReport()
-    //            dans VeilleCI, pas fire-and-forget)
+    //  PHASE 4 — Génération inline du rapport
     // ══════════════════════════════════════════════════════════════════════
     let reportResult: { reportId: string | null; insights: number; sources: number; skipped: boolean; reason?: string } = { reportId: null, insights: 0, sources: 0, skipped: false }
 
@@ -427,7 +424,6 @@ export async function POST(req: NextRequest) {
       log(`\n[Scrape] Phase 4 ignorée (0 signaux collectés)`)
     }
 
-    // ── Finalisation ─────────────────────────────────────────────────────
     await supabase.from('agent_jobs').update({
       status:        'done',
       completed_at:  new Date().toISOString(),
@@ -452,7 +448,7 @@ export async function POST(req: NextRequest) {
         watch_id:   watchId,
         type:       'signal',
         title:      `Collecte terminée — ${totalSignals} signaux`,
-        message:    `Agents: ${statsBySource.parallel_agents} | Grounding: ${statsBySource.grounding} | Firecrawl: ${statsBySource.firecrawl} | Site: ${statsBySource.website} | LinkedIn: ${statsBySource.linkedin}`,
+        message:    `Agents: ${statsBySource.parallel_agents} | Perplexity: ${statsBySource.perplexity} | Firecrawl: ${statsBySource.firecrawl} | Site: ${statsBySource.website} | LinkedIn: ${statsBySource.linkedin}`,
       })
     }
 

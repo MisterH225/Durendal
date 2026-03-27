@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "app/api/agents/scrape/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/agents/synthesize/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/chat/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

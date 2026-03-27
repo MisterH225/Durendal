@@ -1,3 +1,6 @@
+// ★ Vercel : autorise jusqu'à 5 minutes (plan Pro requis)
+export const maxDuration = 300
+
 /**
  * POST /api/agents/scrape
  * Orchestrateur principal de collecte — architecture inspirée de VeilleCI.
@@ -170,10 +173,13 @@ export async function POST(req: NextRequest) {
 
     if (!watch) return NextResponse.json({ error: 'Veille introuvable' }, { status: 404 })
 
-    const companies: any[]         = watch.watch_companies?.map((wc: any) => wc.companies).filter(Boolean) ?? []
     const watchCountries: string[] = watch.countries ?? []
     const watchSectors: string[]   = watch.sectors   ?? []
-
+    const realCompanies: any[]     = watch.watch_companies?.map((wc: any) => wc.companies).filter(Boolean) ?? []
+    // Mode sectoriel si aucune entreprise liée
+    const companies: any[] = realCompanies.length > 0
+      ? realCompanies
+      : [{ id: 'sector-' + watchId, name: watchSectors.length > 0 ? watchSectors.join(', ') : (watch.name ?? 'secteur'), website: null, linkedin_url: null, country: watchCountries[0] ?? null }]
     log(`\n[Scrape] ════════════════════════════════`)
     log(`[Scrape] Veille     : ${watch.name ?? watchId}`)
     log(`[Scrape] Entreprises: ${companies.map((c: any) => c.name).join(', ')}`)

@@ -16,18 +16,35 @@ export default function RunAgentsButton({ watchId, hasCompanies }: Props) {
     setDetail('')
     try {
       // Agent 1 lance les 5 agents en parallèle ET génère le rapport (Phase 4)
-      // Plus besoin d'appeler Agent 2 séparément — il est auto-déclenché.
-      const res  = await fetch('/api/agents/scrape', {
+      const res = await fetch('/api/agents/scrape', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ watchId }),
       })
-      const data = await res.json()
+
+      // Lire comme texte d'abord pour éviter un crash si la réponse est du HTML
+      const text = await res.text()
+
+      let data: any = {}
+      try {
+        data = JSON.parse(text)
+      } catch {
+        // Le serveur a renvoyé du HTML (timeout Vercel ou erreur 500)
+        if (res.status === 504 || text.includes('FUNCTION_INVOCATION_TIMEOUT')) {
+          setState('error')
+          setDetail('Délai dépassé — les agents travaillent toujours en arrière-plan, actualisez la page dans 1-2 min.')
+        } else {
+          setState('error')
+          setDetail(`Erreur serveur (${res.status}) — vérifiez la configuration.`)
+        }
+        setTimeout(() => setState('idle'), 8000)
+        return
+      }
 
       if (!res.ok || data.error) {
         setState('error')
         setDetail(data.error ?? `Erreur ${res.status}`)
-        setTimeout(() => setState('idle'), 5000)
+        setTimeout(() => setState('idle'), 6000)
       } else {
         const signals     = data.total_signals ?? 0
         const reportReady = data.report_ready
@@ -38,7 +55,7 @@ export default function RunAgentsButton({ watchId, hasCompanies }: Props) {
     } catch (err: any) {
       setState('error')
       setDetail(err?.message ?? 'Erreur de connexion')
-      setTimeout(() => setState('idle'), 5000)
+      setTimeout(() => setState('idle'), 6000)
     }
   }
 

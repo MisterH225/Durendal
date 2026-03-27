@@ -1,8 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound }     from 'next/navigation'
 import Link             from 'next/link'
-import { ArrowLeft, FileText, Zap, AlertTriangle, Plus, ExternalLink, Globe, Newspaper, BarChart2, Search, BrainCircuit } from 'lucide-react'
+import { ArrowLeft, FileText, Zap, AlertTriangle, Plus, ExternalLink, Globe, Search, BrainCircuit, BarChart2, Newspaper } from 'lucide-react'
 import RunAgentsButton  from './RunAgentsButton'
+import ScanHistory      from './ScanHistory'
 
 const SUB_AGENT_ICONS: Record<string, any> = {
   web_scanner:             Globe,
@@ -252,51 +253,8 @@ export default async function WatchDetailPage({ params }: { params: { id: string
             )}
           </div>
 
-          {/* Derniers scans — avec breakdown sous-agents */}
-          {jobs && jobs.length > 0 && (
-            <div className="card-lg">
-              <h3 className="text-sm font-bold text-neutral-900 mb-3">Derniers scans</h3>
-              <div className="space-y-2.5">
-                {jobs.map((job: any) => {
-                  const dur = fmtDuration(job.started_at, job.completed_at)
-                  const bd  = job.metadata?.breakdown_agents as Record<string, number> | undefined
-                  return (
-                    <div key={job.id} className="text-xs border-b border-neutral-50 pb-2.5 last:border-0 last:pb-0">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                          job.status === 'done' ? 'bg-green-500' :
-                          job.status === 'running' ? 'bg-amber-500' : 'bg-red-500'
-                        }`} />
-                        <span className="text-neutral-600 font-medium">Agent {job.agent_number}</span>
-                        {job.signals_count != null && (
-                          <span className="text-neutral-400">{job.signals_count} signaux</span>
-                        )}
-                        <span className={`badge text-[9px] ml-auto ${
-                          job.status === 'done' ? 'badge-green' :
-                          job.status === 'running' ? 'badge-amber' : 'badge-red'
-                        }`}>{job.status === 'done' ? 'Terminé' : job.status === 'running' ? 'En cours' : 'Erreur'}</span>
-                      </div>
-                      {dur && <div className="text-[10px] text-neutral-400 mt-0.5 pl-3.5">{dur} · {fmtDate(job.started_at)}</div>}
-                      {/* Breakdown des 5 sous-agents */}
-                      {bd && job.agent_number === 1 && (
-                        <div className="flex flex-wrap gap-1 mt-1.5 pl-3.5">
-                          {Object.entries(bd).map(([key, val]) => {
-                            const Icon = SUB_AGENT_ICONS[key]
-                            return (
-                              <span key={key} className="flex items-center gap-0.5 text-[9px] bg-neutral-50 border border-neutral-200 px-1.5 py-0.5 rounded" title={key}>
-                                {Icon && <Icon size={8} className="text-neutral-400" />}
-                                {val}
-                              </span>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          {/* Derniers scans — repliable */}
+          <ScanHistory jobs={jobs ?? []} />
 
           {/* Détail du dernier breakdown Agent 1 */}
           {breakdown && (

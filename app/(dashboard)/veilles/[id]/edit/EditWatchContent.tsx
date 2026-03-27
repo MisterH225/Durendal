@@ -122,6 +122,9 @@ export default function EditWatchContent({ watch, initialCompanies }: Props) {
     setDeleting(true)
     setError('')
     try {
+      // Supprimer toutes les tables liées sans ON DELETE CASCADE
+      await supabase.from('alerts').delete().eq('watch_id', watch.id)
+      await supabase.from('chat_messages').update({ watch_id: null }).eq('watch_id', watch.id)
       await supabase.from('watch_companies').delete().eq('watch_id', watch.id)
       const { error: delError } = await supabase.from('watches').delete().eq('id', watch.id)
       if (delError) throw delError

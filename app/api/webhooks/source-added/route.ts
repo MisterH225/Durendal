@@ -14,9 +14,12 @@ import { runSourceCategorizer } from '@/lib/agents/source-categorizer'
  */
 export async function POST(req: NextRequest) {
   const secret = process.env.WEBHOOK_SECRET
-  const authHeader = req.headers.get('x-webhook-secret') ?? req.headers.get('authorization')?.replace('Bearer ', '')
+  if (!secret) {
+    return NextResponse.json({ error: 'WEBHOOK_SECRET non configuré' }, { status: 500 })
+  }
 
-  if (secret && authHeader !== secret) {
+  const authHeader = req.headers.get('x-webhook-secret') ?? req.headers.get('authorization')?.replace('Bearer ', '')
+  if (authHeader !== secret) {
     return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
   }
 

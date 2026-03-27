@@ -45,7 +45,7 @@ export default async function AdminSettingsPage() {
       color: 'text-purple-600',
       bg: 'bg-purple-50',
       fields: [
-        { label: 'Email SuperAdmin', value: process.env.SUPERADMIN_EMAIL ?? '—', type: 'email', hint: 'SUPERADMIN_EMAIL — défini dans .env.production' },
+        { label: 'Email SuperAdmin', value: 'harold.bagui@gmail.com', type: 'email', hint: 'SUPERADMIN_EMAIL — défini dans .env.production' },
         { label: 'Session expiration', value: '7 jours', type: 'text', hint: 'Configurable dans Supabase → Auth → Settings' },
         { label: 'OTP durée', value: '60 minutes', type: 'text', hint: 'Configurable dans Supabase → Auth → Settings' },
       ],
@@ -56,8 +56,8 @@ export default async function AdminSettingsPage() {
       color: 'text-amber-600',
       bg: 'bg-amber-50',
       fields: [
-        { label: 'Supabase URL', value: process.env.NEXT_PUBLIC_SUPABASE_URL ?? '—', type: 'text', hint: 'NEXT_PUBLIC_SUPABASE_URL' },
-        { label: 'Gemini (Google)', value: '••••••••••••••••', type: 'password', hint: 'GEMINI_API_KEY — pour les agents IA' },
+        { label: 'Supabase URL', value: 'https://wjrjnhaognyxcfnnaqgn.supabase.co', type: 'text', hint: 'NEXT_PUBLIC_SUPABASE_URL' },
+        { label: 'Anthropic (Claude)', value: '••••••••••••••••', type: 'password', hint: 'ANTHROPIC_API_KEY — pour les agents IA' },
         { label: 'Firecrawl', value: '••••••••••••••••', type: 'password', hint: 'FIRECRAWL_API_KEY — pour le scraping' },
       ],
     },

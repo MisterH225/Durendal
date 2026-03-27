@@ -6,6 +6,11 @@ export type GeminiModel =
   | 'gemini-1.5-flash'
   | 'gemini-1.5-pro'
 
+export interface GroundingSource {
+  title: string
+  url: string
+}
+
 /**
  * Appel générique à l'API Google Gemini.
  * Utilise gemini-2.0-flash par défaut : rapide, très bon rapport qualité/prix.
@@ -50,12 +55,73 @@ export async function callGemini(
 }
 
 /**
+ * Appel Gemini avec Google Search Grounding activé.
+ *
+ * Gemini effectue une vraie recherche Google en temps réel, ancre ses
+ * réponses sur les résultats trouvés et retourne les URLs sources
+ * (groundingChunks). Equivalent à l'approche Perplexity :
+ * chaque information est liée à une source vérifiable.
+ *
+ * - Inclus dans le quota Gemini (1 500 req/jour gratuit, ~$0.035/1K après)
+ * - 1 seul appel par requête → beaucoup plus rapide que scraping + extraction
+ * - temperature forcée à 0.1 pour maximiser la factualité
+ */
+export async function callGeminiWithSearch(
+  prompt: string,
+  options: {
+    model?: GeminiModel
+    maxOutputTokens?: number
+  } = {}
+): Promise<{ text: string; sources: GroundingSource[]; tokensUsed: number }> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) throw new Error('GEMINI_API_KEY manquant')
+
+  const model           = options.model           ?? 'gemini-2.0-flash'
+  const maxOutputTokens = options.maxOutputTokens ?? 3000
+
+  const res = await fetch(
+    `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens, temperature: 0.1 },
+      }),
+    }
+  )
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText)
+    throw new Error(`Gemini+Search API ${res.status}: ${errText}`)
+  }
+
+  const data = await res.json()
+  const candidate  = data.candidates?.[0]
+  const text       = candidate?.content?.parts?.[0]?.text ?? ''
+  const tokensUsed = data.usageMetadata?.candidatesTokenCount ?? 0
+
+  // Extrait les URLs sources depuis les groundingChunks
+  const groundingChunks: any[] = candidate?.groundingMetadata?.groundingChunks ?? []
+  const sources: GroundingSource[] = groundingChunks
+    .map((chunk: any) => ({
+      title: chunk.web?.title ?? '',
+      url:   chunk.web?.uri   ?? '',
+    }))
+    .filter(s => s.url.length > 0)
+    // Déduplique par URL
+    .filter((s, i, arr) => arr.findIndex(x => x.url === s.url) === i)
+
+  return { text, sources, tokensUsed }
+}
+
+/**
  * Extrait un objet JSON depuis la réponse texte de Gemini.
  * Gemini peut encadrer le JSON dans des blocs ```json ... ```.
  */
 export function parseGeminiJson<T>(text: string): T | null {
   try {
-    // Retire les balises markdown si présentes
     const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
     const match = cleaned.match(/\{[\s\S]*\}/)
     if (!match) return null

@@ -224,32 +224,33 @@ export function cosineSimilarity(a: number[], b: number[]): number {
  * Essaie Responses API d'abord, puis /search en fallback.
  * Propage les filtres (domaines, récence, langue, pays) aux deux APIs.
  */
+export interface EnrichedSearchResult {
+  title:        string
+  url:          string
+  snippet:      string
+  fullContent?: string
+  /** All citations from the synthesized response (for source mapping) */
+  citations?:   PerplexityCitation[]
+}
+
 export async function perplexityWebSearch(
   query:      string,
   maxResults = 3,
   filters?:  PerplexityFilters,
-): Promise<{ title: string; url: string; snippet: string; fullContent?: string }[]> {
+): Promise<EnrichedSearchResult[]> {
   // ── Niveau 1 : Responses API ────────────────────────────────────────────────
   try {
     const { text, citations } = await perplexityResponses(query, filters)
 
     if (text && text.length > 100) {
-      const sources = citations.slice(0, maxResults)
-
-      if (sources.length > 0) {
-        return sources.map((c, i) => ({
-          title:       c.title || `Source ${i + 1}`,
-          url:         c.url,
-          snippet:     text.slice(0, 300),
-          fullContent: text,
-        }))
-      }
-
+      // Return ONE result with all citations — avoids processing the same
+      // synthesized text N times with arbitrary URL assignments.
       return [{
-        title:       query.slice(0, 80),
-        url:         `https://perplexity.ai/search?q=${encodeURIComponent(query)}`,
+        title:       citations[0]?.title || query.slice(0, 80),
+        url:         citations[0]?.url   || `https://perplexity.ai/search?q=${encodeURIComponent(query)}`,
         snippet:     text.slice(0, 300),
         fullContent: text,
+        citations:   citations.slice(0, 20),
       }]
     }
   } catch {

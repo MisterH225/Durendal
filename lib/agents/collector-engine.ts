@@ -16,7 +16,7 @@
  */
 
 import { callGemini, parseGeminiJson }                                            from '@/lib/ai/gemini'
-import { perplexityWebSearch, perplexityEmbed, cosineSimilarity, PerplexityFilters } from '@/lib/ai/perplexity'
+import { perplexityWebSearch, perplexityEmbed, cosineSimilarity, PerplexityFilters, PerplexityCitation } from '@/lib/ai/perplexity'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -368,24 +368,50 @@ async function filterByRelevance(
 }
 
 // ─── 4. Extraction de signaux via Gemini Flash ────────────────────────────────
+
+export interface ExtractedSignal {
+  title:       string
+  content:     string
+  relevance:   number
+  type:        string
+  source_url?: string
+  source_name?: string
+}
+
+/**
+ * Extrait des signaux depuis un contenu textuel via Gemini.
+ * Quand `availableSources` est fourni (citations Perplexity), Gemini indique
+ * quelle source correspond à chaque signal → URLs fiables.
+ */
 export async function extractSignalsFromContent(
-  content:        string,
-  companyName:    string,
-  watchCountries: string[],
-): Promise<{ title: string; content: string; relevance: number; type: string }[]> {
+  content:          string,
+  companyName:      string,
+  watchCountries:   string[],
+  availableSources?: PerplexityCitation[],
+): Promise<ExtractedSignal[]> {
   if (!content.trim() || content.length < 50) return []
   try {
     const countryList = watchCountries.map(c => COUNTRY_NAMES[c] || c).join(', ')
+
+    let sourcesBlock = ''
+    if (availableSources && availableSources.length > 0) {
+      sourcesBlock = `\nSOURCES DISPONIBLES (utilise le numéro [N] pour indiquer la source de chaque signal) :\n`
+        + availableSources.map((s, i) => `[${i + 1}] ${s.title || s.url} — ${s.url}`).join('\n')
+        + '\n'
+    }
+
     const prompt = `Tu es un analyste de veille concurrentielle pour les marchés africains (${countryList}).
 Extrais les informations pertinentes sur "${companyName}". Concentre-toi sur : financement, produits, partenariats, expansion, résultats, appels d'offres, contrats.
-
+${sourcesBlock}
 Contenu :
 ${content.slice(0, 5_000)}
 
 Réponds UNIQUEMENT en JSON valide :
-{"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.8,"type":"funding|product|partnership|recruitment|expansion|contract|news|financial"}]}
+{"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.8,"type":"funding|product|partnership|recruitment|expansion|contract|news|financial"${availableSources ? ',"source_ref":1' : ''}}]}
 
-Si rien de pertinent sur "${companyName}", réponds exactement : {"signals":[]}`
+RÈGLES :
+- Chaque signal doit correspondre à un FAIT VÉRIFIABLE dans le contenu.${availableSources ? '\n- "source_ref" est le numéro [N] de la source qui contient cette information. NE PAS deviner : si tu ne sais pas quelle source, mets 0.' : ''}
+- Si rien de pertinent sur "${companyName}", réponds : {"signals":[]}`
 
     const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 2_000 })
     console.log(`[extract] Gemini brut (200c): ${text.slice(0, 200)}`)
@@ -393,7 +419,19 @@ Si rien de pertinent sur "${companyName}", réponds exactement : {"signals":[]}`
     const all = parsed?.signals || []
     const filtered = all.filter((s: any) => s.relevance >= 0.25)
     console.log(`[extract] "${companyName}": parsed=${!!parsed} total=${all.length} après_filtre=${filtered.length}`)
-    return filtered
+
+    return filtered.map((s: any) => {
+      const ref = typeof s.source_ref === 'number' && s.source_ref > 0 ? s.source_ref : 0
+      const matchedSource = (availableSources && ref > 0) ? availableSources[ref - 1] : undefined
+      return {
+        title:       s.title,
+        content:     s.content,
+        relevance:   s.relevance,
+        type:        s.type,
+        source_url:  matchedSource?.url,
+        source_name: matchedSource?.title,
+      }
+    })
   } catch (e: any) {
     console.error(`[extract] ERREUR "${companyName}":`, e?.message ?? e)
     return []
@@ -448,16 +486,20 @@ export async function runAgentType(
           }
           if (pageContent.length < 30) return
 
-          const extracted = await extractSignalsFromContent(pageContent, company.name, watchCountries)
+          const extracted = await extractSignalsFromContent(
+            pageContent, company.name, watchCountries,
+            (result as any).citations,
+          )
           for (const s of extracted) {
-            let hostname = result.url
-            try { hostname = new URL(result.url).hostname } catch {}
+            const signalUrl  = s.source_url || result.url
+            let hostname = signalUrl
+            try { hostname = new URL(signalUrl).hostname } catch {}
             signals.push({
               company_id:  company.id,
               title:       s.title || result.title,
               content:     s.content,
-              url:         result.url,
-              source_name: hostname,
+              url:         signalUrl,
+              source_name: s.source_name || hostname,
               relevance:   s.relevance,
               type:        s.type,
             })
@@ -625,11 +667,15 @@ export async function runDeepResearchAgent(
             }
             if (pageContent.length < 30) return
             allFindings.push(`${result.title}: ${pageContent.slice(0, 300)}`)
-            const extracted = await extractSignalsFromContent(pageContent, company.name, watchCountries)
+            const extracted = await extractSignalsFromContent(
+              pageContent, company.name, watchCountries,
+              (result as any).citations,
+            )
             for (const s of extracted) {
-              let hostname = result.url
-              try { hostname = new URL(result.url).hostname } catch {}
-              allSignals.push({ company_id: company.id, title: s.title || result.title, content: s.content, url: result.url, source_name: hostname, relevance: s.relevance, type: s.type })
+              const signalUrl = s.source_url || result.url
+              let hostname = signalUrl
+              try { hostname = new URL(signalUrl).hostname } catch {}
+              allSignals.push({ company_id: company.id, title: s.title || result.title, content: s.content, url: signalUrl, source_name: s.source_name || hostname, relevance: s.relevance, type: s.type })
             }
           })
           await Promise.allSettled(drJobs)

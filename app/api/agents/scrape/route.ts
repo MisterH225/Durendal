@@ -123,10 +123,21 @@ async function researchWithPerplexity(
     }
     log(`  [perplexity] "${companyName}" → ${text.length} chars, ${citations.length} citations`)
 
+    const citationsBlock = citations.length > 0
+      ? `\nSOURCES CITÉES PAR LA RECHERCHE (utilise [N] pour indiquer la source de chaque signal) :\n`
+        + citations.map((c, i) => `[${i + 1}] ${c.title || c.url} — ${c.url}`).join('\n') + '\n'
+      : ''
+
     const extractPrompt = `Extrais les faits récents sur "${companyName}" depuis ce texte de recherche.
+${citationsBlock}
 TEXTE : ${text.slice(0, 4_000)}
-Réponds UNIQUEMENT en JSON : {"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.85,"type":"funding|product|partnership|expansion|contract|news|financial"}]}
-Si rien de concret : {"signals":[]}`
+
+Réponds UNIQUEMENT en JSON : {"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.85,"type":"funding|product|partnership|expansion|contract|news|financial","source_ref":1}]}
+
+RÈGLES :
+- "source_ref" = numéro [N] de la source qui contient cette info. Si incertain, mets 0.
+- Chaque signal doit correspondre à un FAIT VÉRIFIABLE, pas une interprétation.
+- Si rien de concret : {"signals":[]}`
 
     const { text: extracted } = await callGemini(extractPrompt, { model: 'gemini-2.5-flash', maxOutputTokens: 2_500 })
     log(`  [perplexity] Gemini brut (200c): ${extracted.slice(0, 200)}`)
@@ -136,14 +147,18 @@ Si rien de concret : {"signals":[]}`
 
     log(`  [perplexity] "${companyName}" → ${rawSignals.length} signaux extraits`)
 
-    return rawSignals.map((s: any, i: number) => ({
-      title:       s.title,
-      content:     s.content,
-      relevance:   s.relevance,
-      type:        s.type ?? 'news',
-      url:         citations[i % Math.max(citations.length, 1)]?.url   ?? '',
-      source_name: citations[i % Math.max(citations.length, 1)]?.title ?? 'Perplexity',
-    }))
+    return rawSignals.map((s: any) => {
+      const ref = typeof s.source_ref === 'number' && s.source_ref > 0 ? s.source_ref : 0
+      const matched = ref > 0 && ref <= citations.length ? citations[ref - 1] : null
+      return {
+        title:       s.title,
+        content:     s.content,
+        relevance:   s.relevance,
+        type:        s.type ?? 'news',
+        url:         matched?.url   ?? '',
+        source_name: matched?.title ?? 'Perplexity',
+      }
+    })
   } catch (e: any) {
     log(`  [perplexity] ✗ Erreur "${companyName}": ${e?.message}`)
     return []

@@ -276,9 +276,14 @@ Réponds UNIQUEMENT en JSON valide :
 Si rien de pertinent sur "${companyName}", réponds exactement : {"signals":[]}`
 
     const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_000 })
+    console.log(`[extract] Gemini brut (200c): ${text.slice(0, 200)}`)
     const parsed = parseGeminiJson<{ signals: any[] }>(text)
-    return (parsed?.signals || []).filter((s: any) => s.relevance >= 0.25)
-  } catch {
+    const all = parsed?.signals || []
+    const filtered = all.filter((s: any) => s.relevance >= 0.25)
+    console.log(`[extract] "${companyName}": parsed=${!!parsed} total=${all.length} après_filtre=${filtered.length}`)
+    return filtered
+  } catch (e: any) {
+    console.error(`[extract] ERREUR "${companyName}":`, e?.message ?? e)
     return []
   }
 }

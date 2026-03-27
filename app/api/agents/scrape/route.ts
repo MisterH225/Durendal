@@ -122,7 +122,9 @@ Réponds UNIQUEMENT en JSON : {"signals":[{"title":"titre factuel court","conten
 Si rien de concret : {"signals":[]}`
 
     const { text: extracted } = await callGemini(extractPrompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_200 })
+    log(`  [perplexity] Gemini brut (200c): ${extracted.slice(0, 200)}`)
     const parsed     = parseGeminiJson<{ signals: any[] }>(extracted)
+    log(`  [perplexity] parsed=${!!parsed} signals_avant_filtre=${parsed?.signals?.length ?? 0}`)
     const rawSignals = (parsed?.signals ?? []).filter((s: any) => s.relevance >= 0.25)
 
     log(`  [perplexity] "${companyName}" → ${rawSignals.length} signaux extraits`)

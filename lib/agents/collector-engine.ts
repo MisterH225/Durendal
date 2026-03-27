@@ -16,6 +16,7 @@
  */
 
 import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
+import { perplexitySearch }             from '@/lib/ai/perplexity'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,16 +59,55 @@ const COUNTRY_NAMES: Record<string, string> = {
   BJ: 'Bénin',         BF: 'Burkina Faso',  ML: 'Mali',       TG: 'Togo',
 }
 
-// ─── 1. Moteur de recherche (Firecrawl prioritaire → DDG fallback) ───────────
+// ─── 1. Moteurs de recherche (cascade : Perplexity → Firecrawl → DDG) ────────
 //
-// DuckDuckGo Lite est bloqué sur les IPs de datacenter/VPS.
-// On utilise Firecrawl Search en priorité (API key disponible),
-// et DDG Lite seulement en fallback sur IP résidentielle/dev.
+// Hiérarchie :
+//   1. Perplexity sonar  — synthèse + citations, fonctionne depuis VPS
+//   2. Firecrawl Search  — résultats bruts, fonctionne depuis VPS
+//   3. DDG Lite          — fallback local (bloqué sur datacenter)
+//
+// Résultat enrichi : { title, url, snippet, fullContent? }
+// Quand `fullContent` est présent (Perplexity), on SKIP le fetchPageContent.
 
-async function firecrawlSearch(
-  query: string,
-  maxResults = 3,
-): Promise<{ title: string; url: string; snippet: string }[]> {
+export interface SearchResult {
+  title:        string
+  url:          string
+  snippet:      string
+  /** Texte complet déjà synthétisé par Perplexity — skip fetchPageContent */
+  fullContent?: string
+}
+
+// ── 1a. Perplexity Search ─────────────────────────────────────────────────────
+async function perplexityWebSearch(
+  query:      string,
+  maxResults: number,
+): Promise<SearchResult[]> {
+  if (!process.env.PERPLEXITY_API_KEY) return []
+  try {
+    const { content, citations } = await perplexitySearch(query, { model: 'sonar' })
+    if (!content || citations.length === 0) return []
+
+    return citations.slice(0, maxResults).map((url, i) => {
+      let title = url
+      try { title = new URL(url).hostname.replace('www.', '') } catch {}
+      return {
+        title,
+        url,
+        snippet:     content.slice(0, 400),
+        // Contenu complet joint au 1er résultat → skip fetchPageContent
+        fullContent: i === 0 ? content : undefined,
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
+// ── 1b. Firecrawl Search ──────────────────────────────────────────────────────
+async function firecrawlWebSearch(
+  query:      string,
+  maxResults: number,
+): Promise<SearchResult[]> {
   const apiKey = process.env.FIRECRAWL_API_KEY
   if (!apiKey) return []
   try {
@@ -82,9 +122,9 @@ async function firecrawlSearch(
     return (data.data ?? [])
       .slice(0, maxResults)
       .map((r: any) => ({
-        title:   r.title   ?? r.url ?? '',
-        url:     r.url     ?? '',
-        snippet: r.description ?? r.markdown?.slice(0, 300) ?? '',
+        title:   r.title       ?? r.url ?? '',
+        url:     r.url         ?? '',
+        snippet: r.description ?? r.markdown?.slice(0, 400) ?? '',
       }))
       .filter((r: any) => r.url && r.title)
   } catch {
@@ -92,10 +132,11 @@ async function firecrawlSearch(
   }
 }
 
-async function ddgSearch(
-  query: string,
-  maxResults = 3,
-): Promise<{ title: string; url: string; snippet: string }[]> {
+// ── 1c. DuckDuckGo Lite (fallback local uniquement) ───────────────────────────
+async function ddgWebSearch(
+  query:      string,
+  maxResults: number,
+): Promise<SearchResult[]> {
   try {
     const params = new URLSearchParams({ q: query, kl: 'fr-fr' })
     const res = await fetch(`https://lite.duckduckgo.com/lite/?${params}`, {
@@ -107,24 +148,20 @@ async function ddgSearch(
       signal: AbortSignal.timeout(8_000),
     })
     if (!res.ok) return []
-    const html = await res.text()
-
-    const results: { title: string; url: string; snippet: string }[] = []
-    const rowRegex = /<tr[\s\S]*?<\/tr>/gi
-    const rows = html.match(rowRegex) || []
+    const html    = await res.text()
+    const results: SearchResult[] = []
+    const rows    = html.match(/<tr[\s\S]*?<\/tr>/gi) || []
 
     for (const row of rows) {
       if (results.length >= maxResults) break
-      const linkMatch = row.match(/href="(https?:\/\/(?!.*duckduckgo)[^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
-      if (!linkMatch) continue
-      const url   = linkMatch[1].split('&rut=')[0]
-      const title = linkMatch[2].replace(/<[^>]+>/g, '').trim()
+      const linkM = row.match(/href="(https?:\/\/(?!.*duckduckgo)[^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
+      if (!linkM) continue
+      const url   = linkM[1].split('&rut=')[0]
+      const title = linkM[2].replace(/<[^>]+>/g, '').trim()
       if (!url || !title || url.includes('duckduckgo.com')) continue
-      const snippetM = row.match(/class="result-snippet"[^>]*>([\s\S]*?)<\/td>/i)
-      const snippet  = snippetM
-        ? snippetM[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
-        : ''
-      results.push({ url, title, snippet })
+      const snipM   = row.match(/class="result-snippet"[^>]*>([\s\S]*?)<\/td>/i)
+      const snippet = snipM ? snipM[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : ''
+      results.push({ title, url, snippet })
     }
     return results
   } catch {
@@ -132,15 +169,21 @@ async function ddgSearch(
   }
 }
 
+// ── Orchestrateur principal ───────────────────────────────────────────────────
 export async function webSearch(
-  query: string,
+  query:      string,
   maxResults = 3,
-): Promise<{ title: string; url: string; snippet: string }[]> {
-  // Firecrawl en priorité (fonctionne depuis un VPS)
-  const fc = await firecrawlSearch(query, maxResults)
+): Promise<SearchResult[]> {
+  // Niveau 1 : Perplexity (synthèse IA + citations, fonctionne depuis VPS)
+  const pplx = await perplexityWebSearch(query, maxResults)
+  if (pplx.length > 0) return pplx
+
+  // Niveau 2 : Firecrawl (résultats bruts, fonctionne depuis VPS)
+  const fc = await firecrawlWebSearch(query, maxResults)
   if (fc.length > 0) return fc
-  // Fallback DDG (fonctionne en local, souvent bloqué en prod)
-  return ddgSearch(query, maxResults)
+
+  // Niveau 3 : DDG Lite (fallback local, souvent bloqué en production)
+  return ddgWebSearch(query, maxResults)
 }
 
 // ─── 2. Extraction texte depuis une page HTML ─────────────────────────────────
@@ -454,31 +497,26 @@ export async function runDeepResearchAgent(
           const webResults = await webSearch(query, 3)
           queriesRun++
 
-          for (const result of webResults) {
-            let pageContent = await fetchPageContent(result.url)
-            if (pageContent.length < 100) pageContent = `${result.title}\n\n${result.snippet}`
-            if (pageContent.length < 30) continue
-
-            // Accumule pour l'analyse de gaps (résumé court)
+          // ★ Fetches EN PARALLÈLE ; skip fetchPageContent si Perplexity a déjà le contenu
+          const drJobs = webResults.map(async (result) => {
+            let pageContent: string
+            if ((result as any).fullContent && (result as any).fullContent.length > 80) {
+              pageContent = (result as any).fullContent
+            } else {
+              pageContent = await fetchPageContent(result.url)
+              if (pageContent.length < 100) pageContent = `${result.title}\n\n${result.snippet}`
+            }
+            if (pageContent.length < 30) return
             allFindings.push(`${result.title}: ${pageContent.slice(0, 300)}`)
-
-            // Extrait les signaux commerciaux
             const extracted = await extractSignalsFromContent(pageContent, company.name, watchCountries)
             for (const s of extracted) {
               let hostname = result.url
               try { hostname = new URL(result.url).hostname } catch {}
-              allSignals.push({
-                company_id:  company.id,
-                title:       s.title || result.title,
-                content:     s.content,
-                url:         result.url,
-                source_name: hostname,
-                relevance:   s.relevance,
-                type:        s.type,
-              })
+              allSignals.push({ company_id: company.id, title: s.title || result.title, content: s.content, url: result.url, source_name: hostname, relevance: s.relevance, type: s.type })
             }
-          }
-          await new Promise(r => setTimeout(r, 200))
+          })
+          await Promise.allSettled(drJobs)
+          await new Promise(r => setTimeout(r, 300))
         } catch (e: any) {
           const msg = `[DR-iter${iter + 1}] "${query.slice(0, 40)}…": ${e?.message ?? e}`
           errors.push(msg)

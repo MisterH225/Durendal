@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient }          from '@/lib/supabase/admin'
 import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 import { perplexityResponses }         from '@/lib/ai/perplexity'
-import { runAllAgentsParallel, CollectedSignal } from '@/lib/agents/collector-engine'
+import { runAllAgentsParallel, CollectedSignal, SourceRecord } from '@/lib/agents/collector-engine'
 import { generateWatchReport }         from '@/lib/agents/report-generator'
 
 const COUNTRY_NAMES: Record<string, string> = {
@@ -417,10 +417,11 @@ export async function POST(req: NextRequest) {
     // ══════════════════════════════════════════════════════════════════════
     log(`\n[Scrape] ══ RÉSUMÉ COLLECTE ══`)
     log(`  Agents parallèles : ${statsBySource.parallel_agents}`)
-    log(`    web_scanner     : ${engineResult.breakdown.web_scanner   ?? 0}`)
-    log(`    press_monitor   : ${engineResult.breakdown.press_monitor ?? 0}`)
-    log(`    analyst         : ${engineResult.breakdown.analyst       ?? 0}`)
-    log(`    deep_research   : ${engineResult.breakdown.deep_research ?? 0}`)
+    log(`    web_scanner             : ${engineResult.breakdown.web_scanner               ?? 0}`)
+    log(`    press_monitor           : ${engineResult.breakdown.press_monitor             ?? 0}`)
+    log(`    analyst                 : ${engineResult.breakdown.analyst                   ?? 0}`)
+    log(`    deep_research           : ${engineResult.breakdown.deep_research             ?? 0}`)
+    log(`    deep_research_iterative : ${engineResult.breakdown.deep_research_iterative   ?? 0}`)
     log(`  Perplexity        : ${statsBySource.perplexity}`)
     log(`  Firecrawl         : ${statsBySource.firecrawl}`)
     log(`  Site officiel     : ${statsBySource.website}`)

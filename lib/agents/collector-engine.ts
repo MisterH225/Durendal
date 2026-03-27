@@ -59,6 +59,19 @@ export interface AgentQuery {
   filters: PerplexityFilters
 }
 
+/** Source telle que stockée dans la table `sources` (admin). */
+export interface SourceRecord {
+  id:                string
+  url?:              string | null
+  rss_url?:          string | null
+  name:              string
+  source_category?:  string | null
+  countries?:        string[] | null
+  sectors?:          string[] | null
+  reliability_score?: number | null
+  is_active:         boolean
+}
+
 // ─── Mapping ISO → noms complets ─────────────────────────────────────────────
 const COUNTRY_NAMES: Record<string, string> = {
   CI: "Côte d'Ivoire", SN: 'Sénégal',      GH: 'Ghana',      NG: 'Nigeria',
@@ -68,84 +81,77 @@ const COUNTRY_NAMES: Record<string, string> = {
   MG: 'Madagascar',    TN: 'Tunisie',       DZ: 'Algérie',    ET: 'Éthiopie',
 }
 
-// ─── Sources spécialisées par catégorie ──────────────────────────────────────
+// ─── Extraction dynamique de domaines depuis la table `sources` (admin) ─────
 //
 // Perplexity search_domain_filter : max 20 domaines par requête.
-// On compose la liste dynamiquement par type d'agent.
+// Au lieu de hardcoder les sources, on les tire de la DB.
+// L'admin peut ajouter/retirer des sources sans toucher au code.
 
-const AFRICA_BUSINESS_PRESS = [
-  'jeuneafrique.com',
-  'theafricareport.com',
-  'financialafrik.com',
-  'agenceecofin.com',
-  'africanews.com',
-  'allafrica.com',
-  'mondafrique.com',
-  'african-markets.com',
-]
-
-const INTERNATIONAL_PRESS = [
-  'reuters.com',
-  'bloomberg.com',
-  'lemonde.fr',
-  'ft.com',
-  'bbc.com',
-]
-
-const REGIONAL_PRESS: Record<string, string[]> = {
-  CI: ['abidjan.net', 'fratmat.info', 'linfodrome.com', 'koaci.com'],
-  SN: ['dakaractu.com', 'lesoleil.sn', 'seneweb.com'],
-  CM: ['cameroon-tribune.cm', 'journalducameroun.com'],
-  GH: ['ghanaweb.com', 'graphic.com.gh'],
-  NG: ['punch.ng', 'guardian.ng', 'premiumtimesng.com'],
-  KE: ['nation.africa', 'businessdailyafrica.com'],
-  MA: ['medias24.com', 'leseco.ma', 'leconomiste.com'],
-  ZA: ['news24.com', 'businesslive.co.za', 'dailymaverick.co.za'],
-  BJ: ['lanouvelletribune.info'],
-  BF: ['lefaso.net'],
-  TG: ['togofirst.com'],
-  ML: ['maliweb.net'],
+function extractDomain(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' }
 }
 
-const INSTITUTIONAL_SOURCES = [
-  'afdb.org',
-  'worldbank.org',
-  'ifc.org',
-  'imf.org',
-]
-
-const TECH_AFRICA = [
-  'disrupt-africa.com',
-  'techpoint.africa',
-  'techcabal.com',
-]
+/**
+ * Sélectionne les sources pertinentes pour la veille puis extrait les domaines.
+ * Filtre par pays/secteurs de la veille, trie par reliability_score.
+ */
+function getRelevantSources(
+  sources:        SourceRecord[],
+  watchCountries: string[],
+  watchSectors:   string[],
+  categories?:    string[],
+): SourceRecord[] {
+  return sources
+    .filter(s => {
+      if (!s.is_active || !s.url) return false
+      if (categories?.length && !categories.includes(s.source_category ?? '')) return false
+      const matchesCountry = s.countries?.some(c => watchCountries.includes(c))
+      const matchesSector  = s.sectors?.some(sec => watchSectors.includes(sec))
+      return matchesCountry || matchesSector
+    })
+    .sort((a, b) => (b.reliability_score ?? 3) - (a.reliability_score ?? 3))
+}
 
 /**
  * Compose la liste de domaines pour un type d'agent (max 20).
- * Priorise les sources régionales des pays surveillés.
+ * Tire les domaines de la table `sources` (admin), filtrés par catégorie.
  */
-function getDomainsForAgent(type: AgentType, watchCountries: string[]): string[] {
-  const regional = watchCountries
-    .flatMap(c => REGIONAL_PRESS[c] ?? [])
-    .slice(0, 6)
+function getDomainsForAgent(
+  type:           AgentType,
+  sources:        SourceRecord[],
+  watchCountries: string[],
+  watchSectors:   string[],
+): string[] {
+  let relevant: SourceRecord[]
 
   switch (type) {
+    case 'web_scanner':
+      // Bibliothèque admin : toutes les sources pertinentes (pays/secteurs)
+      relevant = getRelevantSources(sources, watchCountries, watchSectors, undefined)
+      break
+
     case 'press_monitor':
-      return [...AFRICA_BUSINESS_PRESS, ...INTERNATIONAL_PRESS, ...regional].slice(0, 20)
+      relevant = getRelevantSources(sources, watchCountries, watchSectors, ['press', 'blog', 'social'])
+      break
 
     case 'analyst':
-      return [
-        ...INSTITUTIONAL_SOURCES,
-        ...INTERNATIONAL_PRESS,
-        ...AFRICA_BUSINESS_PRESS.slice(0, 4),
-      ].slice(0, 20)
+      relevant = getRelevantSources(sources, watchCountries, watchSectors, ['institutional', 'press'])
+      break
 
-    case 'web_scanner':
     case 'deep_research':
     case 'deep_research_iterative':
+      relevant = getRelevantSources(sources, watchCountries, watchSectors, undefined)
+      break
+
     default:
       return []
   }
+
+  return relevant
+    .map(s => extractDomain(s.url!))
+    .filter(Boolean)
+    .filter((d, i, arr) => arr.indexOf(d) === i)
+    .slice(0, 20)
 }
 
 // ─── 1. Moteurs de recherche (cascade : Perplexity → Firecrawl) ──────────────
@@ -271,11 +277,12 @@ export function buildQueriesForAgent(
   countryNames:   string[],
   watchCountries: string[],
   year:           number,
+  sources:        SourceRecord[],
 ): AgentQuery[] {
   const primary = countryNames[0] || 'Afrique'
   const sector  = sectors.slice(0, 2).join(' ')
 
-  const domains   = getDomainsForAgent(type, watchCountries)
+  const domains   = getDomainsForAgent(type, sources, watchCountries, sectors)
   const country   = watchCountries[0] || undefined
   const languages = ['fr', 'en']
 
@@ -321,7 +328,7 @@ export function buildQueriesForAgent(
         q(`${companyName} dernières actualités ${year}`, { recency: 'month' }),
         q(`${sector} ${primary} opportunités investissement projets ${year}`),
         q(`${companyName} concurrents analyse compétitive ${primary}`),
-        q(`${companyName} Africa ${sector} growth expansion partnership ${year}`, { domains: [] }),
+        q(`${companyName} Africa ${sector} growth expansion partnership ${year}`),
       ]
 
     default:
@@ -399,6 +406,7 @@ export async function runAgentType(
   companies:      any[],
   sectors:        string[],
   watchCountries: string[],
+  sources:        SourceRecord[],
   log:            (msg: string) => void,
 ): Promise<AgentResult> {
   const start        = Date.now()
@@ -415,7 +423,7 @@ export async function runAgentType(
     try { if (company.website) websiteHost = new URL(company.website).hostname } catch {}
 
     const agentQueries = buildQueriesForAgent(
-      type, company.name, websiteHost, sectors, countryNames, watchCountries, year,
+      type, company.name, websiteHost, sectors, countryNames, watchCountries, year, sources,
     )
 
     for (const { query, filters } of agentQueries) {
@@ -562,6 +570,7 @@ export async function runDeepResearchAgent(
   companies:      any[],
   sectors:        string[],
   watchCountries: string[],
+  sources:        SourceRecord[],
   log:            (msg: string) => void,
 ): Promise<AgentResult> {
   const start        = Date.now()
@@ -585,10 +594,12 @@ export async function runDeepResearchAgent(
     const allFindings: string[] = [] // résumés accumulés pour l'analyse de gaps
     let currentQueries = subQuestions
 
+    const deepDomains = getDomainsForAgent('deep_research_iterative', sources, watchCountries, sectors)
     const deepFilters: PerplexityFilters = {
       recency:   'year',
       languages: ['fr', 'en'],
       country:   watchCountries[0] || undefined,
+      ...(deepDomains.length > 0 ? { domains: deepDomains } : {}),
     }
 
     for (let iter = 0; iter < MAX_ITER; iter++) {
@@ -664,34 +675,40 @@ export async function runDeepResearchAgent(
 }
 
 // ─── 7. Orchestrateur principal : 5 agents en parallèle ──────────────────────
-// Reproduit runAllWatchAgents() de VeilleCI (Promise.all sur les 4 types)
 export async function runAllAgentsParallel(
   companies:      any[],
   sectors:        string[],
   watchCountries: string[],
+  sources:        SourceRecord[],
   log:            (msg: string) => void = console.log,
 ): Promise<EngineResult> {
   const start = Date.now()
+
+  const webDomains     = getDomainsForAgent('web_scanner', sources, watchCountries, sectors)
+  const pressDomains   = getDomainsForAgent('press_monitor', sources, watchCountries, sectors)
+  const analystDomains = getDomainsForAgent('analyst', sources, watchCountries, sectors)
+  const deepDomains    = getDomainsForAgent('deep_research_iterative', sources, watchCountries, sectors)
 
   log(`[Engine] ★ Lancement de 5 agents en PARALLÈLE`)
   log(`[Engine]   Entreprises  : ${companies.map((c: any) => c.name).join(', ')}`)
   log(`[Engine]   Secteurs     : ${sectors.join(', ')}`)
   log(`[Engine]   Pays         : ${watchCountries.join(', ')}`)
+  log(`[Engine]   Sources DB   : ${sources.length} pour cette veille`)
+  log(`[Engine]   → web_scanner : ${webDomains.join(', ') || '(recherche large)'}`)
+  log(`[Engine]   → presse      : ${pressDomains.join(', ') || '(recherche large)'}`)
+  log(`[Engine]   → analyst     : ${analystDomains.join(', ') || '(recherche large)'}`)
+  log(`[Engine]   → deep_iter   : ${deepDomains.join(', ') || '(recherche large)'}`)
   log(`[Engine]   Agents       : web_scanner | press_monitor | analyst | deep_research | deep_research_iterative`)
-  log(`[Engine]   Sources presse : ${getDomainsForAgent('press_monitor', watchCountries).join(', ')}`)
-  log(`[Engine]   Sources analyst: ${getDomainsForAgent('analyst', watchCountries).join(', ')}`)
 
-  // ★ Agents 1–4 : requêtes fixes par type (VeilleCI)
   const fixedTypes: AgentType[] = ['web_scanner', 'press_monitor', 'analyst', 'deep_research']
   const fixedPromises = fixedTypes.map(type =>
-    runAgentType(type, companies, sectors, watchCountries, log).catch((e: any): AgentResult => {
+    runAgentType(type, companies, sectors, watchCountries, sources, log).catch((e: any): AgentResult => {
       log(`  [${type}] ✗ FATAL: ${e?.message ?? e}`)
       return { type, signals: [], queriesRun: 0, errors: [`Fatal: ${e?.message}`], durationMs: 0 }
     }),
   )
 
-  // ★ Agent 5 : deep research itératif (Perplexity-style)
-  const deepResearchPromise = runDeepResearchAgent(companies, sectors, watchCountries, log)
+  const deepResearchPromise = runDeepResearchAgent(companies, sectors, watchCountries, sources, log)
     .catch((e: any): AgentResult => {
       log(`  [deep_research_iterative] ✗ FATAL: ${e?.message ?? e}`)
       return {

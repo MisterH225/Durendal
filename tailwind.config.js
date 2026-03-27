@@ -8,29 +8,31 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // Palette primaire — orange chaud (remplace le bleu)
         blue: {
-          50:  '#EEF6FD',
-          100: '#D9ECFB',
-          200: '#B8D8F0',
-          300: '#82B8E0',
-          400: '#4A90CC',
-          500: '#2272B3',
-          600: '#1A5F9A',
-          700: '#0F4C81', // DOMINANT
-          800: '#0A3D6E',
-          900: '#062B4F',
+          50:  '#FFF7ED',
+          100: '#FFEDD5',
+          200: '#FED7AA',
+          300: '#FDBA74',
+          400: '#FB923C',
+          500: '#F97316',
+          600: '#EA580C',
+          700: '#EA580C', // DOMINANT — orange primaire
+          800: '#C2410C',
+          900: '#7C2D12',
         },
+        // Neutrals chauds (fond beige, textes)
         neutral: {
-          50:  '#F8FAFC',
-          100: '#F0F4F8',
-          200: '#E2E8F0',
-          300: '#CBD5E0',
-          400: '#A0AEC0',
-          500: '#718096',
-          600: '#4A5568',
-          700: '#2D3748',
-          800: '#1C2333',
-          900: '#0D1117',
+          50:  '#FAFAF8',
+          100: '#F5EFE6', // fond page principal — beige chaud
+          200: '#EAE4DA',
+          300: '#D4CABF',
+          400: '#A89E93',
+          500: '#7C7268',
+          600: '#574E45',
+          700: '#3A3028',
+          800: '#261E17',
+          900: '#1A120A',
         },
       },
       fontFamily: {
@@ -43,9 +45,9 @@ module.exports = {
         xl: '18px',
       },
       boxShadow: {
-        sm: '0 1px 3px rgba(6,43,79,.08)',
-        md: '0 4px 12px rgba(6,43,79,.12)',
-        lg: '0 8px 24px rgba(6,43,79,.16)',
+        sm: '0 1px 3px rgba(26,18,10,.06)',
+        md: '0 4px 12px rgba(26,18,10,.10)',
+        lg: '0 8px 24px rgba(26,18,10,.14)',
       },
     },
   },

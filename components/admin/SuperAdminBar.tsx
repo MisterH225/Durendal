@@ -7,7 +7,7 @@ type PlanName = 'free' | 'pro' | 'business'
 
 const PLANS: { name: PlanName; label: string; inactiveColor: string; activeColor: string }[] = [
   { name: 'free',     label: 'Free',     inactiveColor: 'bg-neutral-600 text-neutral-200 hover:bg-neutral-500',   activeColor: 'bg-white text-neutral-900' },
-  { name: 'pro',      label: 'Pro',      inactiveColor: 'bg-blue-800 text-blue-200 hover:bg-blue-700',            activeColor: 'bg-blue-400 text-white' },
+  { name: 'pro',      label: 'Pro',      inactiveColor: 'bg-orange-800 text-orange-200 hover:bg-orange-700',          activeColor: 'bg-orange-400 text-white' },
   { name: 'business', label: 'Business', inactiveColor: 'bg-purple-800 text-purple-200 hover:bg-purple-700',      activeColor: 'bg-purple-400 text-white' },
 ]
 

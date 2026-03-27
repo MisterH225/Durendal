@@ -112,7 +112,7 @@ export default function Sidebar({ profile }: { profile: any }) {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-52 flex-shrink-0 bg-blue-900 flex-col">
+      <aside className="hidden lg:flex w-52 flex-shrink-0 bg-neutral-900 flex-col">
         <SidebarContent />
       </aside>
 
@@ -128,7 +128,7 @@ export default function Sidebar({ profile }: { profile: any }) {
       {mobileOpen && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
-          <aside className="relative w-64 bg-blue-900 flex flex-col shadow-xl">
+          <aside className="relative w-64 bg-neutral-900 flex flex-col shadow-xl">
             <button onClick={() => setMobileOpen(false)}
               className="absolute top-3 right-3 text-white/50 hover:text-white">
               <X size={18} />

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export async function POST(req: NextRequest) {
   const supabase = createClient()
@@ -10,7 +11,8 @@ export async function POST(req: NextRequest) {
   if (profile?.role !== 'superadmin') return NextResponse.json({ error: 'Accès refusé' }, { status: 403 })
 
   const body = await req.json()
-  const { error, data } = await supabase.from('sources').insert(body).select().single()
+  const db = createAdminClient()
+  const { error, data } = await db.from('sources').insert(body).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ source: data })
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export async function POST(req: NextRequest) {
   const supabase = createClient()
@@ -16,14 +17,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Champs requis manquants' }, { status: 400 })
   }
 
+  const db = createAdminClient()
+
   // Résoudre account_id depuis email si nécessaire
   let resolvedAccountId = account_id
   if (!resolvedAccountId && email) {
-    const { data: profile } = await supabase.from('profiles').select('id').eq('email', email).single()
-    if (!profile) return NextResponse.json({ error: `Aucun compte trouvé pour ${email}` }, { status: 404 })
-    const { data: account } = await supabase.from('accounts').select('id').eq('id', profile.id).single()
-    if (!account) return NextResponse.json({ error: 'Compte introuvable' }, { status: 404 })
-    resolvedAccountId = account.id
+    const { data: userProfile } = await db.from('profiles').select('account_id').eq('email', email).single()
+    if (!userProfile) return NextResponse.json({ error: `Aucun compte trouvé pour ${email}` }, { status: 404 })
+    resolvedAccountId = userProfile.account_id
   }
 
   if (!resolvedAccountId) {
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Récupère le plan actuel du compte
-  const { data: account } = await supabase
+  const { data: account } = await db
     .from('accounts').select('plans(name)').eq('id', resolvedAccountId).single()
   const originalPlan = (account as any)?.plans?.name || 'free'
 
@@ -43,12 +44,11 @@ export async function POST(req: NextRequest) {
     expiresAt.setDate(expiresAt.getDate() + parseInt(duration_days || '30'))
   }
 
-  // Génère un lien d'activation unique pour les upgrades
   const activationLink = type === 'plan_upgrade'
     ? `${process.env.NEXT_PUBLIC_APP_URL}/activate/${Math.random().toString(36).substring(2, 15)}`
     : null
 
-  const { data, error } = await supabase.from('special_access').insert({
+  const { data, error } = await db.from('special_access').insert({
     account_id: resolvedAccountId, type, granted_plan, original_plan: originalPlan,
     expires_at: expiresAt.toISOString(),
     on_expiry: on_expiry || 'downgrade',
@@ -60,9 +60,9 @@ export async function POST(req: NextRequest) {
 
   // Met à jour le plan du compte si profil test direct
   if (type === 'test_profile') {
-    const { data: newPlan } = await supabase.from('plans').select('id').eq('name', granted_plan).single()
+    const { data: newPlan } = await db.from('plans').select('id').eq('name', granted_plan).single()
     if (newPlan) {
-      await supabase.from('accounts').update({ plan_id: newPlan.id }).eq('id', resolvedAccountId)
+      await db.from('accounts').update({ plan_id: newPlan.id }).eq('id', resolvedAccountId)
     }
   }
 

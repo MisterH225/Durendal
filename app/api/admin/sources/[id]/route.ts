@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient()
@@ -10,7 +11,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (profile?.role !== 'superadmin') return NextResponse.json({ error: 'Accès refusé' }, { status: 403 })
 
   const body = await req.json()
-  const { error } = await supabase.from('sources').update(body).eq('id', params.id)
+  const db = createAdminClient()
+  const { error } = await db.from('sources').update(body).eq('id', params.id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ success: true })
 }

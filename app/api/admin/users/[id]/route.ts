@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient()
@@ -11,20 +12,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { role, planId, status, accountId } = await req.json()
 
-  // Mettre à jour le rôle du profil
-  const { error: profileError } = await supabase
+  const db = createAdminClient()
+
+  const { error: profileError } = await db
     .from('profiles')
     .update({ role })
     .eq('id', params.id)
 
   if (profileError) return NextResponse.json({ error: profileError.message }, { status: 500 })
 
-  // Mettre à jour le plan et le statut du compte
   if (accountId) {
     const updateData: Record<string, any> = { subscription_status: status }
     if (planId) updateData.plan_id = planId
 
-    const { error: accountError } = await supabase
+    const { error: accountError } = await db
       .from('accounts')
       .update(updateData)
       .eq('id', accountId)

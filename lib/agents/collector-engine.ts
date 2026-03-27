@@ -387,7 +387,7 @@ Réponds UNIQUEMENT en JSON valide :
 
 Si rien de pertinent sur "${companyName}", réponds exactement : {"signals":[]}`
 
-    const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_000 })
+    const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 2_000 })
     console.log(`[extract] Gemini brut (200c): ${text.slice(0, 200)}`)
     const parsed = parseGeminiJson<{ signals: any[] }>(text)
     const all = parsed?.signals || []

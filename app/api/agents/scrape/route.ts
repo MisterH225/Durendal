@@ -128,7 +128,7 @@ TEXTE : ${text.slice(0, 4_000)}
 Réponds UNIQUEMENT en JSON : {"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.85,"type":"funding|product|partnership|expansion|contract|news|financial"}]}
 Si rien de concret : {"signals":[]}`
 
-    const { text: extracted } = await callGemini(extractPrompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_200 })
+    const { text: extracted } = await callGemini(extractPrompt, { model: 'gemini-2.5-flash', maxOutputTokens: 2_500 })
     log(`  [perplexity] Gemini brut (200c): ${extracted.slice(0, 200)}`)
     const parsed     = parseGeminiJson<{ signals: any[] }>(extracted)
     log(`  [perplexity] parsed=${!!parsed} signals_avant_filtre=${parsed?.signals?.length ?? 0}`)
@@ -163,7 +163,7 @@ async function extractSignalsFromContent(
 Contenu : ${content.slice(0, 5_000)}
 JSON : {"signals":[{"title":"...","content":"...","relevance":0.8,"type":"funding|product|partnership|contract|news|financial"}]}
 Si rien : {"signals":[]}`
-    const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 1_000 })
+    const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 2_000 })
     const parsed = parseGeminiJson<{ signals: any[] }>(text)
     return (parsed?.signals ?? []).filter((s: any) => s.relevance >= 0.25)
   } catch { return [] }

@@ -273,15 +273,64 @@ export async function callGeminiChatWithFunctionResult(
 
 /**
  * Extrait un objet JSON depuis la réponse texte de Gemini.
- * Gemini peut encadrer le JSON dans des blocs ```json ... ```.
+ * Gère : blocs ```json … ```, JSON tronqué (maxOutputTokens atteint),
+ * virgules trailing, et réponses multi-blocs.
  */
 export function parseGeminiJson<T>(text: string): T | null {
-  try {
-    const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-    const match = cleaned.match(/\{[\s\S]*\}/)
-    if (!match) return null
-    return JSON.parse(match[0]) as T
-  } catch {
-    return null
+  if (!text || text.trim().length === 0) return null
+
+  // 1. Nettoyage markdown
+  let cleaned = text
+    .replace(/```(?:json)?\s*\n?/g, '')
+    .trim()
+
+  // 2. Extraire le bloc JSON principal (premier { … dernier })
+  const match = cleaned.match(/\{[\s\S]*\}/)
+  if (!match) return null
+  let json = match[0]
+
+  // 3. Tentative directe
+  try { return JSON.parse(json) as T } catch {}
+
+  // 4. Réparation JSON tronqué (token limit atteint)
+  json = json
+    .replace(/,\s*$/, '')                   // virgule trailing en fin de fichier
+    .replace(/,\s*([}\]])/g, '$1')          // virgules avant fermeture
+    .replace(/"[^"]*$/g, '"')               // fermer une string ouverte
+    .replace(/:\s*"[^"]*$/g, ': ""')        // valeur string ouverte → vide
+
+  // Compter les accolades/crochets manquants et les fermer
+  let braces = 0, brackets = 0, inString = false, escape = false
+  for (const ch of json) {
+    if (escape) { escape = false; continue }
+    if (ch === '\\') { escape = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === '{') braces++
+    else if (ch === '}') braces--
+    else if (ch === '[') brackets++
+    else if (ch === ']') brackets--
   }
+  json = json.replace(/,\s*$/, '')
+  while (brackets > 0) { json += ']'; brackets-- }
+  while (braces > 0)   { json += '}'; braces-- }
+
+  try { return JSON.parse(json) as T } catch {}
+
+  // 5. Dernière tentative : extraire les objets individuels d'un tableau signals
+  try {
+    const arrMatch = json.match(/\[\s*(\{[\s\S]*)\s*\]/)
+    if (arrMatch) {
+      const inner = arrMatch[1]
+      const objects: any[] = []
+      const objRegex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g
+      let m
+      while ((m = objRegex.exec(inner)) !== null) {
+        try { objects.push(JSON.parse(m[0])) } catch {}
+      }
+      if (objects.length > 0) return { signals: objects } as unknown as T
+    }
+  } catch {}
+
+  return null
 }

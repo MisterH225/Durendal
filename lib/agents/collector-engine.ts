@@ -30,13 +30,14 @@ export type AgentType =
   | 'deep_research_iterative'
 
 export interface CollectedSignal {
-  company_id:  string
-  title:       string
-  content:     string
-  url:         string
-  source_name: string
-  relevance:   number
-  type:        string
+  company_id:     string
+  title:          string
+  content:        string
+  url:            string
+  source_name:    string
+  relevance:      number
+  type:           string
+  published_date?: string
 }
 
 export interface AgentResult {
@@ -166,7 +167,7 @@ export interface SearchResult {
   fullContent?: string
 }
 
-// ── 1a. Perplexity Search API ─────────────────────────────────────────────────
+// ── 1a. Perplexity Sonar API ──────────────────────────────────────────────────
 async function pplxSearch(
   query:      string,
   maxResults: number,
@@ -174,8 +175,13 @@ async function pplxSearch(
 ): Promise<SearchResult[]> {
   if (!process.env.PERPLEXITY_API_KEY) return []
   try {
-    return await perplexityWebSearch(query, maxResults, filters)
-  } catch {
+    const results = await perplexityWebSearch(query, maxResults, filters)
+    if (results.length > 0) {
+      console.log(`[pplx] "${query.slice(0, 50)}…" → ${results.length} résultats (${results.filter(r => r.fullContent).length} avec contenu)`)
+    }
+    return results
+  } catch (e: any) {
+    console.warn(`[pplx] "${query.slice(0, 50)}…" ERREUR: ${e?.message}`)
     return []
   }
 }
@@ -215,12 +221,37 @@ export async function webSearch(
   maxResults = 3,
   filters?:   PerplexityFilters,
 ): Promise<SearchResult[]> {
-  // Niveau 1 : Perplexity avec filtres (domaines, récence, langue, pays)
-  const pplx = await pplxSearch(query, maxResults, filters)
-  if (pplx.length > 0) return pplx
+  // Perplexity cherche SANS filtre de domaine pour exploiter la recherche temps réel
+  // Firecrawl cherche en parallèle pour maximiser la couverture
+  const pplxFilters: PerplexityFilters = {
+    recency:   filters?.recency,
+    languages: filters?.languages,
+    country:   filters?.country,
+  }
 
-  // Niveau 2 : Firecrawl (résultats bruts, pas de filtrage domaine)
-  return firecrawlWebSearch(query, maxResults)
+  const [pplx, fc] = await Promise.allSettled([
+    pplxSearch(query, maxResults, pplxFilters),
+    firecrawlWebSearch(query, maxResults),
+  ])
+
+  const pplxResults = pplx.status === 'fulfilled' ? pplx.value : []
+  const fcResults   = fc.status === 'fulfilled'   ? fc.value   : []
+
+  if (pplxResults.length === 0 && fcResults.length === 0) return []
+
+  // Déduplication par URL, priorité Perplexity (texte synthétisé + citations)
+  const seen = new Set<string>()
+  const merged: SearchResult[] = []
+
+  for (const r of [...pplxResults, ...fcResults]) {
+    let host = r.url
+    try { host = new URL(r.url).hostname + new URL(r.url).pathname } catch {}
+    if (seen.has(host)) continue
+    seen.add(host)
+    merged.push(r)
+  }
+
+  return merged.slice(0, maxResults + 2)
 }
 
 // ─── 2. Extraction texte depuis une page HTML ─────────────────────────────────
@@ -294,34 +325,34 @@ export function buildQueriesForAgent(
   switch (type) {
     case 'web_scanner':
       return [
-        q(`${companyName} actualités récentes ${primary} ${year}`, { recency: 'month' }),
-        q(`${companyName} contrat partenariat ${primary} ${year}`),
-        q(`${companyName} financement levée de fonds expansion ${year}`),
-        q(`${companyName} communiqué de presse résultats ${year}`),
+        q(`Quelles sont les dernières actualités de ${companyName} en ${primary} en ${year} ?`, { recency: 'month' }),
+        q(`${companyName} a-t-il signé de nouveaux contrats ou partenariats en ${primary} récemment ?`),
+        q(`Quels sont les derniers financements, levées de fonds ou projets d'expansion de ${companyName} en ${year} ?`),
+        q(`Derniers communiqués de presse et résultats financiers de ${companyName} ${year}`),
       ]
 
     case 'press_monitor':
       return [
-        q(`${companyName} ${primary} actualités presse ${year}`),
-        q(`${sector} ${primary} actualités marché contrat ${year}`),
-        q(`${companyName} ${primary} partenariat investissement ${year}`),
-        q(`${sector} ${primary} appel d'offres projet ${year}`),
+        q(`Actualités récentes de ${companyName} dans la presse en ${primary} ${year}`),
+        q(`Quels sont les contrats et projets majeurs dans le secteur ${sector} en ${primary} en ${year} ?`),
+        q(`${companyName} partenariats stratégiques et investissements récents en ${primary} ${year}`),
+        q(`Appels d'offres et projets majeurs dans le secteur ${sector} en ${primary} ${year}`),
       ]
 
     case 'analyst':
       return [
-        q(`${sector} marché tendances analyse ${primary} ${year}`),
-        q(`${companyName} stratégie acquisitions résultats financiers ${year}`),
-        q(`${sector} ${primary} market competitive landscape forecast ${year}`),
-        q(`${companyName} rapport annuel résultats chiffre d'affaires ${year}`),
+        q(`Quelles sont les tendances du marché ${sector} en ${primary} en ${year} ? Analyse sectorielle`),
+        q(`Quelle est la stratégie de ${companyName} ? Acquisitions, résultats financiers et positionnement ${year}`),
+        q(`Competitive landscape analysis of ${sector} market in ${primary} ${year}: key players, market share, forecast`),
+        q(`${companyName} rapport annuel ${year}: chiffre d'affaires, bénéfice, croissance et perspectives`),
       ]
 
     case 'deep_research':
       return [
-        q(`${companyName} dernières actualités ${year}`, { recency: 'month' }),
-        q(`${sector} ${primary} opportunités investissement projets ${year}`),
-        q(`${companyName} concurrents analyse compétitive ${primary}`),
-        q(`${companyName} ${primary} ${sector} growth expansion partnership ${year}`),
+        q(`Quelles sont les actualités les plus récentes de ${companyName} ce mois-ci ?`, { recency: 'month' }),
+        q(`Opportunités d'investissement et projets majeurs dans le secteur ${sector} en ${primary} ${year}`),
+        q(`Qui sont les principaux concurrents de ${companyName} en ${primary} et quels sont leurs avantages compétitifs ?`),
+        q(`${companyName} expansion growth partnerships in ${primary} ${sector} ${year}`),
       ]
 
     default:
@@ -363,12 +394,13 @@ async function filterByRelevance(
 // ─── 4. Extraction de signaux via Gemini Flash ────────────────────────────────
 
 export interface ExtractedSignal {
-  title:       string
-  content:     string
-  relevance:   number
-  type:        string
-  source_url?: string
-  source_name?: string
+  title:          string
+  content:        string
+  relevance:      number
+  type:           string
+  source_url?:    string
+  source_name?:   string
+  published_date?: string
 }
 
 /**
@@ -400,10 +432,11 @@ Contenu :
 ${content.slice(0, 5_000)}
 
 Réponds UNIQUEMENT en JSON valide :
-{"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.8,"type":"funding|product|partnership|recruitment|expansion|contract|news|financial"${availableSources ? ',"source_ref":1' : ''}}]}
+{"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.8,"type":"funding|product|partnership|recruitment|expansion|contract|news|financial","published_date":"YYYY-MM-DD"${availableSources ? ',"source_ref":1' : ''}}]}
 
 RÈGLES :
-- Chaque signal doit correspondre à un FAIT VÉRIFIABLE dans le contenu.${availableSources ? '\n- "source_ref" est le numéro [N] de la source qui contient cette information. NE PAS deviner : si tu ne sais pas quelle source, mets 0.' : ''}
+- Chaque signal doit correspondre à un FAIT VÉRIFIABLE dans le contenu.
+- "published_date" est la date de publication ou date de l'événement mentionné (PAS la date d'aujourd'hui). Format ISO YYYY-MM-DD. Si la date exacte n'est pas claire, estime le mois/année (ex: "2025-03-01" pour mars 2025). Si aucune date n'est déductible, mets null.${availableSources ? '\n- "source_ref" est le numéro [N] de la source qui contient cette information. NE PAS deviner : si tu ne sais pas quelle source, mets 0.' : ''}
 - Si rien de pertinent sur "${companyName}", réponds : {"signals":[]}`
 
     const { text } = await callGemini(prompt, { model: 'gemini-2.5-flash', maxOutputTokens: 2_000 })
@@ -417,12 +450,13 @@ RÈGLES :
       const ref = typeof s.source_ref === 'number' && s.source_ref > 0 ? s.source_ref : 0
       const matchedSource = (availableSources && ref > 0) ? availableSources[ref - 1] : undefined
       return {
-        title:       s.title,
-        content:     s.content,
-        relevance:   s.relevance,
-        type:        s.type,
-        source_url:  matchedSource?.url,
-        source_name: matchedSource?.title,
+        title:          s.title,
+        content:        s.content,
+        relevance:      s.relevance,
+        type:           s.type,
+        source_url:     matchedSource?.url,
+        source_name:    matchedSource?.title,
+        published_date: typeof s.published_date === 'string' ? s.published_date : undefined,
       }
     })
   } catch (e: any) {
@@ -459,8 +493,9 @@ export async function runAgentType(
 
     for (const { query, filters } of agentQueries) {
       try {
-        const rawResults = await webSearch(query, 3, filters)
+        const rawResults = await webSearch(query, 5, filters)
         queriesRun++
+        log(`    [${type}] "${query.slice(0, 60)}…" → ${rawResults.length} résultats web`)
 
         const webResults = await filterByRelevance(
           rawResults, company.name, sectors, watchCountries,
@@ -471,8 +506,9 @@ export async function runAgentType(
 
         const jobs = webResults.map(async (result) => {
           let pageContent: string
-          if (result.fullContent && result.fullContent.length > 80) {
-            pageContent = result.fullContent
+          const hasSynth = !!(result.fullContent && result.fullContent.length > 80)
+          if (hasSynth) {
+            pageContent = result.fullContent!
           } else {
             pageContent = await fetchPageContent(result.url)
             if (pageContent.length < 100) pageContent = `${result.title}\n\n${result.snippet}`
@@ -483,18 +519,22 @@ export async function runAgentType(
             pageContent, company.name, watchCountries,
             (result as any).citations,
           )
+          if (extracted.length > 0) {
+            log(`    [${type}] ${hasSynth ? '🔷 Perplexity' : '🔶 Firecrawl/page'} → ${extracted.length} signaux extraits (${result.url.slice(0, 60)})`)
+          }
           for (const s of extracted) {
             const signalUrl  = s.source_url || result.url
             let hostname = signalUrl
             try { hostname = new URL(signalUrl).hostname } catch {}
             signals.push({
-              company_id:  company.id,
-              title:       s.title || result.title,
-              content:     s.content,
-              url:         signalUrl,
-              source_name: s.source_name || hostname,
-              relevance:   s.relevance,
-              type:        s.type,
+              company_id:     company.id,
+              title:          s.title || result.title,
+              content:        s.content,
+              url:            signalUrl,
+              source_name:    s.source_name || hostname,
+              relevance:      s.relevance,
+              type:           s.type,
+              published_date: s.published_date,
             })
           }
         })
@@ -545,7 +585,10 @@ Chaque question doit couvrir un angle différent :
 - Expansion géographique, nouveaux marchés ou produits
 - Actualités opérationnelles (recrutements, dirigeants, projets)
 
-Formule les questions comme des REQUÊTES DE RECHERCHE WEB efficaces.
+IMPORTANT : Formule les questions comme des PHRASES COMPLÈTES DE RECHERCHE, pas des mots-clés.
+Par exemple : "Quels contrats a remporté X en 2025 ?" plutôt que "X contrats 2025"
+Sois SPÉCIFIQUE et CONTEXTUEL — ajoute des détails sur le secteur et la géographie.
+
 Réponds UNIQUEMENT en JSON : {"questions":["requête 1","requête 2","requête 3","requête 4","requête 5"]}`
 
   try {
@@ -643,8 +686,9 @@ export async function runDeepResearchAgent(
 
       for (const query of currentQueries) {
         try {
-          const rawResults = await webSearch(query, 3, deepFilters)
+          const rawResults = await webSearch(query, 5, deepFilters)
           queriesRun++
+          log(`    [DR] "${query.slice(0, 60)}…" → ${rawResults.length} résultats web`)
 
           const webResults = await filterByRelevance(
             rawResults, company.name, sectors, watchCountries,
@@ -652,8 +696,9 @@ export async function runDeepResearchAgent(
 
           const drJobs = webResults.map(async (result) => {
             let pageContent: string
-            if ((result as any).fullContent && (result as any).fullContent.length > 80) {
-              pageContent = (result as any).fullContent
+            const hasSynth = !!(result.fullContent && result.fullContent.length > 80)
+            if (hasSynth) {
+              pageContent = result.fullContent!
             } else {
               pageContent = await fetchPageContent(result.url)
               if (pageContent.length < 100) pageContent = `${result.title}\n\n${result.snippet}`
@@ -664,11 +709,14 @@ export async function runDeepResearchAgent(
               pageContent, company.name, watchCountries,
               (result as any).citations,
             )
+            if (extracted.length > 0) {
+              log(`    [DR] ${hasSynth ? '🔷 Perplexity' : '🔶 Firecrawl/page'} → ${extracted.length} signaux (${result.url.slice(0, 60)})`)
+            }
             for (const s of extracted) {
               const signalUrl = s.source_url || result.url
               let hostname = signalUrl
               try { hostname = new URL(signalUrl).hostname } catch {}
-              allSignals.push({ company_id: company.id, title: s.title || result.title, content: s.content, url: signalUrl, source_name: s.source_name || hostname, relevance: s.relevance, type: s.type })
+              allSignals.push({ company_id: company.id, title: s.title || result.title, content: s.content, url: signalUrl, source_name: s.source_name || hostname, relevance: s.relevance, type: s.type, published_date: s.published_date })
             }
           })
           await Promise.allSettled(drJobs)
@@ -779,6 +827,7 @@ export async function runAllAgentsParallel(
   }
 
   const durationMs = Date.now() - start
+
   log(`[Engine] ══ COLLECTE TERMINÉE ══`)
   log(`[Engine]   web_scanner             : ${breakdown.web_scanner               ?? 0} signaux`)
   log(`[Engine]   press_monitor           : ${breakdown.press_monitor             ?? 0} signaux`)
@@ -786,6 +835,9 @@ export async function runAllAgentsParallel(
   log(`[Engine]   deep_research           : ${breakdown.deep_research             ?? 0} signaux`)
   log(`[Engine]   deep_research_iterative : ${breakdown.deep_research_iterative   ?? 0} signaux`)
   log(`[Engine]   TOTAL                   : ${allSignals.length} signaux en ${durationMs}ms`)
+  log(`[Engine]   Perplexity API          : ${process.env.PERPLEXITY_API_KEY ? '✓ configurée' : '✗ manquante'}`)
+  log(`[Engine]   Firecrawl API           : ${process.env.FIRECRAWL_API_KEY ? '✓ configurée' : '✗ manquante'}`)
+  if (errors.length > 0) log(`[Engine]   Erreurs                 : ${errors.length}`)
 
   return { allSignals, breakdown, durationMs, errors }
 }

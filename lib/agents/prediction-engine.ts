@@ -81,17 +81,35 @@ export async function generatePredictions(
     return { reportId: null, skipped: true, reason: 'no_parent_report', usedMiroFish: false }
   }
 
-  // ── Charger les signaux ────────────────────────────────────────────────
+  // ── Charger les signaux (timeframe élargi pour les prédictions) ──────
+  // L'agent de prédiction utilise un historique plus large (jusqu'à 5 ans)
+  // pour mieux apprécier les progressions et tendances de long terme
+  const fiveYearsAgo = new Date()
+  fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5)
+
   const { data: signals } = await supabase
     .from('signals')
-    .select('title, raw_content, signal_type, relevance_score, source_name, companies(name)')
+    .select('title, raw_content, signal_type, relevance_score, source_name, published_at, companies(name)')
     .eq('watch_id', watchId)
-    .order('relevance_score', { ascending: false })
-    .limit(50)
+    .gte('published_at', fiveYearsAgo.toISOString())
+    .order('published_at', { ascending: false })
+    .limit(80)
 
-  const signalsSummary = (signals ?? []).map((s: any, i: number) =>
-    `[${i + 1}] ${s.companies?.name ?? 'Général'} | ${s.signal_type ?? 'news'} | ${s.title}\n${(s.raw_content ?? '').slice(0, 250)}`
-  ).join('\n---\n')
+  // Trier : signaux récents d'abord, mais garder les anciens pour le contexte historique
+  const sortedSignals = (signals ?? []).sort((a: any, b: any) => {
+    const dateA = a.published_at ? new Date(a.published_at).getTime() : 0
+    const dateB = b.published_at ? new Date(b.published_at).getTime() : 0
+    return dateB - dateA
+  })
+
+  const signalsSummary = sortedSignals.map((s: any, i: number) => {
+    const pubDate = s.published_at
+      ? new Date(s.published_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '?'
+    return `[${i + 1}] ${pubDate} | ${s.companies?.name ?? 'Général'} | ${s.signal_type ?? 'news'} | ${s.title}\n${(s.raw_content ?? '').slice(0, 250)}`
+  }).join('\n---\n')
+
+  log(`[Agent 5] ${sortedSignals.length} signaux chargés (timeframe: 5 ans)`)
 
   // ── Contexte ───────────────────────────────────────────────────────────
   const companies = (watch.watch_companies ?? [])
@@ -122,7 +140,7 @@ export async function generatePredictions(
         `=== RAPPORT CONCURRENTIEL (Agent 2) ===\n${agent2Content}`,
         agent3Content ? `\n=== ANALYSE DE MARCHÉ (Agent 3) ===\n${agent3Content}` : '',
         agent4Content ? `\n=== PLAN STRATÉGIQUE (Agent 4) ===\n${agent4Content}` : '',
-        `\n=== SIGNAUX BRUTS (${signals?.length ?? 0}) ===\n${signalsSummary}`,
+        `\n=== SIGNAUX BRUTS (${sortedSignals.length}) ===\n${signalsSummary}`,
       ].join('\n')
 
       const predictionQuery = `Prédis les prochains mouvements stratégiques des entreprises suivantes : ${companies.join(', ')}. Secteurs : ${sectorsStr}. Marchés : ${countriesStr}.`
@@ -158,13 +176,14 @@ CONTEXTE :
 - Marchés : ${countriesStr}
 - Secteurs : ${sectorsStr}
 - Date : ${today}
+- Historique des signaux : jusqu'à 5 ans (les dates de publication sont indiquées pour chaque signal)
 
 RAPPORT CONCURRENTIEL (Agent 2) :
 ${agent2Content}
 
 ${agent3Content ? `ANALYSE DE MARCHÉ (Agent 3) :\n${agent3Content}\n` : ''}
 ${agent4Content ? `PLAN STRATÉGIQUE (Agent 4) :\n${agent4Content}\n` : ''}
-${signals?.length ? `SIGNAUX BRUTS (${signals.length}) :\n${signalsSummary}` : ''}
+${sortedSignals.length ? `SIGNAUX BRUTS (${sortedSignals.length}, triés du plus récent au plus ancien — utilise la chronologie pour identifier trajectoires et accélérations) :\n${signalsSummary}` : ''}
 ${miroFishBlock}
 
 ═══════════════════════════════════════════════════════════
@@ -227,7 +246,7 @@ FORMAT DE RÉPONSE (JSON STRICT)
     "blind_spots": ["Zone aveugle identifiée"]
   },
   "mirofish_used": ${usedMiroFish},
-  "signals_analyzed": ${signals?.length ?? 0}
+  "signals_analyzed": ${sortedSignals.length}
 }`
 
   try {
@@ -281,7 +300,7 @@ FORMAT DE RÉPONSE (JSON STRICT)
       status:       'done',
       started_at:   new Date().toISOString(),
       completed_at: new Date().toISOString(),
-      signals_count: signals?.length ?? 0,
+      signals_count: sortedSignals.length,
       metadata: {
         parent_report_id:   parentReportId,
         market_report_id:   marketReportId,

@@ -52,14 +52,17 @@ export async function generateStrategyReport(
   // ── Charge les signaux les plus pertinents ──────────────────────────────
   const { data: signals } = await supabase
     .from('signals')
-    .select('title, raw_content, signal_type, relevance_score, source_name, companies(name)')
+    .select('title, raw_content, signal_type, relevance_score, source_name, published_at, companies(name)')
     .eq('watch_id', watchId)
     .order('relevance_score', { ascending: false })
     .limit(40)
 
-  const signalsSummary = (signals ?? []).map((s: any, i: number) =>
-    `[${i + 1}] ${s.companies?.name ?? 'Général'} | ${s.title}\n${(s.raw_content ?? '').slice(0, 250)}`
-  ).join('\n---\n')
+  const signalsSummary = (signals ?? []).map((s: any, i: number) => {
+    const pubDate = s.published_at
+      ? new Date(s.published_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '?'
+    return `[${i + 1}] ${pubDate} | ${s.companies?.name ?? 'Général'} | ${s.title}\n${(s.raw_content ?? '').slice(0, 250)}`
+  }).join('\n---\n')
 
   // ── Contexte ────────────────────────────────────────────────────────────
   const companies = (watch.watch_companies ?? [])

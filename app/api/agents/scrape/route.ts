@@ -97,7 +97,7 @@ async function researchWithPerplexity(
   domains:     string[],
   log:         (msg: string) => void,
   companyAspects?: string[],
-): Promise<{ title: string; content: string; relevance: number; type: string; url: string; source_name: string }[]> {
+): Promise<{ title: string; content: string; relevance: number; type: string; url: string; source_name: string; published_date?: string }[]> {
   if (!process.env.PERPLEXITY_API_KEY) {
     log(`  [perplexity] clé absente — skip`)
     return []
@@ -135,10 +135,11 @@ async function researchWithPerplexity(
 ${citationsBlock}
 TEXTE : ${text.slice(0, 4_000)}
 
-Réponds UNIQUEMENT en JSON : {"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.85,"type":"funding|product|partnership|expansion|contract|news|financial","source_ref":1}]}
+Réponds UNIQUEMENT en JSON : {"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.85,"type":"funding|product|partnership|expansion|contract|news|financial","source_ref":1,"published_date":"YYYY-MM-DD"}]}
 
 RÈGLES :
 - "source_ref" = numéro [N] de la source qui contient cette info. Si incertain, mets 0.
+- "published_date" = date de publication ou de l'événement (PAS la date d'aujourd'hui). Format YYYY-MM-DD. Si la date exacte n'est pas claire, estime (ex: "2025-03-01"). Si inconnue, mets null.
 - Chaque signal doit correspondre à un FAIT VÉRIFIABLE, pas une interprétation.
 - Si rien de concret : {"signals":[]}`
 
@@ -154,12 +155,13 @@ RÈGLES :
       const ref = typeof s.source_ref === 'number' && s.source_ref > 0 ? s.source_ref : 0
       const matched = ref > 0 && ref <= citations.length ? citations[ref - 1] : null
       return {
-        title:       s.title,
-        content:     s.content,
-        relevance:   s.relevance,
-        type:        s.type ?? 'news',
-        url:         matched?.url   ?? '',
-        source_name: matched?.title ?? 'Perplexity',
+        title:          s.title,
+        content:        s.content,
+        relevance:      s.relevance,
+        type:           s.type ?? 'news',
+        url:            matched?.url   ?? '',
+        source_name:    matched?.title ?? 'Perplexity',
+        published_date: typeof s.published_date === 'string' ? s.published_date : undefined,
       }
     })
   } catch (e: any) {
@@ -265,6 +267,12 @@ export async function POST(req: NextRequest) {
         if ((count ?? 0) > 0) return false
       }
 
+      let pubDate: string | null = null
+      if (payload.published_date) {
+        const d = new Date(payload.published_date)
+        pubDate = isNaN(d.getTime()) ? null : d.toISOString()
+      }
+
       const { error } = await supabase.from('signals').insert({
         watch_id:        watchId,
         company_id:      payload.company_id,
@@ -275,7 +283,7 @@ export async function POST(req: NextRequest) {
         source_name:     payload.source_name || null,
         relevance_score: payload.relevance,
         signal_type:     payload.type     || 'news',
-        published_at:    new Date().toISOString(),
+        published_at:    pubDate,
       })
       if (error) { log(`[Scrape] INSERT error: ${error.message}`); return false }
       totalSignals++
@@ -307,13 +315,14 @@ export async function POST(req: NextRequest) {
       )
       for (const s of pplxSignals) {
         const ok = await insertSignal({
-          company_id:  company.id,
-          title:       s.title,
-          content:     s.content,
-          url:         s.url,
-          source_name: s.source_name,
-          relevance:   s.relevance,
-          type:        s.type,
+          company_id:     company.id,
+          title:          s.title,
+          content:        s.content,
+          url:            s.url,
+          source_name:    s.source_name,
+          relevance:      s.relevance,
+          type:           s.type,
+          published_date: s.published_date,
         })
         if (ok) statsBySource.perplexity++
       }

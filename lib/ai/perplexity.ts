@@ -1,22 +1,22 @@
 /**
  * lib/ai/perplexity.ts
- * Client Perplexity — Responses API (/v1/responses) + Search API (/search).
+ * Client Perplexity — Sonar API (/v1/sonar) + Search API (/search).
  *
- * Responses API (endpoint principal) :
- *   POST /v1/responses  { preset: "fast-search", input: "..." }
- *   → output[0]: search_results (URLs)
- *   → output[1]: message → content[0].text (synthèse avec citations inline [1][2])
- *   → top-level: text (raccourci)
+ * Sonar API (endpoint principal, Chat Completions format) :
+ *   POST /v1/sonar  { model, messages, search_recency_filter, ... }
+ *   → choices[0].message.content  (texte synthétisé)
+ *   → citations[]                 (URLs sources)
+ *   → search_results[]            (résultats enrichis)
  *
- * Search API (fallback) :
- *   POST /search { query, max_results, max_tokens_per_page, search_domain_filter, ... }
+ * Search API (résultats bruts) :
+ *   POST /search { query, max_results, ... }
  *   → results[]: {title, url, snippet}
  *
- * Filtres supportés (Search + Responses) :
- *   - search_domain_filter  : max 20 domaines (allowlist OU denylist avec prefix -)
- *   - search_recency_filter : hour | day | week | month | year
+ * Filtres Sonar (top-level params) :
+ *   - search_domain_filter  : max 20 domaines
+ *   - search_recency_filter : day | week | month | year
  *   - search_language_filter: ISO 639-1 codes (fr, en, …)
- *   - country               : ISO 3166-1 alpha-2 (CI, SN, GH, …)
+ *   - web_search_options    : { search_context_size, user_location }
  */
 
 const PERPLEXITY_BASE = 'https://api.perplexity.ai'
@@ -49,12 +49,12 @@ export interface PerplexityFilters {
   country?:   string
 }
 
-// ── Responses API (principal) ─────────────────────────────────────────────────
+// ── Sonar API (Chat Completions — principal) ──────────────────────────────────
 
 /**
- * Appel à la Perplexity Responses API.
- * Retourne une réponse synthétisée + URLs sources.
- * Accepte des filtres optionnels (domaines, récence) via l'objet tools.
+ * Appel à la Perplexity Sonar API (format Chat Completions).
+ * Utilise `sonar-pro` avec `search_context_size: "high"` pour maximiser
+ * la quantité d'information récupérée par la recherche temps réel.
  */
 export async function perplexityResponses(
   input:   string,
@@ -63,78 +63,107 @@ export async function perplexityResponses(
   const apiKey = process.env.PERPLEXITY_API_KEY
   if (!apiKey) throw new Error('PERPLEXITY_API_KEY manquant')
 
-  const body: Record<string, any> = { preset: 'fast-search', input }
-
-  const hasFilters = filters?.domains?.length || filters?.recency
-  if (hasFilters) {
-    const toolFilters: Record<string, any> = {}
-    if (filters!.domains?.length)  toolFilters.search_domain_filter  = filters!.domains.slice(0, 20)
-    if (filters!.recency)          toolFilters.search_recency_filter = filters!.recency
-    body.tools = [{ type: 'web_search', filters: toolFilters }]
+  const body: Record<string, any> = {
+    model: 'sonar-pro',
+    messages: [
+      {
+        role: 'system',
+        content: 'Tu es un expert en veille concurrentielle et intelligence économique. Fournis des informations détaillées, factuelles et sourcées. Privilégie les données chiffrées, les dates et les faits vérifiables.',
+      },
+      { role: 'user', content: input },
+    ],
+    web_search_options: {
+      search_context_size: 'high',
+    },
   }
 
-  const res = await fetch(`${PERPLEXITY_BASE}/v1/responses`, {
+  if (filters?.recency)            body.search_recency_filter  = filters.recency
+  if (filters?.languages?.length)  body.search_language_filter = filters.languages
+  if (filters?.domains?.length)    body.search_domain_filter   = filters.domains.slice(0, 20)
+
+  if (filters?.country) {
+    body.web_search_options.user_location = { country: filters.country }
+  }
+
+  const res = await fetch(`${PERPLEXITY_BASE}/v1/sonar`, {
     method:  'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization:  `Bearer ${apiKey}`,
     },
     body:   JSON.stringify(body),
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(30_000),
   })
 
   if (!res.ok) {
     const err = await res.text().catch(() => res.statusText)
-    throw new Error(`Perplexity Responses API ${res.status}: ${err}`)
+    throw new Error(`Perplexity Sonar API ${res.status}: ${err}`)
   }
 
   const data = await res.json()
 
   // ── Extraire le texte ─────────────────────────────────────────────────
-  // Priorité : top-level `text` > output[message].content[output_text].text
   let text = ''
-  // Priorité 1 : champ top-level
-  if (typeof data.text === 'string' && data.text.length > 0) {
+  if (data.choices?.[0]?.message?.content) {
+    text = data.choices[0].message.content
+  } else if (typeof data.text === 'string') {
     text = data.text
   } else {
-    // Priorité 2 : output[message].content[output_text].text
     const outputMsg   = data.output?.find((o: any) => o.type === 'message')
     const contentPart = outputMsg?.content?.find((c: any) => c.type === 'output_text')
     text = typeof contentPart?.text === 'string' ? contentPart.text : ''
   }
 
   // ── Extraire les citations/URLs ───────────────────────────────────────
-  // Source 1 : output[search_results].results[]
-  const searchOutput = data.output?.find((o: any) => o.type === 'search_results')
-  const searchResults: any[] = searchOutput?.results ?? []
-
-  // Source 2 : annotations sur output_text (certaines versions de l'API)
-  const outputMsg2   = data.output?.find((o: any) => o.type === 'message')
-  const contentPart2 = outputMsg2?.content?.find((c: any) => c.type === 'output_text')
-  const annotations: any[] = contentPart2?.annotations ?? []
-
   const citations: PerplexityCitation[] = []
 
-  // D'abord les search_results (plus fiable)
-  for (const r of searchResults) {
-    const url   = r.url ?? r.link ?? ''
-    const title = r.title ?? r.name ?? ''
-    if (url && !citations.some(c => c.url === url)) {
-      citations.push({ url, title })
+  // Source 1 : top-level citations array (Sonar format)
+  if (Array.isArray(data.citations)) {
+    for (const c of data.citations) {
+      const url = typeof c === 'string' ? c : c?.url ?? ''
+      if (url && !citations.some(x => x.url === url)) {
+        citations.push({ url, title: typeof c === 'object' ? c.title ?? '' : '' })
+      }
     }
   }
 
-  // Puis les annotations (complémentaire)
+  // Source 2 : search_results (Sonar Pro format enrichi)
+  if (Array.isArray(data.search_results)) {
+    for (const r of data.search_results) {
+      const url = r.url ?? r.link ?? ''
+      if (url && !citations.some(c => c.url === url)) {
+        citations.push({ url, title: r.title ?? r.name ?? '' })
+      }
+    }
+  }
+
+  // Source 3 : output[search_results] (ancien format)
+  const searchOutput = data.output?.find((o: any) => o.type === 'search_results')
+  if (searchOutput?.results) {
+    for (const r of searchOutput.results) {
+      const url = r.url ?? r.link ?? ''
+      if (url && !citations.some(c => c.url === url)) {
+        citations.push({ url, title: r.title ?? '' })
+      }
+    }
+  }
+
+  // Source 4 : annotations inline
+  const outputMsg2   = data.output?.find((o: any) => o.type === 'message')
+  const contentPart2 = outputMsg2?.content?.find((c: any) => c.type === 'output_text')
+  const annotations: any[] = contentPart2?.annotations ?? []
   for (const a of annotations) {
     if (a.url && !citations.some(c => c.url === a.url)) {
       citations.push({ url: a.url, title: a.title ?? '' })
     }
   }
 
+  console.log(`[perplexity] Sonar: ${text.length} chars, ${citations.length} citations`)
+
   return { text, citations }
 }
 
-// ── Search API (fallback) ─────────────────────────────────────────────────────
+// ── Search API (résultats bruts) ─────────────────────────────────────────────
 
 export async function perplexitySearch(
   query: string,
@@ -150,7 +179,7 @@ export async function perplexitySearch(
   const body: Record<string, any> = {
     query,
     max_results:         options.maxResults       ?? 5,
-    max_tokens_per_page: options.maxTokensPerPage ?? 512,
+    max_tokens_per_page: options.maxTokensPerPage ?? 1024,
   }
 
   if (options.filters?.domains?.length)   body.search_domain_filter   = options.filters.domains.slice(0, 20)
@@ -219,17 +248,11 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
 // ── Adaptateur pour collector-engine ─────────────────────────────────────────
 
-/**
- * Interface unifiée pour le collector-engine.
- * Essaie Responses API d'abord, puis /search en fallback.
- * Propage les filtres (domaines, récence, langue, pays) aux deux APIs.
- */
 export interface EnrichedSearchResult {
   title:        string
   url:          string
   snippet:      string
   fullContent?: string
-  /** All citations from the synthesized response (for source mapping) */
   citations?:   PerplexityCitation[]
 }
 
@@ -238,30 +261,44 @@ export async function perplexityWebSearch(
   maxResults = 3,
   filters?:  PerplexityFilters,
 ): Promise<EnrichedSearchResult[]> {
-  // ── Niveau 1 : Responses API ────────────────────────────────────────────────
+  // ── Niveau 1 : Sonar API (synthèse + citations temps réel) ─────────────────
   try {
     const { text, citations } = await perplexityResponses(query, filters)
 
     if (text && text.length > 100) {
-      // Return ONE result with all citations — avoids processing the same
-      // synthesized text N times with arbitrary URL assignments.
-      return [{
+      const results: EnrichedSearchResult[] = []
+
+      // Résultat principal : texte synthétisé complet + toutes les citations
+      results.push({
         title:       citations[0]?.title || query.slice(0, 80),
         url:         citations[0]?.url   || `https://perplexity.ai/search?q=${encodeURIComponent(query)}`,
         snippet:     text.slice(0, 300),
         fullContent: text,
         citations:   citations.slice(0, 20),
-      }]
+      })
+
+      // Résultats complémentaires : citations individuelles pour extraction
+      for (const cit of citations.slice(1, maxResults + 1)) {
+        if (cit.url && !results.some(r => r.url === cit.url)) {
+          results.push({
+            title:   cit.title || cit.url,
+            url:     cit.url,
+            snippet: '',
+          })
+        }
+      }
+
+      return results
     }
-  } catch {
-    // Fallback /search
+  } catch (e: any) {
+    console.warn(`[perplexity] Sonar fallback: ${e?.message}`)
   }
 
-  // ── Niveau 2 : Search API ────────────────────────────────────────────────────
+  // ── Niveau 2 : Search API (résultats bruts) ────────────────────────────────
   try {
     const results = await perplexitySearch(query, {
-      maxResults,
-      maxTokensPerPage: 512,
+      maxResults: maxResults + 2,
+      maxTokensPerPage: 1024,
       filters,
     })
 
@@ -271,7 +308,8 @@ export async function perplexityWebSearch(
       snippet:     r.snippet,
       fullContent: r.snippet && r.snippet.length > 80 ? r.snippet : undefined,
     }))
-  } catch {
+  } catch (e: any) {
+    console.warn(`[perplexity] Search API fallback: ${e?.message}`)
     return []
   }
 }

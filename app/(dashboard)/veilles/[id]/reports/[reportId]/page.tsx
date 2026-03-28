@@ -7,6 +7,8 @@ import {
   Minus, Shield, Target, Clock, Zap, Map, BarChart3, Route,
   Handshake, CircleAlert, Layers, Crosshair, ChevronRight,
 } from 'lucide-react'
+import ReportChat from './ReportChat'
+import ExportPdfButton from './ExportPdfButton'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -171,6 +173,24 @@ type PredictionByCompany = {
   counter_positioning?: CounterPositioning[]
 }
 
+type CompanyEvolution = {
+  company?: string
+  previous_momentum?: string
+  current_momentum?: string
+  trajectory?: 'improving' | 'stable' | 'declining'
+  key_changes?: string[]
+  new_developments?: string[]
+}
+
+type EvolutionSinceLastReport = {
+  period_comparison?: string
+  company_evolutions?: CompanyEvolution[]
+  market_shifts?: string[]
+  leader_change?: string
+  emerging_risks_since_last?: string[]
+  resolved_issues?: string[]
+}
+
 type ReportContent = {
   title?: string
   executive_summary?: string
@@ -179,6 +199,9 @@ type ReportContent = {
   market_dynamics?: MarketDynamics
   strategic_alerts?: StrategicAlert[]
   recommendations?: Recommendation[]
+  evolution_since_last_report?: EvolutionSinceLastReport
+  previous_report_id?: string
+  report_sequence?: number
 
   // Agent 3 fields
   market_overview?: {
@@ -334,13 +357,18 @@ export default async function WatchReportPage({
   const hasLegacy = !hasNewFormat && !!c.key_insights?.length
 
   return (
-    <div className="max-w-3xl mx-auto pb-20 lg:pb-0">
+    <div className="flex min-h-[calc(100vh-64px)]">
+    {/* Rapport */}
+    <div id="report-content" className="flex-1 min-w-0 max-w-3xl mx-auto pb-20 lg:pb-0 px-4">
 
       {/* Header */}
-      <Link href={`/veilles/${params.id}`}
-        className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-600 mb-4 transition-colors">
-        <ArrowLeft size={12} /> Retour à la veille
-      </Link>
+      <div className="flex items-center justify-between mb-4" data-no-pdf>
+        <Link href={`/veilles/${params.id}`}
+          className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-600 transition-colors">
+          <ArrowLeft size={12} /> Retour à la veille
+        </Link>
+        <ExportPdfButton reportTitle={title} />
+      </div>
 
       <div className="flex items-start gap-3 mb-6">
         <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center flex-shrink-0">
@@ -536,6 +564,85 @@ export default async function WatchReportPage({
               </div>
             )}
           </div>
+        </section>
+      )}
+
+      {/* Évolution depuis le dernier rapport */}
+      {c.evolution_since_last_report && (c.evolution_since_last_report.company_evolutions?.length ?? 0) > 0 && (
+        <section className="card-lg mb-4">
+          <h2 className="text-sm font-bold text-neutral-900 mb-3 flex items-center gap-2">
+            <TrendingUp size={16} className="text-indigo-600" />
+            Évolution depuis le dernier rapport
+          </h2>
+          {c.evolution_since_last_report.period_comparison && (
+            <p className="text-[11px] text-neutral-500 mb-3">{c.evolution_since_last_report.period_comparison}</p>
+          )}
+
+          <div className="space-y-3 mb-4">
+            {c.evolution_since_last_report.company_evolutions!.map((evo, i) => {
+              const trajectoryConfig = {
+                improving: { label: 'En progression', color: 'text-green-700', bg: 'bg-green-50', border: 'border-green-200', icon: ArrowUpRight },
+                stable:    { label: 'Stable',         color: 'text-neutral-600', bg: 'bg-neutral-50', border: 'border-neutral-200', icon: Minus },
+                declining: { label: 'En déclin',      color: 'text-red-700', bg: 'bg-red-50', border: 'border-red-200', icon: ArrowDownRight },
+              }
+              const cfg = trajectoryConfig[evo.trajectory ?? 'stable']
+              const TIcon = cfg.icon
+              return (
+                <div key={i} className={`p-3 rounded-lg border ${cfg.bg} ${cfg.border}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-neutral-900">{evo.company}</span>
+                    <div className="flex items-center gap-1.5">
+                      {evo.previous_momentum && evo.current_momentum && evo.previous_momentum !== evo.current_momentum && (
+                        <span className="text-[9px] text-neutral-400">{evo.previous_momentum} →</span>
+                      )}
+                      <span className={`text-[10px] font-semibold ${cfg.color} flex items-center gap-0.5`}>
+                        <TIcon size={12} />
+                        {cfg.label}
+                      </span>
+                    </div>
+                  </div>
+                  {evo.key_changes && evo.key_changes.length > 0 && (
+                    <div className="mb-1.5">
+                      <div className="text-[9px] font-semibold text-neutral-500 uppercase mb-0.5">Changements clés</div>
+                      <ul className="text-[11px] text-neutral-700 space-y-0.5">
+                        {evo.key_changes.map((ch, j) => <li key={j}>• {ch}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {evo.new_developments && evo.new_developments.length > 0 && (
+                    <div>
+                      <div className="text-[9px] font-semibold text-blue-600 uppercase mb-0.5">Nouveaux développements</div>
+                      <ul className="text-[11px] text-neutral-700 space-y-0.5">
+                        {evo.new_developments.map((nd, j) => <li key={j}>• {nd}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {c.evolution_since_last_report.leader_change && (
+            <div className="text-xs text-neutral-700 mb-2">
+              <span className="font-semibold text-indigo-700">Leadership :</span> {c.evolution_since_last_report.leader_change}
+            </div>
+          )}
+          {c.evolution_since_last_report.market_shifts && c.evolution_since_last_report.market_shifts.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[10px] font-semibold text-neutral-500 uppercase mb-1">Changements de marché</div>
+              <ul className="list-disc list-inside text-xs text-neutral-700 space-y-0.5">
+                {c.evolution_since_last_report.market_shifts.map((s, i) => <li key={i}>{s}</li>)}
+              </ul>
+            </div>
+          )}
+          {c.evolution_since_last_report.resolved_issues && c.evolution_since_last_report.resolved_issues.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-green-700 uppercase mb-1">Problèmes résolus</div>
+              <ul className="list-disc list-inside text-xs text-neutral-700 space-y-0.5">
+                {c.evolution_since_last_report.resolved_issues.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+            </div>
+          )}
         </section>
       )}
 
@@ -1342,12 +1449,29 @@ export default async function WatchReportPage({
         </section>
       )}
 
-      {typeof c.signals_analyzed === 'number' && (
+      {(typeof c.signals_analyzed === 'number' || c.report_sequence) && (
         <p className="text-[11px] text-neutral-400 mt-4">
-          {c.signals_analyzed} signal{c.signals_analyzed > 1 ? 'ux' : ''} analysé
-          {c.signals_analyzed > 1 ? 's' : ''}
+          {c.report_sequence && c.report_sequence > 1 && (
+            <span className="inline-flex items-center gap-1 mr-2 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-medium">
+              Rapport #{c.report_sequence}
+            </span>
+          )}
+          {typeof c.signals_analyzed === 'number' && (
+            <span>
+              {c.signals_analyzed} signal{c.signals_analyzed > 1 ? 'ux' : ''} analysé
+              {c.signals_analyzed > 1 ? 's' : ''}
+            </span>
+          )}
         </p>
       )}
+    </div>
+
+    {/* Chat IA */}
+    <ReportChat
+      reportId={params.reportId}
+      watchId={params.id}
+      reportTitle={title}
+    />
     </div>
   )
 }

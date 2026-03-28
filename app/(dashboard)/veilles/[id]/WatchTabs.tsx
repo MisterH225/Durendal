@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   Settings2, Zap, FileText, Globe, ExternalLink, Plus,
   Search, BrainCircuit, BarChart2, Newspaper, ChevronRight,
-  Building2, MapPin, Layers, Clock, AlertTriangle,
+  Building2, MapPin, Layers, Clock, AlertTriangle, Calendar,
 } from 'lucide-react'
 import ScanHistory from './ScanHistory'
 
@@ -34,6 +34,17 @@ interface Props {
   reports:      any[]
   jobs:         any[]
   breakdown:    Record<string, number> | undefined
+}
+
+function fmtDateShort(d: string | null) {
+  if (!d) return '—'
+  return new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function isRecentCollect(pubAt: string | null, collectedAt: string | null): boolean {
+  if (!pubAt || !collectedAt) return true
+  const diff = Math.abs(new Date(pubAt).getTime() - new Date(collectedAt).getTime())
+  return diff < 60_000
 }
 
 function fmtDate(d: string | null) {
@@ -257,13 +268,27 @@ function TabSignals({ signals, totalSignals, watchId, noCompanies }: {
         </span>
       </div>
       <div className="space-y-3">
-        {signals.map((s: any) => (
+        {signals.map((s: any) => {
+          const hasPubDate = s.published_at && !isRecentCollect(s.published_at, s.collected_at)
+          return (
           <div key={s.id} className="pb-3 border-b border-neutral-100 last:border-0">
             <div className="flex items-start justify-between gap-2 mb-1">
-              <div className="text-[10px] text-neutral-400 flex items-center gap-1">
+              <div className="text-[10px] text-neutral-400 flex items-center gap-1 flex-wrap">
                 {s.source_name && <span className="font-medium">{s.source_name}</span>}
                 {s.source_name && <span>·</span>}
-                {fmtDate(s.published_at)}
+                {hasPubDate ? (
+                  <span className="flex items-center gap-0.5" title="Date de publication de l'information">
+                    <Calendar size={9} className="text-blue-500" />
+                    {fmtDateShort(s.published_at)}
+                  </span>
+                ) : (
+                  <span title="Date de collecte">{fmtDate(s.collected_at || s.published_at)}</span>
+                )}
+                {hasPubDate && s.collected_at && (
+                  <span className="text-neutral-300" title={`Collecté le ${fmtDate(s.collected_at)}`}>
+                    · collecté {fmtDateShort(s.collected_at)}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0">
                 {s.signal_type && (
@@ -302,7 +327,8 @@ function TabSignals({ signals, totalSignals, watchId, noCompanies }: {
               )}
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
 
       {totalSignals > signals.length && (

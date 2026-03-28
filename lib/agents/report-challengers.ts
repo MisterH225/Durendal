@@ -27,6 +27,8 @@ export interface ChallengerPipelineResult {
 
 // ── Shared context builder ──────────────────────────────────────────────────
 
+const MAX_CONTEXT_CHARS = 6_000
+
 function buildReportContext(report: any): string {
   const c = report.content ?? {}
   const sections: string[] = []
@@ -35,39 +37,34 @@ function buildReportContext(report: any): string {
 
   if (c.company_analyses?.length) {
     sections.push('ANALYSES PAR ENTREPRISE:\n' + c.company_analyses.map((ca: any) =>
-      `• ${ca.company}: momentum=${ca.momentum ?? '?'}\n  Position: ${ca.position_summary ?? ''}\n  Mouvements: ${(ca.key_moves ?? []).join('; ')}\n  Forces: ${(ca.strengths ?? []).join('; ')}\n  Risques: ${(ca.weaknesses_or_risks ?? []).join('; ')}`
+      `• ${ca.company}: momentum=${ca.momentum ?? '?'}\n  Position: ${(ca.position_summary ?? '').slice(0, 200)}\n  Mouvements: ${(ca.key_moves ?? []).slice(0, 3).join('; ')}\n  Forces: ${(ca.strengths ?? []).slice(0, 2).join('; ')}\n  Risques: ${(ca.weaknesses_or_risks ?? []).slice(0, 2).join('; ')}`
     ).join('\n'))
   }
 
   if (c.competitive_comparison) {
     const cc = c.competitive_comparison
-    sections.push(`COMPARAISON CONCURRENTIELLE:\n  Vue d'ensemble: ${cc.overview ?? ''}\n  Leader: ${cc.leader ?? ''}\n  Challenger: ${cc.challenger ?? ''}\n  Différenciateurs: ${(cc.differentiators ?? []).map((d: any) => `${d.company}: ${d.advantage}`).join('; ')}\n  Gaps: ${(cc.gaps_to_watch ?? []).join('; ')}`)
+    sections.push(`COMPARAISON CONCURRENTIELLE:\n  Vue d'ensemble: ${(cc.overview ?? '').slice(0, 300)}\n  Leader: ${cc.leader ?? ''}\n  Challenger: ${cc.challenger ?? ''}\n  Gaps: ${(cc.gaps_to_watch ?? []).slice(0, 3).join('; ')}`)
   }
 
   if (c.market_dynamics) {
     const md = c.market_dynamics
-    sections.push(`DYNAMIQUES DE MARCHÉ:\n  Tendances: ${(md.trends ?? []).join('; ')}\n  Opportunités: ${(md.emerging_opportunities ?? []).join('; ')}\n  Menaces: ${(md.threats ?? []).join('; ')}`)
+    sections.push(`DYNAMIQUES DE MARCHÉ:\n  Tendances: ${(md.trends ?? []).slice(0, 3).join('; ')}\n  Opportunités: ${(md.emerging_opportunities ?? []).slice(0, 2).join('; ')}\n  Menaces: ${(md.threats ?? []).slice(0, 2).join('; ')}`)
   }
 
   if (c.strategic_alerts?.length) {
-    sections.push('ALERTES STRATÉGIQUES:\n' + c.strategic_alerts.map((a: any) =>
-      `• [${a.severity}] ${a.alert} — ${a.company} → ${a.recommended_action}`
+    sections.push('ALERTES STRATÉGIQUES:\n' + c.strategic_alerts.slice(0, 3).map((a: any) =>
+      `• [${a.severity}] ${a.alert} — ${a.company}`
     ).join('\n'))
   }
 
   if (c.recommendations?.length) {
-    sections.push('RECOMMANDATIONS:\n' + c.recommendations.map((r: any) =>
-      `• [${r.priority}] ${r.action} — ${r.rationale} (${r.time_horizon})`
+    sections.push('RECOMMANDATIONS:\n' + c.recommendations.slice(0, 4).map((r: any) =>
+      `• [${r.priority}] ${r.action} (${r.time_horizon})`
     ).join('\n'))
   }
 
-  if (c.evolution_since_last_report?.company_evolutions?.length) {
-    sections.push('ÉVOLUTIONS DEPUIS DERNIER RAPPORT:\n' + c.evolution_since_last_report.company_evolutions.map((e: any) =>
-      `• ${e.company}: ${e.previous_momentum} → ${e.current_momentum} (${e.trajectory}) | ${(e.key_changes ?? []).join('; ')}`
-    ).join('\n'))
-  }
-
-  return sections.join('\n\n')
+  const full = sections.join('\n\n')
+  return full.length > MAX_CONTEXT_CHARS ? full.slice(0, MAX_CONTEXT_CHARS) + '\n[…tronqué]' : full
 }
 
 // ── Challenger #1 — Angles morts & faiblesses ──────────────────────────────
@@ -111,7 +108,8 @@ RÈGLES :
 - Ne fais pas de compliments — ton rôle est de trouver les failles.
 - Réponds en français.`
 
-  const { text } = await callGemini(prompt, { maxOutputTokens: 3_000, temperature: 0.2 })
+  const { text, tokensUsed } = await callGemini(prompt, { maxOutputTokens: 4_000, temperature: 0.2 })
+  log(`[Challenger #1] Gemini → ${text.length} chars, ${tokensUsed} tokens`)
   const parsed = parseGeminiJson<any>(text)
 
   const feedback: ChallengerFeedback = {
@@ -123,7 +121,7 @@ RÈGLES :
       suggestion: i.suggestion ?? '',
     })),
     score: parsed?.score ?? 50,
-    summary: parsed?.summary ?? '',
+    summary: parsed?.summary ?? (parsed ? '' : text.slice(0, 200)),
   }
 
   log(`[Challenger #1] ✓ ${feedback.issues.length} problèmes identifiés — score ${feedback.score}/100`)
@@ -139,13 +137,15 @@ async function runChallengerFactCheck(
 ): Promise<ChallengerFeedback> {
   log('[Challenger #2] Validation factuelle des affirmations...')
 
-  const prompt = `Tu es un vérificateur de faits (fact-checker) expert en veille concurrentielle. Ton rôle est de vérifier que CHAQUE affirmation et prédiction du rapport est soutenue par des preuves tangibles issues des signaux collectés.
+  const trimmedSignals = signalsText.length > 5_000 ? signalsText.slice(0, 5_000) + '\n[…signaux tronqués]' : signalsText
+
+  const prompt = `Tu es un vérificateur de faits (fact-checker) expert en veille concurrentielle. Vérifie que les affirmations du rapport sont soutenues par les signaux.
 
 RAPPORT À VÉRIFIER :
 ${reportContext}
 
 SIGNAUX COLLECTÉS (sources de vérité) :
-${signalsText}
+${trimmedSignals}
 
 ═══ MISSION ═══
 Pour chaque affirmation ou prédiction majeure du rapport :
@@ -175,7 +175,8 @@ RÈGLES :
 - Identifie au minimum 4 problèmes.
 - Réponds en français.`
 
-  const { text } = await callGemini(prompt, { maxOutputTokens: 3_000, temperature: 0.15 })
+  const { text, tokensUsed } = await callGemini(prompt, { maxOutputTokens: 4_000, temperature: 0.15 })
+  log(`[Challenger #2] Gemini → ${text.length} chars, ${tokensUsed} tokens`)
   const parsed = parseGeminiJson<any>(text)
 
   const feedback: ChallengerFeedback = {
@@ -187,7 +188,7 @@ RÈGLES :
       suggestion: i.suggestion ?? '',
     })),
     score: parsed?.score ?? 50,
-    summary: parsed?.summary ?? '',
+    summary: parsed?.summary ?? (parsed ? '' : text.slice(0, 200)),
   }
 
   log(`[Challenger #2] ✓ ${feedback.issues.length} problèmes identifiés — score ${feedback.score}/100`)
@@ -236,7 +237,8 @@ RÈGLES :
 - Propose des pistes d'approfondissement concrètes.
 - Réponds en français.`
 
-  const { text } = await callGemini(prompt, { maxOutputTokens: 3_000, temperature: 0.2 })
+  const { text, tokensUsed } = await callGemini(prompt, { maxOutputTokens: 4_000, temperature: 0.2 })
+  log(`[Challenger #3] Gemini → ${text.length} chars, ${tokensUsed} tokens`)
   const parsed = parseGeminiJson<any>(text)
 
   const feedback: ChallengerFeedback = {
@@ -248,7 +250,7 @@ RÈGLES :
       suggestion: i.suggestion ?? '',
     })),
     score: parsed?.score ?? 50,
-    summary: parsed?.summary ?? '',
+    summary: parsed?.summary ?? (parsed ? '' : text.slice(0, 200)),
   }
 
   log(`[Challenger #3] ✓ ${feedback.issues.length} problèmes identifiés — score ${feedback.score}/100`)
@@ -277,30 +279,29 @@ async function runSynthesisAgent(
     const agentLabel = f.agent === 'blind_spots' ? 'Angles morts & faiblesses'
       : f.agent === 'fact_check' ? 'Validation factuelle'
       : 'Profondeur argumentaire'
-    const issuesStr = f.issues.map(i =>
-      `  [${i.severity.toUpperCase()}] ${i.category}: ${i.description}\n    → Suggestion: ${i.suggestion}`
+    const issuesStr = f.issues.slice(0, 6).map(i =>
+      `  [${i.severity.toUpperCase()}] ${i.description.slice(0, 150)}\n    → ${i.suggestion.slice(0, 120)}`
     ).join('\n')
-    return `═══ ${agentLabel} (score: ${f.score}/100) ═══\n${f.summary}\n\nProblèmes identifiés:\n${issuesStr}`
+    return `═══ ${agentLabel} (score: ${f.score}/100) ═══\n${f.summary}\n${issuesStr}`
   }).join('\n\n')
+
+  const trimmedSignals = signalsText.length > 4_000 ? signalsText.slice(0, 4_000) + '\n[…signaux tronqués]' : signalsText
 
   const prompt = `Tu es l'agent de SYNTHÈSE FINALE — un analyste senior en intelligence économique.
 
-Tu as reçu un rapport initial et les CRITIQUES de 3 agents experts. Tu dois maintenant produire le rapport FINAL ENRICHI qui corrige toutes les faiblesses identifiées.
+Tu as reçu un rapport initial et les CRITIQUES de 3 agents experts. Produis le rapport FINAL ENRICHI.
 
 ══ RAPPORT INITIAL ══
 ${reportContext}
 
-══ CRITIQUES DES 3 AGENTS CHALLENGERS ══
+══ CRITIQUES CHALLENGERS ══
 ${feedbackText}
 
-══ SIGNAUX COLLECTÉS (pour combler les lacunes) ══
-${signalsText}
+══ SIGNAUX BRUTS (extraits) ══
+${trimmedSignals}
 
 ══ CONTEXTE ══
-- Entreprises : ${companiesStr}
-- Marchés : ${(watch.countries ?? []).join(', ')}
-- Secteurs : ${(watch.sectors ?? []).join(', ')}
-- Date : ${today}
+Entreprises : ${companiesStr} | Marchés : ${(watch.countries ?? []).join(', ')} | Secteurs : ${(watch.sectors ?? []).join(', ')} | Date : ${today}
 
 ═══════════════════════════════════════════════════
 MISSION : Rédige le rapport FINAL qui :
@@ -482,11 +483,12 @@ export async function runChallengerPipeline(
     .order('relevance_score', { ascending: false })
     .limit(80)
 
-  const signalsList = signals ?? []
+  const signalsList = (signals ?? []).slice(0, 40)
   const signalsText = signalsList.map((s: any, i: number) => {
-    const src = s.source_name || (s.url ? (() => { try { return new URL(s.url).hostname } catch { return s.url } })() : 'Source inconnue')
-    return `[${i + 1}] ${s.companies?.name ?? 'Général'} — ${s.title}\n${s.raw_content?.slice(0, 400) ?? ''}\nSource: ${src}${s.url ? ` (${s.url})` : ''}`
+    const src = s.source_name || (s.url ? (() => { try { return new URL(s.url).hostname } catch { return s.url } })() : '?')
+    return `[${i + 1}] ${s.companies?.name ?? 'Général'} — ${s.title}\n${(s.raw_content ?? '').slice(0, 250)}\nSource: ${src}`
   }).join('\n---\n')
+  log(`[Challenger Pipeline] ${signalsList.length} signaux chargés, contexte rapport: ${buildReportContext(report).length} chars`)
 
   const sourcesIndex = signalsList
     .map((s: any, i: number) => ({ i: i + 1, url: s.url, title: s.source_name || s.title }))

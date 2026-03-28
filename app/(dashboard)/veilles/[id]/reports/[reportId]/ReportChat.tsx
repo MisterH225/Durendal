@@ -108,7 +108,7 @@ export default function ReportChat({
 
   /* ── Chat panel (open) ── */
   return (
-    <div className="fixed inset-0 z-50 lg:static lg:z-auto lg:inset-auto flex flex-col bg-white lg:border-l lg:border-neutral-200 lg:w-[420px] lg:min-w-[380px] lg:flex-shrink-0">
+    <div className="fixed inset-x-0 bottom-0 top-[30vh] z-50 lg:static lg:z-auto lg:inset-auto flex flex-col bg-white lg:border-l lg:border-neutral-200 lg:w-[380px] lg:min-w-[340px] lg:max-h-[calc(100vh-80px)] lg:sticky lg:top-[64px] lg:flex-shrink-0 rounded-t-2xl lg:rounded-none shadow-2xl lg:shadow-none">
 
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 bg-gradient-to-r from-blue-50 to-indigo-50 flex-shrink-0">

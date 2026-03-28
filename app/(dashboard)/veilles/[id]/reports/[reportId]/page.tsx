@@ -138,6 +138,39 @@ type PartnershipReco = {
   priority?: string
 }
 
+// ── Agent 5 types ─────────────────────────────────────────────────────────────
+
+type NextMove = {
+  move?: string
+  probability?: string
+  timing?: string
+  confidence?: string
+  supporting_signals?: string[]
+  impact_on_market?: string
+}
+
+type CounterPositioning = {
+  scenario?: string
+  recommended_action?: string
+  type?: string
+  priority?: string
+  urgency?: string
+  expected_outcome?: string
+}
+
+type PredictionByCompany = {
+  company?: string
+  next_moves?: NextMove[]
+  strategic_intention?: {
+    primary_objective?: string
+    strategy_type?: string
+    alliances_anticipated?: string[]
+    conflicts_emerging?: string[]
+    evidence?: string[]
+  }
+  counter_positioning?: CounterPositioning[]
+}
+
 type ReportContent = {
   title?: string
   executive_summary?: string
@@ -167,6 +200,28 @@ type ReportContent = {
   roadmap?: { phases?: RoadmapPhase[]; dependencies?: string[] }
   risk_analysis?: RiskEntry[]
   partnership_recommendations?: PartnershipReco[]
+
+  // Agent 5 fields
+  predictions_by_company?: PredictionByCompany[]
+  market_predictions?: {
+    consolidation_probability?: string
+    disruption_risks?: string[]
+    emerging_opportunities?: string[]
+    key_inflection_points?: Array<{
+      event?: string
+      timing?: string
+      probability?: string
+      implications?: string
+    }>
+  }
+  confidence_matrix?: {
+    overall_confidence?: string
+    data_quality?: string
+    prediction_horizon?: string
+    key_assumptions?: string[]
+    blind_spots?: string[]
+  }
+  mirofish_used?: boolean
 
   // Legacy fields
   key_insights?: Array<{
@@ -298,7 +353,9 @@ export default async function WatchReportPage({
             {generated && <span className="text-[11px] text-neutral-400">{generated}</span>}
             <span className={`badge text-[10px] ${
               report.type === 'synthesis' || report.type === 'analyse' ? 'badge-blue'
-                : report.type === 'market' ? 'badge-green' : 'badge-purple'
+                : report.type === 'market' ? 'badge-green'
+                : report.type === 'prediction' ? 'badge-indigo'
+                : 'badge-purple'
             }`}>Agent {report.agent_used ?? 2}</span>
             {c.period && <span className="text-[11px] text-neutral-500">{c.period}</span>}
           </div>
@@ -1020,6 +1077,248 @@ export default async function WatchReportPage({
           <ul className="list-disc list-inside text-sm text-neutral-700 space-y-1">
             {c.alerts.map((a, i) => <li key={i}>{a}</li>)}
           </ul>
+        </section>
+      )}
+
+      {/* ══════════ AGENT 5 : PRÉDICTIONS ══════════ */}
+
+      {c.predictions_by_company && c.predictions_by_company.length > 0 && (
+        <section className="card-lg mb-4">
+          <h2 className="text-sm font-bold text-neutral-900 mb-4 flex items-center gap-2">
+            <Crosshair size={16} className="text-indigo-600" />
+            Prédictions par entreprise
+            {c.mirofish_used && (
+              <span className="badge badge-purple text-[9px] ml-1">Enrichi par MiroFish</span>
+            )}
+          </h2>
+          <div className="space-y-5">
+            {c.predictions_by_company.map((pred, idx) => (
+              <div key={idx} className="p-4 rounded-xl bg-neutral-50 border border-neutral-200">
+                <h3 className="text-sm font-bold text-neutral-900 mb-3">{pred.company}</h3>
+
+                {/* Prochain mouvement anticipé */}
+                {pred.next_moves && pred.next_moves.length > 0 && (
+                  <div className="mb-3">
+                    <div className="text-[10px] font-semibold text-red-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+                      <Crosshair size={10} /> Prochains mouvements anticipés
+                    </div>
+                    <div className="space-y-2">
+                      {pred.next_moves.map((m, i) => (
+                        <div key={i} className="p-2.5 bg-white rounded-lg border border-neutral-100">
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <span className="text-xs font-medium text-neutral-900">{m.move}</span>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              {m.probability && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 font-bold">{m.probability}</span>
+                              )}
+                              {m.confidence && (
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                                  m.confidence === 'high' ? 'bg-green-50 text-green-700' :
+                                  m.confidence === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-neutral-100 text-neutral-500'
+                                }`}>{m.confidence === 'high' ? 'Confiance haute' : m.confidence === 'medium' ? 'Confiance moyenne' : 'Confiance faible'}</span>
+                              )}
+                            </div>
+                          </div>
+                          {m.timing && <div className="text-[10px] text-neutral-500 mb-1">Timing : {m.timing}</div>}
+                          {m.impact_on_market && <div className="text-[11px] text-neutral-600">{m.impact_on_market}</div>}
+                          {m.supporting_signals && m.supporting_signals.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {m.supporting_signals.map((s, j) => (
+                                <span key={j} className="text-[9px] px-1.5 py-0.5 bg-neutral-100 text-neutral-500 rounded">{s}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Intention stratégique */}
+                {pred.strategic_intention && (
+                  <div className="mb-3">
+                    <div className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+                      <Target size={10} /> Intention stratégique déduite
+                    </div>
+                    <div className="p-2.5 bg-indigo-50/50 rounded-lg border border-indigo-100">
+                      <div className="text-xs font-medium text-neutral-900 mb-1">{pred.strategic_intention.primary_objective}</div>
+                      {pred.strategic_intention.strategy_type && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-medium">
+                          {pred.strategic_intention.strategy_type}
+                        </span>
+                      )}
+                      {pred.strategic_intention.alliances_anticipated && pred.strategic_intention.alliances_anticipated.length > 0 && (
+                        <div className="mt-2">
+                          <span className="text-[10px] font-semibold text-neutral-500">Alliances anticipées : </span>
+                          <span className="text-[11px] text-neutral-700">{pred.strategic_intention.alliances_anticipated.join(', ')}</span>
+                        </div>
+                      )}
+                      {pred.strategic_intention.conflicts_emerging && pred.strategic_intention.conflicts_emerging.length > 0 && (
+                        <div className="mt-1">
+                          <span className="text-[10px] font-semibold text-red-600">Conflits émergents : </span>
+                          <span className="text-[11px] text-neutral-700">{pred.strategic_intention.conflicts_emerging.join(', ')}</span>
+                        </div>
+                      )}
+                      {pred.strategic_intention.evidence && pred.strategic_intention.evidence.length > 0 && (
+                        <div className="mt-2 space-y-0.5">
+                          {pred.strategic_intention.evidence.map((e, j) => (
+                            <div key={j} className="text-[10px] text-neutral-500 flex items-start gap-1">
+                              <span className="text-indigo-400 mt-0.5 flex-shrink-0">-</span> {e}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Contre-positionnement */}
+                {pred.counter_positioning && pred.counter_positioning.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+                      <Shield size={10} /> Contre-positionnement recommandé
+                    </div>
+                    <div className="space-y-2">
+                      {pred.counter_positioning.map((cp, i) => (
+                        <div key={i} className="p-2.5 bg-green-50/50 rounded-lg border border-green-100">
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <span className="text-xs text-neutral-700 italic">{cp.scenario}</span>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {cp.priority && <PriorityBadge p={cp.priority} />}
+                              {cp.type && (
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                                  cp.type === 'offensive' ? 'bg-red-100 text-red-700' :
+                                  cp.type === 'defensive' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+                                }`}>{cp.type}</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-xs font-medium text-neutral-900 mb-0.5">{cp.recommended_action}</div>
+                          {cp.urgency && <div className="text-[10px] text-neutral-500">Urgence : {cp.urgency === 'immediate' ? 'Immédiate' : cp.urgency === 'short_term' ? 'Court terme' : 'Moyen terme'}</div>}
+                          {cp.expected_outcome && <div className="text-[10px] text-green-700 mt-1">{cp.expected_outcome}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Prédictions marché */}
+      {c.market_predictions && (
+        <section className="card-lg mb-4">
+          <h2 className="text-sm font-bold text-neutral-900 mb-3 flex items-center gap-2">
+            <TrendingUp size={16} className="text-amber-600" />
+            Prédictions de marché
+          </h2>
+          {c.market_predictions.consolidation_probability && (
+            <div className="p-3 bg-amber-50 rounded-lg border border-amber-100 mb-3">
+              <span className="text-xs font-medium text-amber-800">
+                Probabilité de consolidation : {c.market_predictions.consolidation_probability}
+              </span>
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {c.market_predictions.disruption_risks && c.market_predictions.disruption_risks.length > 0 && (
+              <div>
+                <div className="text-[10px] font-semibold text-red-600 uppercase tracking-wide mb-1.5">Risques de disruption</div>
+                <ul className="space-y-1">
+                  {c.market_predictions.disruption_risks.map((r, i) => (
+                    <li key={i} className="text-xs text-neutral-700 flex items-start gap-1.5">
+                      <AlertTriangle size={10} className="text-red-400 mt-0.5 flex-shrink-0" /> {r}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {c.market_predictions.emerging_opportunities && c.market_predictions.emerging_opportunities.length > 0 && (
+              <div>
+                <div className="text-[10px] font-semibold text-green-600 uppercase tracking-wide mb-1.5">Opportunités émergentes</div>
+                <ul className="space-y-1">
+                  {c.market_predictions.emerging_opportunities.map((o, i) => (
+                    <li key={i} className="text-xs text-neutral-700 flex items-start gap-1.5">
+                      <TrendingUp size={10} className="text-green-500 mt-0.5 flex-shrink-0" /> {o}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          {c.market_predictions.key_inflection_points && c.market_predictions.key_inflection_points.length > 0 && (
+            <div className="mt-3">
+              <div className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wide mb-2">Points d&apos;inflexion</div>
+              <div className="space-y-2">
+                {c.market_predictions.key_inflection_points.map((p, i) => (
+                  <div key={i} className="flex items-start gap-2 p-2 bg-neutral-50 rounded-lg">
+                    <Clock size={12} className="text-neutral-400 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-neutral-900">{p.event}</div>
+                      <div className="text-[10px] text-neutral-500">{p.timing} · Probabilité : {p.probability}</div>
+                      {p.implications && <div className="text-[10px] text-neutral-600 mt-0.5">{p.implications}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Matrice de confiance */}
+      {c.confidence_matrix && (
+        <section className="card-lg mb-4">
+          <h2 className="text-sm font-bold text-neutral-900 mb-3 flex items-center gap-2">
+            <Shield size={16} className="text-neutral-600" />
+            Matrice de confiance
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+            {c.confidence_matrix.overall_confidence && (
+              <div className="p-3 bg-neutral-50 rounded-lg text-center">
+                <div className="text-[10px] text-neutral-500 mb-1">Confiance globale</div>
+                <div className={`text-sm font-bold ${
+                  c.confidence_matrix.overall_confidence === 'high' ? 'text-green-700' :
+                  c.confidence_matrix.overall_confidence === 'medium' ? 'text-amber-700' : 'text-red-700'
+                }`}>{c.confidence_matrix.overall_confidence === 'high' ? 'Haute' : c.confidence_matrix.overall_confidence === 'medium' ? 'Moyenne' : 'Faible'}</div>
+              </div>
+            )}
+            {c.confidence_matrix.data_quality && (
+              <div className="p-3 bg-neutral-50 rounded-lg text-center">
+                <div className="text-[10px] text-neutral-500 mb-1">Qualité des données</div>
+                <div className="text-sm font-bold text-neutral-900">{c.confidence_matrix.data_quality === 'high' ? 'Haute' : c.confidence_matrix.data_quality === 'medium' ? 'Moyenne' : 'Faible'}</div>
+              </div>
+            )}
+            {c.confidence_matrix.prediction_horizon && (
+              <div className="p-3 bg-neutral-50 rounded-lg text-center">
+                <div className="text-[10px] text-neutral-500 mb-1">Horizon</div>
+                <div className="text-sm font-bold text-neutral-900">{c.confidence_matrix.prediction_horizon}</div>
+              </div>
+            )}
+          </div>
+          {c.confidence_matrix.key_assumptions && c.confidence_matrix.key_assumptions.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wide mb-1">Hypothèses clés</div>
+              <ul className="space-y-0.5">
+                {c.confidence_matrix.key_assumptions.map((a, i) => (
+                  <li key={i} className="text-xs text-neutral-700">- {a}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {c.confidence_matrix.blind_spots && c.confidence_matrix.blind_spots.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-red-600 uppercase tracking-wide mb-1">Zones aveugles</div>
+              <ul className="space-y-0.5">
+                {c.confidence_matrix.blind_spots.map((b, i) => (
+                  <li key={i} className="text-xs text-neutral-700 flex items-start gap-1">
+                    <AlertTriangle size={9} className="text-red-400 mt-0.5 flex-shrink-0" /> {b}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
       )}
 

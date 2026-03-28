@@ -19,6 +19,7 @@ import { runAllAgentsParallel, CollectedSignal, SourceRecord } from '@/lib/agent
 import { generateWatchReport }         from '@/lib/agents/report-generator'
 import { generateMarketAnalysis }      from '@/lib/agents/market-analyst'
 import { generateStrategyReport }      from '@/lib/agents/strategy-advisor'
+import { generatePredictions }         from '@/lib/agents/prediction-engine'
 import { countryName }                  from '@/lib/countries'
 
 
@@ -461,6 +462,7 @@ export async function POST(req: NextRequest) {
     let reportResult: { reportId: string | null; insights: number; sources: number; skipped: boolean; reason?: string } = { reportId: null, insights: 0, sources: 0, skipped: false }
     let marketReportId: string | null = null
     let strategyReportId: string | null = null
+    let predictionReportId: string | null = null
 
     if (totalSignals > 0) {
       log(`\n[Scrape] ── PHASE 4 : Agent 2 — Rapport concurrentiel ──`)
@@ -484,9 +486,18 @@ export async function POST(req: NextRequest) {
           supabase, watchId, watch, reportResult.reportId, marketReportId, log,
         )
         strategyReportId = strategyResult.reportId
+
+        // ══════════════════════════════════════════════════════════════════
+        //  PHASE 7 — Agent 5 : Prédictions (déclenché après Agents 2+3+4)
+        // ══════════════════════════════════════════════════════════════════
+        log(`\n[Scrape] ── PHASE 7 : Agent 5 — Prédictions ──`)
+        const predictionResult = await generatePredictions(
+          supabase, watchId, watch, reportResult.reportId, marketReportId, strategyReportId, log,
+        )
+        predictionReportId = predictionResult.reportId
       }
     } else {
-      log(`\n[Scrape] Phases 4-6 ignorées (0 signaux collectés)`)
+      log(`\n[Scrape] Phases 4-7 ignorées (0 signaux collectés)`)
     }
 
     await supabase.from('agent_jobs').update({
@@ -498,10 +509,11 @@ export async function POST(req: NextRequest) {
         breakdown_phases: statsBySource,
         engine_duration:  engineResult.durationMs,
         avg_relevance:    totalSignals > 0 ? Math.round((sumRelevance / totalSignals) * 100) / 100 : 0,
-        report_id:        reportResult.reportId,
-        market_report_id: marketReportId,
-        strategy_report_id: strategyReportId,
-        errors:           engineResult.errors.slice(0, 20),
+        report_id:             reportResult.reportId,
+        market_report_id:      marketReportId,
+        strategy_report_id:    strategyReportId,
+        prediction_report_id:  predictionReportId,
+        errors:                engineResult.errors.slice(0, 20),
       },
     }).eq('id', job?.id)
 
@@ -523,10 +535,11 @@ export async function POST(req: NextRequest) {
       success:       true,
       total_signals: totalSignals,
       breakdown:     { ...statsBySource, agents: engineResult.breakdown },
-      report_id:           reportResult.reportId,
-      market_report_id:    marketReportId,
-      strategy_report_id:  strategyReportId,
-      report_ready:        !reportResult.skipped,
+      report_id:              reportResult.reportId,
+      market_report_id:       marketReportId,
+      strategy_report_id:     strategyReportId,
+      prediction_report_id:   predictionReportId,
+      report_ready:           !reportResult.skipped,
     })
 
   } catch (error: any) {

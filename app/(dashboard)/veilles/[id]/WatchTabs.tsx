@@ -361,7 +361,9 @@ function TabReports({ reports, watchId }: { reports: any[]; watchId: string }) {
                 <div className="text-[10px] text-neutral-400 mt-0.5">
                   {r.type === 'synthesis' || r.type === 'analyse'
                     ? 'Analyse concurrentielle'
-                    : r.type === 'market' ? 'Analyse marché' : 'Stratégie'}
+                    : r.type === 'market' ? 'Analyse marché'
+                    : r.type === 'prediction' ? 'Prédiction'
+                    : 'Stratégie'}
                   {' · '}
                   {fmtDate(r.generated_at ?? r.created_at)}
                 </div>
@@ -373,7 +375,9 @@ function TabReports({ reports, watchId }: { reports: any[]; watchId: string }) {
                 {!r.is_read && <span className="w-2 h-2 rounded-full bg-blue-700" title="Non lu" />}
                 <span className={`badge text-[10px] ${
                   r.type === 'synthesis' || r.type === 'analyse' ? 'badge-blue'
-                  : r.type === 'market' ? 'badge-green' : 'badge-purple'
+                  : r.type === 'market' ? 'badge-green'
+                  : r.type === 'prediction' ? 'badge-indigo'
+                  : 'badge-purple'
                 }`}>
                   Agent {r.agent_used ?? 2}
                 </span>

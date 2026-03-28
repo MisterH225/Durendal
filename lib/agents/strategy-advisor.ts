@@ -226,18 +226,16 @@ RÈGLES ABSOLUES :
 
     // ── Sauvegarde du rapport Agent 4 ─────────────────────────────────────
     const { data: report, error: repErr } = await supabase.from('reports').insert({
-      watch_id:          watchId,
-      account_id:        watch.account_id,
-      type:              'strategy',
-      title:             content.title ?? `Plan stratégique — ${today}`,
+      watch_id:    watchId,
+      account_id:  watch.account_id,
+      type:        'strategy',
+      title:       content.title ?? `Plan stratégique — ${today}`,
       content,
-      summary:           typeof content.executive_summary === 'string'
+      summary:     typeof content.executive_summary === 'string'
         ? content.executive_summary.slice(0, 2000)
         : `Plan stratégique — ${today}`,
-      charts:            content.chart_data ?? [],
-      parent_report_id:  parentReportId,
-      agent_used:        4,
-      tokens_used:       tokensUsed,
+      agent_used:  4,
+      tokens_used: tokensUsed,
     }).select().single()
 
     if (repErr) {

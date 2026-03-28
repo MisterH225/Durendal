@@ -205,18 +205,16 @@ RÈGLES ABSOLUES :
 
     // ── Sauvegarde du rapport Agent 3 ─────────────────────────────────────
     const { data: report, error: repErr } = await supabase.from('reports').insert({
-      watch_id:          watchId,
-      account_id:        watch.account_id,
-      type:              'market',
-      title:             content.title ?? `Analyse de marché — ${today}`,
+      watch_id:    watchId,
+      account_id:  watch.account_id,
+      type:        'market',
+      title:       content.title ?? `Analyse de marché — ${today}`,
       content,
-      summary:           typeof content.executive_summary === 'string'
+      summary:     typeof content.executive_summary === 'string'
         ? content.executive_summary.slice(0, 2000)
         : `Analyse de marché — ${today}`,
-      charts:            content.chart_data ?? [],
-      parent_report_id:  parentReportId,
-      agent_used:        3,
-      tokens_used:       tokensUsed,
+      agent_used:  3,
+      tokens_used: tokensUsed,
     }).select().single()
 
     if (repErr) {

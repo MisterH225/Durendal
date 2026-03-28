@@ -275,17 +275,16 @@ FORMAT DE RÉPONSE (JSON STRICT)
 
     // ── Sauvegarde du rapport Agent 5 ─────────────────────────────────────
     const { data: report, error: repErr } = await supabase.from('reports').insert({
-      watch_id:         watchId,
-      account_id:       watch.account_id,
-      type:             'prediction',
-      title:            content.title ?? `Analyse prédictive — ${today}`,
+      watch_id:    watchId,
+      account_id:  watch.account_id,
+      type:        'prediction',
+      title:       content.title ?? `Analyse prédictive — ${today}`,
       content,
-      summary:          typeof content.executive_summary === 'string'
+      summary:     typeof content.executive_summary === 'string'
         ? content.executive_summary.slice(0, 2000)
         : `Analyse prédictive — ${today}`,
-      parent_report_id: parentReportId,
-      agent_used:       5,
-      tokens_used:      tokensUsed,
+      agent_used:  5,
+      tokens_used: tokensUsed,
     }).select().single()
 
     if (repErr) {

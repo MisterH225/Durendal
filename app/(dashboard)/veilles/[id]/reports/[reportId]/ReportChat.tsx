@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   MessageSquare, Send, Loader2, Sparkles, X, ChevronRight,
-  AlertCircle, RotateCcw, Lightbulb,
+  AlertCircle, RotateCcw, Lightbulb, GripHorizontal,
 } from 'lucide-react'
 
 type Message = { role: 'user' | 'assistant'; content: string; mirofishUsed?: boolean }
@@ -31,6 +31,32 @@ export default function ReportChat({
   const [error, setError]       = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef  = useRef<HTMLTextAreaElement>(null)
+
+  /* ── Drag state (mobile/tablet only) ── */
+  const panelRef   = useRef<HTMLDivElement>(null)
+  const dragRef    = useRef<{ startY: number; startTop: number; dragging: boolean }>({ startY: 0, startTop: 0, dragging: false })
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (window.innerWidth >= 1024) return
+    const panel = panelRef.current
+    if (!panel) return
+    dragRef.current = { startY: e.clientY, startTop: panel.getBoundingClientRect().top, dragging: true }
+    panel.style.transition = 'none'
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  }, [])
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current.dragging) return
+    const newY = Math.max(40, Math.min(window.innerHeight - 200, dragRef.current.startTop + (e.clientY - dragRef.current.startY)))
+    setPos({ x: 0, y: newY })
+  }, [])
+
+  const onPointerUp = useCallback(() => {
+    dragRef.current.dragging = false
+    const panel = panelRef.current
+    if (panel) panel.style.transition = ''
+  }, [])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -107,11 +133,28 @@ export default function ReportChat({
   }
 
   /* ── Chat panel (open) ── */
+  const mobileStyle: React.CSSProperties = pos && typeof window !== 'undefined' && window.innerWidth < 1024
+    ? { position: 'fixed', top: pos.y, left: 0, right: 0, bottom: 0, transition: dragRef.current.dragging ? 'none' : 'top 0.2s ease' }
+    : {}
+
   return (
-    <div className="fixed inset-x-0 bottom-0 top-[30vh] z-50 lg:static lg:z-auto lg:inset-auto flex flex-col bg-white lg:border-l lg:border-neutral-200 lg:w-[380px] lg:min-w-[340px] lg:max-h-[calc(100vh-80px)] lg:sticky lg:top-[64px] lg:flex-shrink-0 rounded-t-2xl lg:rounded-none shadow-2xl lg:shadow-none">
+    <div
+      ref={panelRef}
+      style={mobileStyle}
+      className="fixed inset-x-0 bottom-0 top-[30vh] z-50 lg:static lg:z-auto lg:inset-auto flex flex-col bg-white lg:border-l lg:border-neutral-200 lg:w-[380px] lg:min-w-[340px] lg:max-h-[calc(100vh-80px)] lg:sticky lg:top-[64px] lg:flex-shrink-0 rounded-t-2xl lg:rounded-none shadow-2xl lg:shadow-none"
+    >
+      {/* Drag handle (mobile) */}
+      <div
+        className="flex items-center justify-center py-1.5 cursor-grab active:cursor-grabbing lg:hidden touch-none"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+      >
+        <div className="w-10 h-1 rounded-full bg-neutral-300" />
+      </div>
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 bg-gradient-to-r from-blue-50 to-indigo-50 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-200 bg-gradient-to-r from-blue-50 to-indigo-50 flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-blue-700 flex items-center justify-center">
             <MessageSquare size={14} className="text-white" />

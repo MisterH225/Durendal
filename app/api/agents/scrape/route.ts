@@ -20,6 +20,7 @@ import { generateWatchReport }         from '@/lib/agents/report-generator'
 import { generateMarketAnalysis }      from '@/lib/agents/market-analyst'
 import { generateStrategyReport }      from '@/lib/agents/strategy-advisor'
 import { generatePredictions }         from '@/lib/agents/prediction-engine'
+import { runChallengerPipeline }      from '@/lib/agents/report-challengers'
 import { countryName }                  from '@/lib/countries'
 
 
@@ -478,12 +479,43 @@ export async function POST(req: NextRequest) {
       reportResult = await generateWatchReport(supabase, watchId, watch, true, log)
 
       // ══════════════════════════════════════════════════════════════════
-      //  PHASE 5 — Agent 3 : Analyse de marché (déclenché après Agent 2)
+      //  PHASE 4b — Pipeline Challenger (Pro+ uniquement)
+      //  3 agents auditent le rapport initial en parallèle, puis
+      //  l'agent de synthèse produit le rapport final enrichi.
       // ══════════════════════════════════════════════════════════════════
       if (reportResult.reportId) {
+        let effectiveReportId = reportResult.reportId
+
+        const isPro = await (async () => {
+          if (!watch.account_id) return false
+          const { data: account } = await supabase
+            .from('accounts')
+            .select('plan_id, plans(name)')
+            .eq('id', watch.account_id)
+            .single()
+          const planName = (account as any)?.plans?.name ?? 'free'
+          return planName === 'pro' || planName === 'business'
+        })()
+
+        if (isPro) {
+          log(`\n[Scrape] ── PHASE 4b : Pipeline Challenger (audit multi-agents) ──`)
+          const challengerResult = await runChallengerPipeline(
+            supabase, watchId, watch, reportResult.reportId, log,
+          )
+          if (challengerResult.finalReportId) {
+            effectiveReportId = challengerResult.finalReportId
+            log(`[Scrape] Rapport enrichi par Challengers: ${effectiveReportId}`)
+          }
+        } else {
+          log(`[Scrape] Pipeline Challenger ignoré (plan Free)`)
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  PHASE 5 — Agent 3 : Analyse de marché (déclenché après Agent 2)
+        // ══════════════════════════════════════════════════════════════════
         log(`\n[Scrape] ── PHASE 5 : Agent 3 — Analyse de marché ──`)
         const marketResult = await generateMarketAnalysis(
-          supabase, watchId, watch, reportResult.reportId, log,
+          supabase, watchId, watch, effectiveReportId, log,
         )
         marketReportId = marketResult.reportId
 
@@ -492,7 +524,7 @@ export async function POST(req: NextRequest) {
         // ══════════════════════════════════════════════════════════════════
         log(`\n[Scrape] ── PHASE 6 : Agent 4 — Plan stratégique ──`)
         const strategyResult = await generateStrategyReport(
-          supabase, watchId, watch, reportResult.reportId, marketReportId, log,
+          supabase, watchId, watch, effectiveReportId, marketReportId, log,
         )
         strategyReportId = strategyResult.reportId
 
@@ -501,7 +533,7 @@ export async function POST(req: NextRequest) {
         // ══════════════════════════════════════════════════════════════════
         log(`\n[Scrape] ── PHASE 7 : Agent 5 — Prédictions ──`)
         const predictionResult = await generatePredictions(
-          supabase, watchId, watch, reportResult.reportId, marketReportId, strategyReportId, log,
+          supabase, watchId, watch, effectiveReportId, marketReportId, strategyReportId, log,
         )
         predictionReportId = predictionResult.reportId
       }

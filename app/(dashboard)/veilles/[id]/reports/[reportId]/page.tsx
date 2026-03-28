@@ -246,6 +246,19 @@ type ReportContent = {
   }
   mirofish_used?: boolean
 
+  // Challenger pipeline fields
+  is_challenger_enriched?: boolean
+  challenger_scores?: {
+    blind_spots?: number | null
+    fact_check?: number | null
+    depth?: number | null
+  }
+  challenger_improvements?: {
+    blind_spots_addressed?: string[]
+    facts_reinforced?: string[]
+    arguments_deepened?: string[]
+  }
+
   // Legacy fields
   key_insights?: Array<{
     company?: string
@@ -385,10 +398,43 @@ export default async function WatchReportPage({
                 : report.type === 'prediction' ? 'badge-indigo'
                 : 'badge-purple'
             }`}>Agent {report.agent_used ?? 2}</span>
+            {c.is_challenger_enriched && (
+              <span className="badge text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                <Shield size={10} /> Audité &amp; enrichi
+              </span>
+            )}
             {c.period && <span className="text-[11px] text-neutral-500">{c.period}</span>}
           </div>
         </div>
       </div>
+
+      {/* Scores Challengers */}
+      {c.is_challenger_enriched && c.challenger_scores && (
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {[
+            { label: 'Angles morts', score: c.challenger_scores.blind_spots, color: 'amber' },
+            { label: 'Validation faits', score: c.challenger_scores.fact_check, color: 'blue' },
+            { label: 'Profondeur', score: c.challenger_scores.depth, color: 'purple' },
+          ].map(({ label, score, color }) => (
+            <div key={label} className="rounded-lg border border-neutral-200 p-2.5 text-center">
+              <div className="text-[10px] text-neutral-500 mb-1">{label}</div>
+              <div className={`text-lg font-bold ${
+                (score ?? 0) >= 70 ? 'text-green-600' : (score ?? 0) >= 40 ? `text-${color}-600` : 'text-red-600'
+              }`}>
+                {score ?? '—'}<span className="text-[10px] text-neutral-400 font-normal">/100</span>
+              </div>
+              <div className="w-full h-1 bg-neutral-100 rounded-full mt-1">
+                <div
+                  className={`h-1 rounded-full ${
+                    (score ?? 0) >= 70 ? 'bg-green-500' : (score ?? 0) >= 40 ? `bg-${color}-500` : 'bg-red-500'
+                  }`}
+                  style={{ width: `${score ?? 0}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Synthèse exécutive */}
       {summary && (
@@ -697,6 +743,42 @@ export default async function WatchReportPage({
                 )}
               </div>
             ))}
+          </div>
+        </section>
+      )}
+
+      {/* Améliorations apportées par le pipeline Challenger */}
+      {c.is_challenger_enriched && c.challenger_improvements && (
+        <section className="card-lg mb-4 border-emerald-200 bg-emerald-50/30">
+          <h2 className="text-sm font-bold text-neutral-900 mb-3 flex items-center gap-2">
+            <Shield size={16} className="text-emerald-600" />
+            Améliorations apportées par l&apos;audit
+          </h2>
+          <div className="space-y-3">
+            {c.challenger_improvements.blind_spots_addressed && c.challenger_improvements.blind_spots_addressed.length > 0 && (
+              <div>
+                <div className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-1">Angles morts comblés</div>
+                <ul className="text-xs text-neutral-700 space-y-1">
+                  {c.challenger_improvements.blind_spots_addressed.map((item, i) => <li key={i}>• {item}</li>)}
+                </ul>
+              </div>
+            )}
+            {c.challenger_improvements.facts_reinforced && c.challenger_improvements.facts_reinforced.length > 0 && (
+              <div>
+                <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-1">Faits renforcés</div>
+                <ul className="text-xs text-neutral-700 space-y-1">
+                  {c.challenger_improvements.facts_reinforced.map((item, i) => <li key={i}>• {item}</li>)}
+                </ul>
+              </div>
+            )}
+            {c.challenger_improvements.arguments_deepened && c.challenger_improvements.arguments_deepened.length > 0 && (
+              <div>
+                <div className="text-[10px] font-semibold text-purple-700 uppercase tracking-wide mb-1">Arguments approfondis</div>
+                <ul className="text-xs text-neutral-700 space-y-1">
+                  {c.challenger_improvements.arguments_deepened.map((item, i) => <li key={i}>• {item}</li>)}
+                </ul>
+              </div>
+            )}
           </div>
         </section>
       )}

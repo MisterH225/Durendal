@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { callGeminiChat, callGeminiChatWithFunctionResult } from '@/lib/ai/gemini'
+import { findCompaniesByName, findCompaniesByCriteria } from '@/lib/agents/company-finder'
 
 // ── Déclarations des outils disponibles pour l'assistant ────────────────────
 const CHAT_TOOLS = [
@@ -47,6 +49,64 @@ const CHAT_TOOLS = [
           required: ['name', 'sectors', 'countries'],
         },
       },
+      {
+        name: 'search_companies',
+        description: 'Recherche des entreprises correspondant à des critères donnés (nom, secteur, pays, type d\'activité). Utilise cet outil quand l\'utilisateur demande de trouver, identifier ou chercher des entreprises pour les ajouter à une veille. Retourne une liste d\'entreprises avec leurs informations. IMPORTANT : après avoir trouvé des entreprises, présente-les à l\'utilisateur et demande confirmation avant de les ajouter.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Critères de recherche en langage naturel (ex: "sous-traitants miniers en Côte d\'Ivoire", "fintechs au Sénégal", "entreprises de BTP à Abidjan")',
+            },
+            sector: {
+              type: 'string',
+              description: 'Secteur d\'activité pour filtrer (optionnel)',
+            },
+            country: {
+              type: 'string',
+              description: 'Pays ou région pour filtrer (optionnel)',
+            },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'add_companies_to_watch',
+        description: 'Ajoute des entreprises à une veille existante. Utilise cet outil UNIQUEMENT après avoir présenté les entreprises à l\'utilisateur via search_companies ET obtenu sa confirmation. Ne jamais ajouter sans confirmation explicite.',
+        parameters: {
+          type: 'object',
+          properties: {
+            watch_id: {
+              type: 'string',
+              description: 'ID de la veille à laquelle ajouter les entreprises',
+            },
+            companies: {
+              type: 'array',
+              description: 'Liste des entreprises à ajouter',
+              items: {
+                type: 'object',
+                properties: {
+                  name:    { type: 'string', description: 'Nom de l\'entreprise' },
+                  country: { type: 'string', description: 'Code pays ISO (optionnel)' },
+                  sector:  { type: 'string', description: 'Secteur d\'activité (optionnel)' },
+                  website: { type: 'string', description: 'Site web (optionnel)' },
+                },
+                required: ['name'],
+              },
+            },
+          },
+          required: ['watch_id', 'companies'],
+        },
+      },
+      {
+        name: 'list_watches',
+        description: 'Liste les veilles actives de l\'utilisateur avec leurs ID, noms, secteurs, pays et entreprises suivies. Utilise cet outil quand tu as besoin de connaître les veilles existantes pour y ajouter des entreprises, ou quand l\'utilisateur demande quelles veilles il a.',
+        parameters: {
+          type: 'object',
+          properties: {},
+        },
+      },
     ],
   },
 ]
@@ -70,10 +130,10 @@ export async function POST(req: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    // Veilles actives (avec id pour la query signals)
+    // Veilles actives (avec id + entreprises liées)
     const { data: watches } = await supabase
       .from('watches')
-      .select('id, name, sectors, countries')
+      .select('id, name, sectors, countries, watch_companies(company_id, companies(name))')
       .eq('account_id', profile?.account_id)
 
     // Signaux récents — on essaie d'abord avec source_name (migration 003),
@@ -143,9 +203,14 @@ export async function POST(req: NextRequest) {
 
     // ── Contexte injecté dans le system prompt (pas dans l'historique) ─────
     const watchContext = (watches || []).length > 0
-      ? (watches || []).map((w: any) =>
-          `• ${w.name} (${w.sectors?.join(', ')} · ${w.countries?.join(', ')})`
-        ).join('\n')
+      ? (watches || []).map((w: any) => {
+          const companyNames = (w.watch_companies || [])
+            .map((wc: any) => wc.companies?.name).filter(Boolean)
+          const companyStr = companyNames.length > 0
+            ? ` — Entreprises suivies : ${companyNames.join(', ')}`
+            : ' — Aucune entreprise ajoutée'
+          return `• [ID: ${w.id}] ${w.name} (${w.sectors?.join(', ')} · ${w.countries?.join(', ')})${companyStr}`
+        }).join('\n')
       : 'Aucune veille configurée'
 
     const signalContext = recentSignals.length > 0
@@ -165,13 +230,29 @@ export async function POST(req: NextRequest) {
     const systemPrompt = `Tu es l'assistant IA de MarketLens, plateforme de veille concurrentielle internationale.
 Tu aides ${profile?.full_name || 'l\'utilisateur'} à analyser ses données de veille, comprendre ses marchés et prendre des décisions stratégiques.
 
-VEILLES ACTIVES :
+VEILLES ACTIVES (avec IDs pour les actions) :
 ${watchContext}
 
 DERNIERS SIGNAUX COLLECTÉS (avec sources) :
 ${signalContext}
 
 ${reportContext ? `RAPPORTS RÉCENTS :\n${reportContext}\n` : ''}
+CAPACITÉS :
+- Tu peux CRÉER une nouvelle veille (create_watch)
+- Tu peux RECHERCHER des entreprises par nom, secteur, pays, critères (search_companies)
+- Tu peux AJOUTER des entreprises à une veille existante (add_companies_to_watch)
+- Tu peux LISTER les veilles de l'utilisateur (list_watches)
+
+PROTOCOLE D'AJOUT D'ENTREPRISES :
+1. Quand l'utilisateur demande d'ajouter des entreprises à une veille :
+   a. Si la veille n'est pas clairement identifiable, utilise list_watches pour trouver la bonne
+   b. Utilise search_companies pour identifier les entreprises correspondant aux critères
+   c. Présente les résultats à l'utilisateur de manière claire (nom, pays, secteur, description)
+   d. Demande confirmation avant d'ajouter
+   e. Une fois confirmé, utilise add_companies_to_watch avec le watch_id et les entreprises choisies
+2. Si l'utilisateur donne directement des noms, recherche-les quand même pour vérifier/enrichir les infos
+3. Si un nom d'entreprise est ambigu (homonymes), présente les options avec logos/secteurs pour désambiguïser
+
 RÈGLES :
 - Réponds toujours en français
 - Sois factuel : cite les données de veille ci-dessus quand pertinent, avec la source si disponible
@@ -185,7 +266,7 @@ RÈGLES :
       systemPrompt,
       history,
       message.trim(),
-      { maxOutputTokens: 1200, temperature: 0.5, tools: CHAT_TOOLS }
+      { maxOutputTokens: 1500, temperature: 0.5, tools: CHAT_TOOLS }
     )
 
     let replyText   = ''
@@ -231,6 +312,148 @@ RÈGLES :
         }
       }
 
+      else if (fc.name === 'search_companies') {
+        try {
+          console.log('[Chat] search_companies:', fc.args)
+          const result = fc.args.query
+            ? await findCompaniesByCriteria(fc.args.query, fc.args.sector, fc.args.country)
+            : { companies: [], source: 'combined' as const, query: '' }
+
+          functionResult = {
+            success: true,
+            companies: result.companies.map((c) => ({
+              name:        c.name,
+              country:     c.country || null,
+              sector:      c.sector || null,
+              website:     c.website || null,
+              logo_url:    c.logo_url || null,
+              description: c.description || null,
+              confidence:  c.confidence,
+            })),
+            count: result.companies.length,
+            source: result.source,
+            message: result.companies.length > 0
+              ? `${result.companies.length} entreprise(s) trouvée(s). Présente-les à l'utilisateur et demande confirmation avant de les ajouter.`
+              : 'Aucune entreprise trouvée. Demande à l\'utilisateur de préciser ses critères.',
+          }
+          actionData = {
+            type: 'companies_found',
+            companies: result.companies.slice(0, 15),
+            query: fc.args.query,
+          }
+        } catch (e: any) {
+          console.error('[Chat] search_companies error:', e)
+          functionResult = { success: false, error: e.message }
+        }
+      }
+
+      else if (fc.name === 'add_companies_to_watch') {
+        try {
+          console.log('[Chat] add_companies_to_watch:', fc.args)
+          const { watch_id, companies: companiesArg } = fc.args
+
+          if (!watch_id || !companiesArg?.length) {
+            functionResult = { success: false, error: 'watch_id et companies sont requis' }
+          } else {
+            const admin = createAdminClient()
+            const added: string[] = []
+            const skipped: string[] = []
+            const errors: string[] = []
+
+            for (const co of companiesArg) {
+              const name = co.name?.trim()
+              if (!name) continue
+
+              try {
+                const { data: existing } = await admin
+                  .from('companies')
+                  .select('id')
+                  .ilike('name', name)
+                  .limit(1)
+
+                let companyId = existing?.[0]?.id
+                if (!companyId) {
+                  const targetWatch = (watches || []).find((w: any) => w.id === watch_id)
+                  const { data: newCo, error: coErr } = await admin
+                    .from('companies')
+                    .insert({
+                      name,
+                      country:  co.country || targetWatch?.countries?.[0] || null,
+                      sector:   co.sector || null,
+                      website:  co.website || null,
+                      logo_url: co.logo_url || null,
+                    })
+                    .select('id')
+                    .single()
+                  if (coErr) { errors.push(`${name}: ${coErr.message}`); continue }
+                  companyId = newCo?.id
+                }
+
+                if (companyId) {
+                  const { data: existingLink } = await admin
+                    .from('watch_companies')
+                    .select('id')
+                    .eq('watch_id', watch_id)
+                    .eq('company_id', companyId)
+                    .limit(1)
+
+                  if (existingLink?.length) { skipped.push(name); continue }
+
+                  const { error: wcErr } = await admin
+                    .from('watch_companies')
+                    .insert({ watch_id, company_id: companyId, aspects: co.aspects ?? [] })
+                  if (wcErr) { errors.push(`${name}: ${wcErr.message}`); continue }
+                  added.push(name)
+                }
+              } catch (e: any) {
+                errors.push(`${name}: ${e.message}`)
+              }
+            }
+
+            const targetWatch = (watches || []).find((w: any) => w.id === watch_id)
+            functionResult = {
+              success: true,
+              added,
+              skipped,
+              errors: errors.length > 0 ? errors : undefined,
+              watch_name: targetWatch?.name || watch_id,
+              message: added.length > 0
+                ? `${added.length} entreprise(s) ajoutée(s) à "${targetWatch?.name}": ${added.join(', ')}${skipped.length > 0 ? `. ${skipped.length} déjà présente(s): ${skipped.join(', ')}` : ''}`
+                : `Aucune entreprise ajoutée.${skipped.length > 0 ? ` ${skipped.length} déjà présente(s).` : ''}`,
+            }
+            actionData = {
+              type: 'companies_added',
+              watchId: watch_id,
+              watchName: targetWatch?.name,
+              added,
+              skipped,
+            }
+          }
+        } catch (e: any) {
+          console.error('[Chat] add_companies_to_watch error:', e)
+          functionResult = { success: false, error: e.message }
+        }
+      }
+
+      else if (fc.name === 'list_watches') {
+        const watchList = (watches || []).map((w: any) => {
+          const companyNames = (w.watch_companies || [])
+            .map((wc: any) => wc.companies?.name).filter(Boolean)
+          return {
+            id:        w.id,
+            name:      w.name,
+            sectors:   w.sectors,
+            countries: w.countries,
+            companies: companyNames,
+          }
+        })
+        functionResult = {
+          success: true,
+          watches: watchList,
+          count: watchList.length,
+        }
+      }
+
       // Second appel pour que Gemini formule la réponse après l'action
       const followUp = await callGeminiChatWithFunctionResult(
         systemPrompt,
@@ -238,7 +461,7 @@ RÈGLES :
         message.trim(),
         fc,
         functionResult,
-        { maxOutputTokens: 800, temperature: 0.5, tools: CHAT_TOOLS }
+        { maxOutputTokens: 1500, temperature: 0.5, tools: CHAT_TOOLS }
       )
       replyText  = followUp.text.trim()
       tokensUsed += followUp.tokensUsed

@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, Plus, X, Save, Trash2, AlertCircle, Search, Loader2, Eye } from 'lucide-react'
+import { ArrowLeft, Plus, X, Save, Trash2, AlertCircle, Search, Loader2, Eye, Building2, Globe } from 'lucide-react'
 import Link from 'next/link'
 import { ALL_COUNTRIES } from '@/lib/countries'
 
@@ -16,6 +16,29 @@ const SUGGESTED_ASPECTS = [
 
 type Company = { id?: string; name: string; country: string; sector: string; website?: string; logo_url?: string; aspects?: string[] }
 type SearchResult = { name: string; domain: string; logo_url: string | null }
+
+function CompanyLogo({ src, name, size = 'md' }: { src?: string | null; name: string; size?: 'sm' | 'md' | 'lg' }) {
+  const [failed, setFailed] = useState(false)
+  const dims = size === 'sm' ? 'w-7 h-7' : size === 'lg' ? 'w-10 h-10' : 'w-8 h-8'
+  const textSize = size === 'lg' ? 'text-xs' : 'text-[10px]'
+
+  if (!src || failed) {
+    return (
+      <div className={`${dims} rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0`}>
+        <span className={`${textSize} font-bold text-blue-600`}>{name.slice(0, 2).toUpperCase()}</span>
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={src}
+      alt={name}
+      className={`${dims} rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0`}
+      onError={() => setFailed(true)}
+    />
+  )
+}
 
 interface Props {
   watch: {
@@ -329,13 +352,7 @@ export default function EditWatchContent({ watch, initialCompanies }: Props) {
               {companies.map(co => (
                 <div key={co.name} className="p-2.5 bg-neutral-50 border border-neutral-200 rounded-lg">
                   <div className="flex items-center gap-2.5">
-                    {co.logo_url ? (
-                      <img src={co.logo_url} alt="" className="w-7 h-7 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" />
-                    ) : (
-                      <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700 text-[10px] font-bold flex-shrink-0">
-                        {co.name.slice(0, 2).toUpperCase()}
-                      </div>
-                    )}
+                    <CompanyLogo src={co.logo_url} name={co.name} size="sm" />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-semibold text-neutral-900 truncate">{co.name}</div>
                       <div className="text-[10px] text-neutral-500">{co.sector} · {co.country}</div>
@@ -388,25 +405,24 @@ export default function EditWatchContent({ watch, initialCompanies }: Props) {
               <button onClick={addCustomCompany} className="btn-primary px-3 py-2 flex items-center gap-1"><Plus size={14} /></button>
             </div>
             {showResults && searchResults.length > 0 && (
-              <div className="absolute z-20 left-0 right-12 mt-1 bg-white border border-neutral-200 rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
+              <div className="absolute z-20 left-0 right-12 mt-1 bg-white border border-neutral-200 rounded-xl shadow-lg overflow-hidden max-h-72 overflow-y-auto">
                 <div className="px-3 py-2 bg-neutral-50 border-b border-neutral-100 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
                   {searchResults.length} résultat{searchResults.length > 1 ? 's' : ''}
                 </div>
                 {searchResults.map((r, i) => (
                   <button key={i} onClick={() => addCompanyFromSearch(r)}
-                    className="w-full flex items-center gap-3 p-3 hover:bg-blue-50 transition-colors text-left border-b border-neutral-50 last:border-0">
-                    {r.logo_url ? (
-                      <img src={r.logo_url} alt="" className="w-8 h-8 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" />
-                    ) : (
-                      <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center text-neutral-500 text-[10px] font-bold flex-shrink-0">
-                        {r.name.slice(0, 2).toUpperCase()}
-                      </div>
-                    )}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50 transition-colors text-left border-b border-neutral-100 last:border-0 group">
+                    <CompanyLogo src={r.logo_url} name={r.name} size="lg" />
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold text-neutral-900">{r.name}</div>
-                      <div className="text-[10px] text-neutral-400">{r.domain}</div>
+                      <div className="text-sm font-semibold text-neutral-900 group-hover:text-blue-700 transition-colors">{r.name}</div>
+                      {r.domain && (
+                        <div className="flex items-center gap-1 text-[11px] text-neutral-400 mt-0.5">
+                          <Globe size={10} className="flex-shrink-0" />
+                          {r.domain}
+                        </div>
+                      )}
                     </div>
-                    <span className="text-[10px] text-blue-700 font-medium flex-shrink-0">+ Ajouter</span>
+                    <span className="text-[11px] text-blue-700 font-semibold flex-shrink-0 bg-blue-50 px-2 py-0.5 rounded-full group-hover:bg-blue-100 transition-colors">+ Ajouter</span>
                   </button>
                 ))}
               </div>

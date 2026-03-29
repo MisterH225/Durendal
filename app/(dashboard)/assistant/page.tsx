@@ -1,19 +1,36 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, Sparkles, Trash2, AlertCircle, ExternalLink, Eye, ArrowRight, CheckCircle2 } from 'lucide-react'
+import { Send, Bot, Sparkles, Trash2, AlertCircle, ExternalLink, Eye, ArrowRight, CheckCircle2, Search, Building2, Plus } from 'lucide-react'
 import Link from 'next/link'
+import Image from 'next/image'
+
+interface FoundCompany {
+  name: string
+  country?: string
+  sector?: string
+  website?: string
+  logo_url?: string
+  description?: string
+  confidence: number
+}
+
+interface MessageAction {
+  type: 'watch_created' | 'companies_found' | 'companies_added'
+  watchId?: string
+  watchName?: string
+  sectors?: string[]
+  countries?: string[]
+  companiesCount?: number
+  companies?: FoundCompany[]
+  query?: string
+  added?: string[]
+  skipped?: string[]
+}
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
-  action?: {
-    type: 'watch_created'
-    watchId: string
-    watchName: string
-    sectors?: string[]
-    countries?: string[]
-    companiesCount?: number
-  }
+  action?: MessageAction
 }
 
 const suggestions = [
@@ -269,6 +286,77 @@ export default function AssistantPage() {
                     Modifier <ArrowRight size={11} />
                   </Link>
                 </div>
+              </div>
+            )}
+
+            {/* Carte action "Entreprises trouvées" */}
+            {msg.action?.type === 'companies_found' && msg.action.companies && msg.action.companies.length > 0 && (
+              <div className="mt-2 ml-8 bg-blue-50 border border-blue-200 rounded-xl p-3 max-w-[90%]">
+                <div className="flex items-center gap-2 mb-2">
+                  <Search size={14} className="text-blue-600 flex-shrink-0" />
+                  <span className="text-xs font-semibold text-blue-800">
+                    {msg.action.companies.length} entreprise{msg.action.companies.length > 1 ? 's' : ''} trouvée{msg.action.companies.length > 1 ? 's' : ''}
+                  </span>
+                  {msg.action.query && (
+                    <span className="text-[10px] text-blue-500 ml-auto">{msg.action.query}</span>
+                  )}
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {msg.action.companies.slice(0, 10).map((co, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-white rounded-lg p-2 border border-blue-100">
+                      {co.logo_url ? (
+                        <img src={co.logo_url} alt="" className="w-6 h-6 rounded object-contain flex-shrink-0" />
+                      ) : (
+                        <div className="w-6 h-6 rounded bg-blue-100 flex items-center justify-center flex-shrink-0">
+                          <Building2 size={12} className="text-blue-500" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium text-neutral-800 truncate">{co.name}</div>
+                        <div className="text-[10px] text-neutral-500 truncate">
+                          {[co.sector, co.country, co.website && new URL(co.website).hostname].filter(Boolean).join(' · ')}
+                        </div>
+                      </div>
+                      <div className="text-[10px] font-medium text-blue-600 flex-shrink-0">
+                        {co.confidence}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Carte action "Entreprises ajoutées" */}
+            {msg.action?.type === 'companies_added' && (
+              <div className="mt-2 ml-8 bg-green-50 border border-green-200 rounded-xl p-3 max-w-[85%]">
+                <div className="flex items-center gap-2 mb-2">
+                  <Plus size={14} className="text-green-600 flex-shrink-0" />
+                  <span className="text-xs font-semibold text-green-800">
+                    {msg.action.added?.length || 0} entreprise{(msg.action.added?.length || 0) > 1 ? 's' : ''} ajoutée{(msg.action.added?.length || 0) > 1 ? 's' : ''}
+                  </span>
+                </div>
+                {msg.action.added && msg.action.added.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {msg.action.added.map((name, idx) => (
+                      <span key={idx} className="text-[11px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {msg.action.skipped && msg.action.skipped.length > 0 && (
+                  <div className="text-[10px] text-neutral-500">
+                    Déjà présentes : {msg.action.skipped.join(', ')}
+                  </div>
+                )}
+                {msg.action.watchId && (
+                  <Link
+                    href={`/veilles/${msg.action.watchId}`}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-100 hover:bg-green-200 px-2.5 py-1 rounded-lg transition-colors mt-2"
+                  >
+                    <Eye size={11} /> Voir la veille
+                  </Link>
+                )}
               </div>
             )}
           </div>

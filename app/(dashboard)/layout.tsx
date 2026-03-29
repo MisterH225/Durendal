@@ -14,7 +14,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <div className="flex h-screen overflow-hidden bg-neutral-100">
         <Sidebar profile={profile} />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <Topbar profile={profile} />
+          <Topbar profile={profile} unreadCount={0} />
           <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
         </div>
       </div>
@@ -45,6 +45,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const isSuperAdmin = user?.email === SUPERADMIN_EMAIL
   const currentPlanName = profile?.accounts?.plans?.name || 'free'
 
+  let unreadAlerts = 0
+  try {
+    const supabase2 = createClient()
+    const { count } = await supabase2
+      .from('alerts')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', profile?.account_id)
+      .eq('is_read', false)
+    unreadAlerts = count ?? 0
+  } catch { /* silencieux */ }
+
   return (
     <div className="flex h-screen overflow-hidden bg-neutral-100">
       {/* Sidebar desktop */}
@@ -52,7 +63,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
       {/* Main */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <Topbar profile={profile} />
+        <Topbar profile={profile} unreadCount={unreadAlerts} />
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
           {children}
         </main>

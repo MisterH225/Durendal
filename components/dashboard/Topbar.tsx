@@ -11,6 +11,7 @@ const pageTitles: Record<string, string> = {
   '/actions': 'Actions marché',
   '/assistant': 'Assistant IA',
   '/forfait': 'Forfait',
+  '/opportunities': 'Opportunités',
   '/profil': 'Mon profil',
   '/notifications': 'Notifications',
   '/admin': 'Panel Admin',

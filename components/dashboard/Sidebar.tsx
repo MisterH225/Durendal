@@ -6,13 +6,14 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Eye, TrendingUp, Bot, Star, MessageSquare,
-  CreditCard, X, LogOut, ChevronRight, Settings
+  CreditCard, X, LogOut, ChevronRight, Settings, Target
 } from 'lucide-react'
 
 const navItems = [
   { section: 'Principal', items: [
     { href: '/dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     { href: '/veilles', label: 'Mes veilles', icon: Eye },
+    { href: '/opportunities', label: 'Opportunités', icon: Target },
     { href: '/marche', label: 'Analyse marché', icon: TrendingUp },
   ]},
   { section: 'Agents IA', items: [
@@ -143,9 +144,9 @@ export default function Sidebar({ profile }: { profile: any }) {
         {[
           { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
           { href: '/veilles', icon: Eye, label: 'Veilles' },
+          { href: '/opportunities', icon: Target, label: 'Leads' },
           { href: '/marche', icon: TrendingUp, label: 'Marché' },
           { href: '/assistant', icon: MessageSquare, label: 'Assistant' },
-          { href: '/forfait', icon: CreditCard, label: 'Forfait' },
         ].map(({ href, icon: Icon, label }) => {
           const active = pathname === href
           return (

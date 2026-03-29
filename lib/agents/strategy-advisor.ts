@@ -199,6 +199,7 @@ RÈGLES ABSOLUES :
 - Les recommandations doivent être ACTIONNABLES, pas des généralités.
 - Les timelines doivent être RÉALISTES pour les marchés ciblés.
 - Les estimations d'investissement doivent être proportionnées au contexte.
+- DONNÉES CHIFFRÉES : quand les rapports parents ou signaux contiennent des montants, effectifs, %, volumes, capacités ou toute donnée quantitative, tu DOIS les reprendre dans le plan stratégique pour ancrer les recommandations dans la réalité. Pas de stratégie vague — des chiffres concrets.
 - Réponds en français.`
 
   try {

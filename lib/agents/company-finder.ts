@@ -38,7 +38,7 @@ async function searchClearbit(query: string): Promise<FoundCompany[]> {
     return (data ?? []).slice(0, 8).map((c: any) => ({
       name:       c.name ?? '',
       website:    c.domain ? `https://${c.domain}` : undefined,
-      logo_url:   c.logo ?? (c.domain ? `https://logo.clearbit.com/${c.domain}` : undefined),
+      logo_url:   c.logo ?? (c.domain ? `https://img.logo.dev/${c.domain}?token=pk_free&format=png` : undefined),
       confidence: 80,
     }))
   } catch {

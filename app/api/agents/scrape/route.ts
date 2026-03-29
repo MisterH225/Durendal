@@ -563,8 +563,8 @@ export async function POST(req: NextRequest) {
       .eq('id', watchId)
 
     if (watch.account_id && totalSignals > 0) {
-      await supabase.from('alerts').insert({
-        account_id: watch.account_id,
+    await supabase.from('alerts').insert({
+      account_id: watch.account_id,
         watch_id:   watchId,
         type:       'signal',
         title:      `Collecte terminée — ${totalSignals} signaux`,

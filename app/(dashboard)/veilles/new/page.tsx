@@ -23,12 +23,25 @@ type CompanyEntry = {
 
 type SearchResult = { name: string; domain: string; logo_url: string | null }
 
-function CompanyLogo({ src, name, size = 'md' }: { src?: string | null; name: string; size?: 'sm' | 'md' | 'lg' }) {
+function resolveLogoUrl(src?: string | null, website?: string | null): string | null {
+  if (src && !src.includes('logo.clearbit.com')) return src
+  if (website) {
+    try {
+      const domain = new URL(website.startsWith('http') ? website : `https://${website}`).hostname.replace(/^www\./, '')
+      return `https://img.logo.dev/${domain}?token=pk_free&format=png`
+    } catch {}
+  }
+  if (src) return src.replace('logo.clearbit.com', 'img.logo.dev').replace(/\?.*/, '?token=pk_free&format=png')
+  return null
+}
+
+function CompanyLogo({ src, name, website, size = 'md' }: { src?: string | null; name: string; website?: string | null; size?: 'sm' | 'md' | 'lg' }) {
   const [failed, setFailed] = useState(false)
   const dims = size === 'sm' ? 'w-7 h-7' : size === 'lg' ? 'w-10 h-10' : 'w-8 h-8'
   const textSize = size === 'lg' ? 'text-xs' : 'text-[10px]'
+  const logoUrl = resolveLogoUrl(src, website)
 
-  if (!src || failed) {
+  if (!logoUrl || failed) {
     return (
       <div className={`${dims} rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0`}>
         <span className={`${textSize} font-bold text-blue-600`}>{name.slice(0, 2).toUpperCase()}</span>
@@ -38,7 +51,7 @@ function CompanyLogo({ src, name, size = 'md' }: { src?: string | null; name: st
 
   return (
     <img
-      src={src}
+      src={logoUrl}
       alt={name}
       className={`${dims} rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0`}
       onError={() => setFailed(true)}
@@ -348,7 +361,7 @@ export default function NewWatchPage() {
                 {companies.map(co => (
                   <div key={co.name} className="p-2.5 bg-green-50 border border-green-200 rounded-lg">
                     <div className="flex items-center gap-2.5">
-                      <CompanyLogo src={co.logo_url} name={co.name} size="sm" />
+                      <CompanyLogo src={co.logo_url} website={co.website} name={co.name} size="sm" />
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-semibold text-neutral-900 truncate">{co.name}</div>
                         <div className="text-[10px] text-neutral-500">
@@ -429,7 +442,7 @@ export default function NewWatchPage() {
                     {searchResults.map((r, i) => (
                       <button key={i} onClick={() => addCompanyFromSearch(r)}
                         className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50 transition-colors text-left border-b border-neutral-100 last:border-0 group">
-                        <CompanyLogo src={r.logo_url} name={r.name} size="lg" />
+                        <CompanyLogo src={r.logo_url} website={r.domain ? `https://${r.domain}` : undefined} name={r.name} size="lg" />
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-semibold text-neutral-900 group-hover:text-blue-700 transition-colors">{r.name}</div>
                           {r.domain && (

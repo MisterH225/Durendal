@@ -432,10 +432,11 @@ Contenu :
 ${content.slice(0, 5_000)}
 
 Réponds UNIQUEMENT en JSON valide :
-{"signals":[{"title":"titre factuel court","content":"résumé 2-3 phrases avec chiffres","relevance":0.8,"type":"funding|product|partnership|recruitment|expansion|contract|news|financial","published_date":"YYYY-MM-DD"${availableSources ? ',"source_ref":1' : ''}}]}
+{"signals":[{"title":"titre factuel court avec chiffre clé si disponible","content":"résumé 2-4 phrases. TOUJOURS inclure les données chiffrées présentes : montants, budgets, effectifs, surfaces, capacités, pourcentages, volumes, délais.","relevance":0.8,"type":"funding|product|partnership|recruitment|expansion|contract|news|financial","published_date":"YYYY-MM-DD"${availableSources ? ',"source_ref":1' : ''}}]}
 
 RÈGLES :
 - Chaque signal doit correspondre à un FAIT VÉRIFIABLE dans le contenu.
+- OBLIGATION : si le contenu mentionne des chiffres (montants en $, €, FCFA, effectifs, surfaces m², %, capacités, volumes), tu DOIS les inclure dans le titre ou le résumé. Ne jamais résumer "un investissement" si le montant est disponible — écrire "investissement de 500M$".
 - "published_date" est la date de publication ou date de l'événement mentionné (PAS la date d'aujourd'hui). Format ISO YYYY-MM-DD. Si la date exacte n'est pas claire, estime le mois/année (ex: "2025-03-01" pour mars 2025). Si aucune date n'est déductible, mets null.${availableSources ? '\n- "source_ref" est le numéro [N] de la source qui contient cette information. NE PAS deviner : si tu ne sais pas quelle source, mets 0.' : ''}
 - Si rien de pertinent sur "${companyName}", réponds : {"signals":[]}`
 

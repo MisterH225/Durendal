@@ -70,14 +70,22 @@ export async function generatePredictions(
     .in('id', reportIds)
 
   const reportsMap: Record<string, any> = {}
-  for (const r of parentReports ?? []) reportsMap[r.type] = r
+  for (const r of parentReports ?? []) reportsMap[r.id] = r
 
-  const agent2Report = reportsMap['synthesis'] ?? reportsMap['analyse'] ?? null
-  const agent3Report = reportsMap['market'] ?? null
-  const agent4Report = reportsMap['strategy'] ?? null
+  // Résolution stricte par ID passé en paramètre (priorité), puis fallback par type
+  const agent2Report = (parentReportId ? reportsMap[parentReportId] : null)
+    ?? (parentReports ?? []).find((r: any) => r.type === 'synthesis')
+    ?? (parentReports ?? []).find((r: any) => r.type === 'analyse')
+    ?? null
+  const agent3Report = (marketReportId ? reportsMap[marketReportId] : null)
+    ?? (parentReports ?? []).find((r: any) => r.type === 'market')
+    ?? null
+  const agent4Report = (strategyReportId ? reportsMap[strategyReportId] : null)
+    ?? (parentReports ?? []).find((r: any) => r.type === 'strategy')
+    ?? null
 
   if (!agent2Report) {
-    log('[Agent 5] Aucun rapport Agent 2 trouvé — skip')
+    log('[Agent 5] Aucun rapport Agent 2 trouvé (ID attendu : ' + parentReportId + ') — skip')
     return { reportId: null, skipped: true, reason: 'no_parent_report', usedMiroFish: false }
   }
 
@@ -247,7 +255,13 @@ FORMAT DE RÉPONSE (JSON STRICT)
   },
   "mirofish_used": ${usedMiroFish},
   "signals_analyzed": ${sortedSignals.length}
-}`
+}
+
+RÈGLES :
+- Base tes prédictions sur les FAITS observés dans les signaux et rapports.
+- DONNÉES CHIFFRÉES : quand les signaux mentionnent des montants, %, effectifs, capacités, volumes, reprends-les pour ancrer tes prédictions dans la réalité. Exemples : "basé sur un investissement de 500M$", "recrutement de 200 postes suggérant…".
+- Chaque prédiction doit citer ses preuves factuelles.
+- Réponds en français.`
 
   try {
     const { text, tokensUsed } = await callGemini(prompt, {

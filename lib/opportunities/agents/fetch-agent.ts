@@ -65,20 +65,28 @@ export async function fetchPendingSources(
   watchId: string,
   batchSize = 30,
   log: (msg: string) => void,
+  searchId?: string,
 ): Promise<FetchResult> {
   let fetchedCount = 0
   let failedCount = 0
   let skippedCount = 0
   const errors: string[] = []
 
-  const { data: sources } = await admin
+  let query = admin
     .from('discovered_sources')
     .select('id, url, title, domain, snippet')
     .eq('account_id', accountId)
-    .eq('watch_id', watchId)
     .eq('status', 'pending')
     .order('relevance_score', { ascending: false })
     .limit(batchSize)
+
+  if (searchId) {
+    query = query.eq('search_id', searchId)
+  } else if (watchId) {
+    query = query.eq('watch_id', watchId)
+  }
+
+  const { data: sources } = await query
 
   if (!sources?.length) {
     log(`[fetch] Aucune source en attente`)

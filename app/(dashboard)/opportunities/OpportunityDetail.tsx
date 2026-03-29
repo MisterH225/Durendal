@@ -9,6 +9,30 @@ import {
   Target, ChevronRight, Zap,
 } from 'lucide-react'
 
+function getLogoUrl(logoUrl: string | null | undefined, website: string | null | undefined): string | null {
+  if (logoUrl && !logoUrl.includes('logo.clearbit.com')) return logoUrl
+  if (website) {
+    try {
+      const domain = new URL(website.startsWith('http') ? website : `https://${website}`).hostname.replace(/^www\./, '')
+      return `https://img.logo.dev/${domain}?token=pk_free&format=png`
+    } catch {}
+  }
+  return null
+}
+
+function DetailLogo({ src, website, name }: { src?: string | null; website?: string | null; name: string }) {
+  const [failed, setFailed] = useState(false)
+  const logoUrl = getLogoUrl(src, website)
+  if (!logoUrl || failed) {
+    return (
+      <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
+        <Building2 size={16} className="text-blue-500" />
+      </div>
+    )
+  }
+  return <img src={logoUrl} alt="" className="w-9 h-9 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" onError={() => setFailed(true)} />
+}
+
 interface Props {
   opportunityId: string
   onClose: () => void
@@ -159,13 +183,7 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            {company?.logo_url ? (
-              <img src={company.logo_url} alt="" className="w-9 h-9 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" />
-            ) : (
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
-                <Building2 size={16} className="text-blue-500" />
-              </div>
-            )}
+            <DetailLogo src={company?.logo_url} website={company?.website} name={company?.name || '?'} />
             <div className="min-w-0">
               <div className="text-sm font-bold text-neutral-900 truncate">{company?.name || 'Chargement...'}</div>
               <div className="text-[10px] text-neutral-400">{[company?.sector, company?.country].filter(Boolean).join(' · ')}</div>

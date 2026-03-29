@@ -179,6 +179,7 @@ RÈGLES ABSOLUES :
 - Les scores de la matrice doivent être JUSTIFIÉS.
 - Les scénarios doivent être RÉALISTES et basés sur les tendances observées.
 - Les chart_data doivent être COHÉRENTES avec l'analyse.
+- DONNÉES CHIFFRÉES : reprends systématiquement les montants, volumes, effectifs, % et toute donnée quantitative des signaux. Un marché se décrit avec des chiffres concrets, pas des généralités. Si un signal mentionne "500M$", "200 postes", "15% de croissance", ces chiffres doivent apparaître dans l'analyse.
 - Réponds en français.`
 
   try {

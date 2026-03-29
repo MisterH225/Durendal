@@ -34,12 +34,14 @@ export async function GET(req: NextRequest) {
     const sector     = url.searchParams.get('sector')
     const country    = url.searchParams.get('country')
     const search     = url.searchParams.get('q')
+    const origin     = url.searchParams.get('origin')
+    const searchId   = url.searchParams.get('searchId')
 
     let query = supabase
       .from('lead_opportunities')
       .select(`
         *,
-        companies!inner(id, name, sector, country, website, logo_url, employee_range, company_type),
+        companies(id, name, sector, country, website, logo_url, employee_range, company_type),
         watches:primary_watch_id(id, name)
       `, { count: 'exact' })
       .eq('account_id', profile.account_id)
@@ -50,9 +52,11 @@ export async function GET(req: NextRequest) {
     if (minScore !== null) query = query.gte('total_score', minScore)
     if (maxScore !== null) query = query.lte('total_score', maxScore)
     if (watchId)    query = query.eq('primary_watch_id', watchId)
-    if (sector)     query = query.ilike('companies.sector', `%${sector}%`)
-    if (country)    query = query.ilike('companies.country', `%${country}%`)
-    if (search)     query = query.or(`title.ilike.%${search}%,companies.name.ilike.%${search}%`)
+    if (origin)     query = query.eq('origin', origin)
+    if (searchId)   query = query.eq('search_id', searchId)
+    if (sector)     query = query.ilike('sector', `%${sector}%`)
+    if (country)    query = query.ilike('country', `%${country}%`)
+    if (search)     query = query.or(`title.ilike.%${search}%`)
 
     const validSorts = ['total_score', 'last_signal_at', 'created_at', 'fit_score', 'intent_score', 'recency_score', 'confidence_score']
     const sortField = validSorts.includes(sortBy) ? sortBy : 'total_score'

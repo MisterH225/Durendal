@@ -109,10 +109,70 @@ Sinon : `display_status = hidden | draft`
 
 Chaque type a : label, businessLabel, badge, hypothesisTemplate, baseScore, decayDays, category.
 
+## Mode 2 — Recherche sectorielle
+
+### Architecture
+
+```
+[Formulaire : secteur + pays]
+       ↓
+╔══════════════════════════════════════╗
+║  Query Builder (sector-search-taxonomy)
+║  → 10-15 requêtes ciblées par secteur
+╠══════════════════════════════════════╣
+║  Discovery (Sonar + Firecrawl)       ║
+║  → discovered_sources (search_id)    ║
+╠══════════════════════════════════════╣
+║  Fetch → Extract → Resolve → Qualify ║
+║  (mêmes agents, contexte search_id)  ║
+╚══════════════════════════════════════╝
+       ↓
+[Opportunités avec origin=sector_search]
+```
+
+### Tables
+
+- `opportunity_searches` — paramètres de recherche (secteur, pays, sous-secteur, etc.)
+- `discovered_sources.search_id` — lien vers la recherche
+- `extracted_signals.search_id` — lien vers la recherche
+- `lead_opportunities.search_id` + `origin` + `sector` + `country`
+
+### API
+
+```
+POST /api/opportunity-searches        — Créer une recherche
+GET  /api/opportunity-searches        — Lister les recherches
+GET  /api/opportunity-searches/:id    — Détail recherche
+POST /api/opportunity-searches/:id/run — Lancer le pipeline
+GET  /api/opportunities?origin=sector_search&searchId=xxx
+```
+
+### Taxonomie sectorielle
+
+8 verticales : BTP, Mines, Agriculture, Industrie, Distribution, Énergie, Santé, Tech.
+
+Chaque secteur a : `queryTemplates`, `signalTypes`, `synonyms`, `entityTypes`, `subSectors`.
+
+### Migration
+
+Exécuter `supabase/migrations/015_sector_search.sql` dans le SQL Editor Supabase.
+
+### Usage
+
+```bash
+# Seed recherches sectorielles démo
+npx tsx lib/opportunities/seed-sector-search.ts
+
+# Lancer via API
+curl -X POST /api/opportunity-searches -d '{"sector":"BTP","country":"SN"}'
+curl -X POST /api/opportunity-searches/{id}/run
+```
+
 ## Tests
 
 ```bash
 npx tsx lib/opportunities/__tests__/pipeline.test.ts
 npx tsx lib/opportunities/__tests__/scoring.test.ts
 npx tsx lib/opportunities/__tests__/normalizer.test.ts
+npx tsx lib/opportunities/__tests__/sector-search.test.ts
 ```

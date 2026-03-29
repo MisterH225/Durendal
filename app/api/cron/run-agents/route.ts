@@ -80,15 +80,10 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // Agent 2 — Synthèse
-        await fetch(
-          `${process.env.NEXT_PUBLIC_APP_URL}/api/agents/synthesize`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ watchId: watch.id }),
-          }
-        )
+        // scrape exécute déjà Agents 2→5 en interne (phases 4-7).
+        // L'ancien appel redondant à /api/agents/synthesize a été retiré car
+        // il trouvait les signaux déjà marqués is_processed=true → skip systématique,
+        // et utilisait createClient() (cookies) sans session cron → échec RLS.
 
         results.push({ watchId: watch.id, name: watch.name, status: 'done' })
       } catch (err) {

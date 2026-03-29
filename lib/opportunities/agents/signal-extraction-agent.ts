@@ -97,18 +97,18 @@ export async function extractSignalsFromPages(
   companies: { id: string; name: string }[],
   batchSize = 20,
   log: (msg: string) => void,
+  searchId?: string,
 ): Promise<ExtractionResult> {
   let extractedCount = 0
   let pagesProcessed = 0
   const errors: string[] = []
   const companyNames = companies.map(c => c.name)
 
-  // Get fetched pages not yet processed (via discovered_sources)
   const { data: pages } = await admin
     .from('fetched_pages')
     .select(`
       id, url, domain, title, extracted_text, published_at,
-      source:source_id(watch_id)
+      source:source_id(watch_id, search_id)
     `)
     .eq('account_id', accountId)
     .eq('fetch_status', 'success')
@@ -121,9 +121,9 @@ export async function extractSignalsFromPages(
     return { extractedCount: 0, pagesProcessed: 0, errors: [] }
   }
 
-  // Filter to pages linked to our watch
   const relevantPages = pages.filter(p => {
     const src = p.source as any
+    if (searchId) return src?.search_id === searchId
     return !src?.watch_id || src.watch_id === watchId
   })
 
@@ -170,7 +170,8 @@ export async function extractSignalsFromPages(
 
         const { error: insertErr } = await admin.from('extracted_signals').upsert({
           account_id: accountId,
-          watch_id: watchId,
+          watch_id: watchId || null,
+          search_id: searchId || null,
           page_id: page.id,
           company_id: companyId,
           company_name_raw: sig.company_name,

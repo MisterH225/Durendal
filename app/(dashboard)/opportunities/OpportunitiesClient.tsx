@@ -5,9 +5,10 @@ import {
   Target, Flame, TrendingUp, Search, RefreshCw, Play,
   Building2, Calendar, ArrowUpRight, LayoutList, LayoutGrid,
   Loader2, Zap, AlertCircle, X, ShieldCheck, ShieldAlert, Shield,
-  FileSearch, Radar,
+  FileSearch, Radar, Globe2, Eye,
 } from 'lucide-react'
 import OpportunityDetail from './OpportunityDetail'
+import SectorSearchPanel from './SectorSearchPanel'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,11 +34,14 @@ interface Opportunity {
   evidence_count: number
   evidence_status: 'sufficient' | 'insufficient' | 'weak'
   display_status: string
+  origin: string | null
+  sector: string | null
+  country: string | null
   companies: {
     id: string; name: string; sector: string | null; country: string | null
     website: string | null; logo_url: string | null; employee_range: string | null
     company_type: string | null
-  }
+  } | null
   watches: { id: string; name: string } | null
 }
 
@@ -119,9 +123,40 @@ function TriggerBadge({ type, label }: { type: string | null; label: string }) {
   return <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-semibold border ${color}`}>{label}</span>
 }
 
+function getLogoUrl(logoUrl: string | null | undefined, website: string | null | undefined): string | null {
+  if (logoUrl && !logoUrl.includes('logo.clearbit.com')) return logoUrl
+  if (website) {
+    try {
+      const domain = new URL(website.startsWith('http') ? website : `https://${website}`).hostname.replace(/^www\./, '')
+      return `https://img.logo.dev/${domain}?token=pk_free&format=png`
+    } catch {}
+  }
+  return null
+}
+
+function CompanyLogo({ src, website, name, size = 'md' }: { src?: string | null; website?: string | null; name: string; size?: 'sm' | 'md' }) {
+  const [failed, setFailed] = useState(false)
+  const logoUrl = getLogoUrl(src, website)
+  const dims = size === 'sm' ? 'w-8 h-8' : 'w-9 h-9'
+
+  if (!logoUrl || failed) {
+    return (
+      <div className={`${dims} rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0 mt-0.5`}>
+        <span className="text-[10px] font-bold text-blue-600">{name.slice(0, 2).toUpperCase()}</span>
+      </div>
+    )
+  }
+
+  return (
+    <img src={logoUrl} alt="" className={`${dims} rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0 mt-0.5`}
+      onError={() => setFailed(true)} />
+  )
+}
+
 // ── Composant principal ──────────────────────────────────────────────────────
 
 export default function OpportunitiesClient() {
+  const [activeTab, setActiveTab] = useState<'watches' | 'sector_search'>('watches')
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
   const [stats, setStats] = useState<Stats>({ total: 0, hot: 0, warm: 0, new: 0 })
   const [loading, setLoading] = useState(true)
@@ -214,13 +249,41 @@ export default function OpportunitiesClient() {
 
   return (
     <div className="pb-20 lg:pb-0">
-      {/* Header */}
+      {/* Header + Tabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
         <div>
           <h1 className="text-base font-bold text-neutral-900">Opportunités commerciales</h1>
           <p className="text-xs text-neutral-500 mt-0.5">Pipeline agents : discovery, extraction, qualification avec preuves</p>
         </div>
       </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-5 border-b border-neutral-200">
+        <button onClick={() => setActiveTab('watches')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all -mb-px ${
+            activeTab === 'watches'
+              ? 'border-blue-600 text-blue-700 bg-blue-50/50'
+              : 'border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300'
+          }`}>
+          <Eye size={14} /> Depuis mes veilles
+        </button>
+        <button onClick={() => setActiveTab('sector_search')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all -mb-px ${
+            activeTab === 'sector_search'
+              ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50'
+              : 'border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300'
+          }`}>
+          <Globe2 size={14} /> Recherche marché
+        </button>
+      </div>
+
+      {/* ── Sector search tab ── */}
+      {activeTab === 'sector_search' && (
+        <SectorSearchPanel onSelectOpportunity={id => setSelectedId(id)} />
+      )}
+
+      {/* ── Watches tab ── */}
+      {activeTab === 'watches' && <>
 
       {/* Pipeline launcher */}
       <div className="card mb-5 border-blue-200 bg-gradient-to-r from-blue-50/50 to-white">
@@ -355,18 +418,15 @@ export default function OpportunitiesClient() {
                 onClick={() => setSelectedId(opp.id)}
                 className="card hover:shadow-md cursor-pointer transition-all group py-3 px-4">
                 <div className="flex items-start gap-3">
-                  {opp.companies?.logo_url ? (
-                    <img src={opp.companies.logo_url} alt="" className="w-9 h-9 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0 mt-0.5" />
-                  ) : (
-                    <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <span className="text-[10px] font-bold text-blue-600">{opp.companies?.name?.slice(0, 2).toUpperCase()}</span>
-                    </div>
-                  )}
+                  <CompanyLogo src={opp.companies?.logo_url} website={opp.companies?.website} name={opp.companies?.name || opp.title || '?'} />
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-xs font-bold text-neutral-900 truncate group-hover:text-blue-700 transition-colors">{opp.companies?.name}</span>
-                      <span className="text-[10px] text-neutral-400 flex-shrink-0">{[opp.companies?.sector, opp.companies?.country].filter(Boolean).join(' · ')}</span>
+                      <span className="text-xs font-bold text-neutral-900 truncate group-hover:text-blue-700 transition-colors">{opp.companies?.name || opp.title?.split('—')[0]?.trim()}</span>
+                      <span className="text-[10px] text-neutral-400 flex-shrink-0">{[opp.companies?.sector || opp.sector, opp.companies?.country || opp.country].filter(Boolean).join(' · ')}</span>
+                      {opp.origin === 'sector_search' && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 border border-emerald-200 font-medium flex-shrink-0">Recherche</span>
+                      )}
                     </div>
 
                     {opp.primary_trigger_label && (
@@ -425,16 +485,10 @@ export default function OpportunitiesClient() {
                 onClick={() => setSelectedId(opp.id)}
                 className="card hover:shadow-md cursor-pointer transition-all group">
                 <div className="flex items-center gap-2 mb-2">
-                  {opp.companies?.logo_url ? (
-                    <img src={opp.companies.logo_url} alt="" className="w-8 h-8 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
-                      <Building2 size={14} className="text-blue-500" />
-                    </div>
-                  )}
+                  <CompanyLogo src={opp.companies?.logo_url} website={opp.companies?.website} name={opp.companies?.name || opp.title || '?'} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold text-neutral-900 truncate group-hover:text-blue-700">{opp.companies?.name}</div>
-                    <div className="text-[10px] text-neutral-400">{[opp.companies?.sector, opp.companies?.country].filter(Boolean).join(' · ')}</div>
+                    <div className="text-xs font-bold text-neutral-900 truncate group-hover:text-blue-700">{opp.companies?.name || opp.title?.split('—')[0]?.trim()}</div>
+                    <div className="text-[10px] text-neutral-400">{[opp.companies?.sector || opp.sector, opp.companies?.country || opp.country].filter(Boolean).join(' · ')}</div>
                   </div>
                   <div className="text-right flex-shrink-0">
                     <div className="text-sm font-bold text-neutral-900">{opp.total_score}</div>
@@ -483,6 +537,8 @@ export default function OpportunitiesClient() {
             className="btn-ghost text-xs px-3 py-1.5 disabled:opacity-30">Suivant</button>
         </div>
       )}
+
+      </>}
 
       {selectedId && (
         <OpportunityDetail

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
       results: (data ?? []).slice(0, 8).map((c: any) => ({
         name:     c.name ?? '',
         domain:   c.domain ?? '',
-        logo_url: c.logo ?? (c.domain ? `https://logo.clearbit.com/${c.domain}` : null),
+        logo_url: c.logo ?? (c.domain ? `https://img.logo.dev/${c.domain}?token=pk_free&format=png` : null),
       })),
     })
   } catch {

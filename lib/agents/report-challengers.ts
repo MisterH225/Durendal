@@ -285,7 +285,7 @@ async function runSynthesisAgent(
     return `═══ ${agentLabel} (score: ${f.score}/100) ═══\n${f.summary}\n${issuesStr}`
   }).join('\n\n')
 
-  const trimmedSignals = signalsText.length > 4_000 ? signalsText.slice(0, 4_000) + '\n[…signaux tronqués]' : signalsText
+  const trimmedSignals = signalsText.length > 6_000 ? signalsText.slice(0, 6_000) + '\n[…signaux tronqués]' : signalsText
 
   const prompt = `Tu es l'agent de SYNTHÈSE FINALE — un analyste senior en intelligence économique.
 
@@ -378,6 +378,7 @@ RÈGLES STRICTES :
 - Chaque prédiction doit avoir un MÉCANISME CAUSAL explicite.
 - La section challenger_improvements est OBLIGATOIRE pour tracer les améliorations.
 - Ne laisse AUCUNE critique des Challengers sans réponse.
+- DONNÉES CHIFFRÉES OBLIGATOIRES : reprends systématiquement les montants, pourcentages, effectifs, capacités, surfaces, volumes et toute donnée quantitative présente dans les signaux. Un rapport sans chiffres n'est pas exploitable. Exemples : "investissement de 12 milliards FCFA", "recrutement de 200 postes", "CA en hausse de 15%", "capacité de 50 000 t/an".
 - Réponds en français.`
 
   try {
@@ -391,8 +392,22 @@ RÈGLES STRICTES :
 
     let finalContent = parseGeminiJson<any>(text)
     if (!finalContent) {
-      log('[Synthèse] ⚠ Parsing JSON échoué — utilisation du rapport initial')
-      return null
+      log('[Synthèse] ⚠ Parsing JSON échoué — tentative de récupération partielle')
+      // Fallback : construire un rapport enrichi à partir du texte brut + rapport initial
+      const cleanText = text.replace(/```(?:json)?\s*\n?/g, '').replace(/```\n?/g, '').trim()
+      const origContent = originalReport.content ?? {}
+      finalContent = {
+        ...origContent,
+        title: `Rapport de veille concurrentielle [enrichi] — ${today}`,
+        executive_summary: cleanText.slice(0, 3000) || origContent.executive_summary || `Rapport enrichi — ${today}`,
+        challenger_improvements: {
+          blind_spots_addressed: feedbacks.find((f: any) => f.agent === 'blind_spots')?.issues?.map((i: any) => i.description).slice(0, 3) ?? [],
+          facts_reinforced: [],
+          arguments_deepened: [],
+        },
+        _fallback_enrichment: true,
+      }
+      log('[Synthèse] Rapport enrichi construit en fallback à partir du rapport initial + texte brut')
     }
 
     const enrichedCompanyAnalyses = (finalContent.company_analyses ?? []).map((ca: any) => ({
@@ -486,7 +501,7 @@ export async function runChallengerPipeline(
   const signalsList = (signals ?? []).slice(0, 40)
   const signalsText = signalsList.map((s: any, i: number) => {
     const src = s.source_name || (s.url ? (() => { try { return new URL(s.url).hostname } catch { return s.url } })() : '?')
-    return `[${i + 1}] ${s.companies?.name ?? 'Général'} — ${s.title}\n${(s.raw_content ?? '').slice(0, 250)}\nSource: ${src}`
+    return `[${i + 1}] ${s.companies?.name ?? 'Général'} — ${s.title}\n${(s.raw_content ?? '').slice(0, 500)}\nSource: ${src}`
   }).join('\n---\n')
   log(`[Challenger Pipeline] ${signalsList.length} signaux chargés, contexte rapport: ${buildReportContext(report).length} chars`)
 

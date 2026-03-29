@@ -99,7 +99,7 @@ export async function generateWatchReport(
     return [
       `[${i + 1}] ${s.companies?.name ?? 'Général'} — ${s.title}`,
       pubLabel,
-      s.raw_content?.slice(0, 500) ?? '',
+      s.raw_content?.slice(0, 800) ?? '',
       `Source : ${sourceLabel}${s.url ? ` (${s.url})` : ''}`,
     ].join('\n')
   }).join('\n\n---\n\n')
@@ -266,7 +266,8 @@ RÈGLES STRICTES :
 - Si une entreprise fait quelque chose que les autres ne font pas, mentionne-le explicitement dans gaps_to_watch.
 - Les recommandations doivent être ACTIONNABLES et spécifiques au contexte.
 - NE PAS inventer de faits : base-toi uniquement sur les signaux fournis.
-- PONDÈRE par la récence : les signaux récents (derniers mois) ont plus de poids que les anciens. Les dates de publication sont indiquées pour chaque signal. Mentionne les dates clés dans ton analyse.${evolutionRules}
+- PONDÈRE par la récence : les signaux récents (derniers mois) ont plus de poids que les anciens. Les dates de publication sont indiquées pour chaque signal. Mentionne les dates clés dans ton analyse.
+- DONNÉES CHIFFRÉES : quand les signaux contiennent des montants (budgets, CA, investissements), volumes, pourcentages, effectifs, surfaces, capacités ou toute donnée quantitative, tu DOIS les reprendre dans l'analyse. Les chiffres concrets rendent le rapport exploitable. Exemples : "investissement de 12 milliards FCFA", "recrutement de 200 postes", "capacité de 50 000 tonnes/an", "croissance de 15%".${evolutionRules}
 - Réponds en français.`
 
   try {

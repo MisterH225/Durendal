@@ -32,7 +32,24 @@ export async function GET(
       return NextResponse.json({ error: 'Opportunité introuvable' }, { status: 404 })
     }
 
-    // Charger les signaux liés à cette entreprise
+    // Charger les preuves structurées (pipeline v2)
+    const { data: evidence } = await supabase
+      .from('opportunity_evidence')
+      .select('*')
+      .eq('opportunity_id', params.id)
+      .order('rank', { ascending: true })
+      .limit(10)
+
+    // Charger les signaux extraits liés
+    const { data: extractedSignals } = await supabase
+      .from('extracted_signals')
+      .select('id, signal_type, signal_subtype, signal_label, signal_summary, confidence_score, source_url, source_name, source_domain, detected_at, event_date, extracted_facts')
+      .eq('company_id', opp.company_id)
+      .eq('watch_id', opp.primary_watch_id)
+      .order('detected_at', { ascending: false })
+      .limit(30)
+
+    // Legacy signals (backward compat)
     const { data: signals } = await supabase
       .from('account_signals')
       .select(`
@@ -43,7 +60,12 @@ export async function GET(
       .order('created_at', { ascending: false })
       .limit(30)
 
-    return NextResponse.json({ opportunity: opp, signals: signals || [] })
+    return NextResponse.json({
+      opportunity: opp,
+      evidence: evidence || [],
+      extractedSignals: extractedSignals || [],
+      signals: signals || [],
+    })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }

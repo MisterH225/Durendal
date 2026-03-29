@@ -4,7 +4,7 @@
  * Pipeline :
  *  1. Charger les signaux récents pour un account_id
  *  2. Agréger les signaux par entreprise (company)
- *  3. Calculer le scoring pour chaque entreprise
+ *  3. Calculer le scoring + trigger data pour chaque entreprise
  *  4. Créer ou mettre à jour les lead_opportunities
  */
 
@@ -17,11 +17,10 @@ import {
   type SignalInput,
   type ContactInput,
   type FitInput,
-  type ScoreBreakdown,
 } from './scoring'
 import { getSignalApproachAngle, SIGNAL_TYPE_MAP } from './signals-taxonomy'
 import { getSectorConfig } from './sector-config'
-import { normalizeName, dedupeHash } from './normalizer'
+import { computeTriggerData, type RawSignal } from './trigger-engine'
 
 interface WatchContext {
   id: string
@@ -48,14 +47,12 @@ interface CompanySignalGroup {
     confidenceScore: number
     url: string | null
     rawContent: string | null
+    sourceName: string | null
   }[]
   watchId: string
   watchName: string
 }
 
-/**
- * Calcule le fit d'une entreprise par rapport aux critères d'une veille.
- */
 function computeFit(
   company: CompanySignalGroup,
   watch: WatchContext,
@@ -70,7 +67,6 @@ function computeFit(
   const countryMatch = watch.countries.some(c =>
     company.companyCountry?.toUpperCase() === c.toUpperCase()
   )
-
   const sizeMatch = !!company.employeeRange
   const companyTypeMatch = !!company.companyType
 
@@ -98,12 +94,24 @@ function buildSignalInputs(group: CompanySignalGroup): SignalInput[] {
   }))
 }
 
+function buildRawSignals(group: CompanySignalGroup): RawSignal[] {
+  return group.signals.map(s => ({
+    id: s.id,
+    type: s.type || 'unknown',
+    subtype: s.subtype,
+    title: s.title,
+    detectedAt: s.detectedAt,
+    confidenceScore: s.confidenceScore ?? 0.5,
+    url: s.url,
+    rawContent: s.rawContent,
+    sourceName: s.sourceName,
+  }))
+}
+
 function companyDataCompleteness(group: CompanySignalGroup): number {
   let filled = 0
   const fields = [group.companyName, group.companySector, group.companyCountry, group.companyWebsite, group.employeeRange, group.companyType]
-  for (const f of fields) {
-    if (f) filled++
-  }
+  for (const f of fields) { if (f) filled++ }
   return filled / fields.length
 }
 
@@ -124,24 +132,6 @@ function bestApproachAngle(signals: SignalInput[], sectors: string[]): string {
   return getSignalApproachAngle(bestSignal.type)
 }
 
-function buildTitle(company: CompanySignalGroup, heatLevel: string): string {
-  const heat = heatLevel === 'hot' ? '🔥' : heatLevel === 'warm' ? '🟡' : '🔵'
-  const bestSignalType = company.signals.length > 0
-    ? (SIGNAL_TYPE_MAP.get(company.signals[0].type)?.label ?? company.signals[0].type)
-    : 'Signal détecté'
-  return `${company.companyName} — ${bestSignalType}`
-}
-
-function buildSummary(company: CompanySignalGroup, score: ScoreBreakdown): string {
-  const signalCount = company.signals.length
-  const topReasons = [
-    ...score.fit.reasons.filter(r => r.points > 0).slice(0, 2),
-    ...score.intent.reasons.filter(r => r.points > 0).slice(0, 2),
-  ].map(r => r.label).join(', ')
-
-  return `${signalCount} signal(s) détecté(s) pour ${company.companyName}. Points forts : ${topReasons || 'N/A'}. Score global : ${score.final}/100.`
-}
-
 /**
  * Recalcule toutes les opportunités pour un compte utilisateur.
  */
@@ -153,7 +143,6 @@ export async function recomputeOpportunities(
   let created = 0
   let updated = 0
 
-  // 1. Charger les veilles du compte
   const { data: watches } = await admin
     .from('watches')
     .select('id, name, sectors, countries')
@@ -162,7 +151,6 @@ export async function recomputeOpportunities(
 
   if (!watches?.length) return { created: 0, updated: 0, errors: ['Aucune veille active'] }
 
-  // 2. Pour chaque veille, charger les signaux avec leurs entreprises
   for (const watch of watches) {
     const ctx: WatchContext = {
       id: watch.id,
@@ -175,7 +163,7 @@ export async function recomputeOpportunities(
       .from('signals')
       .select(`
         id, signal_type, title, url, raw_content, collected_at, relevance_score,
-        confidence_score, signal_subtype,
+        confidence_score, signal_subtype, source_name,
         companies!inner(id, name, sector, country, website, logo_url, employee_range, company_type)
       `)
       .eq('watch_id', watch.id)
@@ -185,7 +173,6 @@ export async function recomputeOpportunities(
 
     if (!signals?.length) continue
 
-    // 3. Grouper par entreprise
     const groups = new Map<string, CompanySignalGroup>()
     for (const sig of signals) {
       const co = sig.companies as any
@@ -215,17 +202,17 @@ export async function recomputeOpportunities(
         confidenceScore: sig.confidence_score ?? sig.relevance_score ?? 0.5,
         url: sig.url,
         rawContent: sig.raw_content,
+        sourceName: sig.source_name ?? null,
       })
     }
 
-    // 4. Scorer chaque entreprise
     for (const [companyId, group] of groups) {
       try {
         const signalInputs = buildSignalInputs(group)
+        const rawSignals = buildRawSignals(group)
         const fitInput = computeFit(group, ctx)
         const completeness = companyDataCompleteness(group)
 
-        // Charger les contacts existants pour cette entreprise
         const { data: existingOpp } = await admin
           .from('lead_opportunities')
           .select('id')
@@ -262,8 +249,15 @@ export async function recomputeOpportunities(
         const heatLevel = getHeatLevel(breakdown.final)
         const confidence = computeConfidenceScore(signalInputs, completeness)
         const angle = bestApproachAngle(signalInputs, ctx.sectors)
-        const title = buildTitle(group, heatLevel)
-        const summary = buildSummary(group, breakdown)
+
+        // Trigger engine — signal principal, hypothèse, preuves
+        const trigger = computeTriggerData(rawSignals, group.companySector, group.companyName)
+
+        const title = trigger.primaryTriggerLabel
+          ? `${group.companyName} — ${trigger.primaryTriggerLabel}`
+          : `${group.companyName} — Signal détecté`
+
+        const summary = trigger.businessHypothesis || trigger.opportunityReason || `${group.signals.length} signal(s) détecté(s).`
 
         const lastSignalAt = group.signals.length > 0
           ? group.signals.reduce((latest, s) =>
@@ -290,6 +284,17 @@ export async function recomputeOpportunities(
           last_signal_at: lastSignalAt,
           last_scored_at: new Date().toISOString(),
           score_breakdown: breakdown,
+          // Trigger-engine fields
+          primary_trigger_type: trigger.primaryTriggerType || null,
+          primary_trigger_label: trigger.primaryTriggerLabel || null,
+          primary_trigger_summary: trigger.primaryTriggerSummary || null,
+          business_hypothesis: trigger.businessHypothesis || null,
+          opportunity_reason: trigger.opportunityReason || null,
+          trigger_confidence: trigger.triggerConfidence,
+          evidence_count: trigger.evidenceCount,
+          evidence_summary: trigger.evidenceSummary,
+          evidence_status: trigger.evidenceStatus,
+          display_status: trigger.displayStatus,
           updated_at: new Date().toISOString(),
         }
 
@@ -301,12 +306,13 @@ export async function recomputeOpportunities(
             ...oppData,
             first_detected_at: new Date().toISOString(),
             status: 'new',
-            explanation: { signals: group.signals.map(s => ({ type: s.type, title: s.title, date: s.detectedAt })) },
+            explanation: {
+              signals: group.signals.map(s => ({ type: s.type, title: s.title, date: s.detectedAt })),
+            },
           })
           created++
         }
 
-        // Upsert account_signals
         for (const sig of group.signals) {
           await admin.from('account_signals').upsert(
             { company_id: companyId, signal_id: sig.id, signal_weight: 1.0 },

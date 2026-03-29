@@ -2,9 +2,11 @@
 
 import { useState, useEffect } from 'react'
 import {
-  X, Building2, MapPin, Globe, Linkedin, ExternalLink, ChevronDown,
-  ThumbsUp, ThumbsDown, Clock, Mail, MessageSquare, Send,
-  Loader2, Copy, Check, BarChart3, User, Calendar, AlertCircle, Zap,
+  X, Building2, MapPin, Globe, Linkedin, ExternalLink,
+  ThumbsUp, ThumbsDown, Clock, Mail, Send,
+  Loader2, Copy, Check, BarChart3, User, AlertCircle,
+  ShieldCheck, ShieldAlert, Shield, FileText, Lightbulb,
+  Target, ChevronRight, Zap,
 } from 'lucide-react'
 
 interface Props {
@@ -30,11 +32,17 @@ const FEEDBACK_OPTIONS = [
   { type: 'too_early', label: 'Trop tôt', icon: Clock, color: 'text-amber-600 bg-amber-50 border-amber-200 hover:bg-amber-100' },
 ]
 
+const EVIDENCE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  sufficient:   { label: 'Preuves solides',    color: 'text-green-700', bg: 'bg-green-50 border-green-200' },
+  insufficient: { label: 'Preuves partielles', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' },
+  weak:         { label: 'Preuves faibles',    color: 'text-neutral-500', bg: 'bg-neutral-50 border-neutral-200' },
+}
+
 function ScoreRow({ label, score, color }: { label: string; score: number; color: string }) {
   return (
     <div className="flex items-center gap-2">
       <span className="text-[11px] text-neutral-500 w-24 flex-shrink-0">{label}</span>
-      <div className="flex-1 h-2 bg-neutral-100 rounded-full overflow-hidden">
+      <div className="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${score}%` }} />
       </div>
       <span className="text-[11px] font-bold text-neutral-700 w-8 text-right">{score}</span>
@@ -44,10 +52,12 @@ function ScoreRow({ label, score, color }: { label: string; score: number; color
 
 export default function OpportunityDetail({ opportunityId, onClose, onStatusChange }: Props) {
   const [opp, setOpp] = useState<any>(null)
+  const [evidence, setEvidence] = useState<any[]>([])
+  const [extractedSignals, setExtractedSignals] = useState<any[]>([])
   const [signals, setSignals] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [tab, setTab] = useState<'overview' | 'scoring' | 'signals' | 'contacts' | 'message'>('overview')
+  const [tab, setTab] = useState<'analysis' | 'scoring' | 'signals' | 'contacts' | 'message'>('analysis')
   const [msgFormat, setMsgFormat] = useState<'email' | 'whatsapp' | 'linkedin'>('email')
   const [generatedMsg, setGeneratedMsg] = useState<any>(null)
   const [generatingMsg, setGeneratingMsg] = useState(false)
@@ -62,20 +72,18 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
         const data = await res.json()
         if (!res.ok) throw new Error(data.error)
         setOpp(data.opportunity)
+        setEvidence(data.evidence || [])
+        setExtractedSignals(data.extractedSignals || [])
         setSignals(data.signals || [])
-      } catch (e: any) {
-        setError(e.message)
-      } finally {
-        setLoading(false)
-      }
+      } catch (e: any) { setError(e.message) }
+      finally { setLoading(false) }
     }
     load()
   }, [opportunityId])
 
   async function handleStatusChange(newStatus: string) {
     await fetch(`/api/opportunities/${opportunityId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus, _previousStatus: opp?.status }),
     })
     setOpp((prev: any) => prev ? { ...prev, status: newStatus } : prev)
@@ -84,8 +92,7 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
 
   async function handleFeedback(type: string) {
     await fetch(`/api/opportunities/${opportunityId}/feedback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ feedbackType: type }),
     })
     setFeedbackSent(type)
@@ -96,8 +103,7 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
     setGeneratingMsg(true)
     try {
       const res = await fetch(`/api/opportunities/${opportunityId}/generate-message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ format: msgFormat }),
       })
       const data = await res.json()
@@ -119,30 +125,45 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
   const contacts = opp?.contact_candidates || []
   const feedbacks = opp?.opportunity_feedback || []
   const breakdown = opp?.score_breakdown
+  const evBadge = EVIDENCE_BADGE[opp?.evidence_status] || EVIDENCE_BADGE.weak
+
+  // Use pipeline evidence first, fallback to inline evidence_summary
+  const evidenceItems = evidence.length > 0
+    ? evidence
+    : (opp?.evidence_summary || []).map((ev: any) => ({
+        id: ev.type + ev.label,
+        evidence_type: ev.type,
+        label: ev.label,
+        short_excerpt: ev.excerpt,
+        source_name: ev.source || ev.sourceName,
+        source_url: ev.url || ev.sourceUrl,
+        evidence_date: ev.date,
+        confidence_score: ev.confidence,
+      }))
+
+  const allSignals = extractedSignals.length > 0 ? extractedSignals : signals.map((as: any) => as.signals).filter(Boolean)
 
   const TABS = [
-    { key: 'overview', label: 'Résumé' },
+    { key: 'analysis', label: 'Analyse' },
     { key: 'scoring', label: 'Score' },
-    { key: 'signals', label: `Signaux (${signals.length})` },
+    { key: 'signals', label: `Sources (${allSignals.length})` },
     { key: 'contacts', label: `Contacts (${contacts.length})` },
     { key: 'message', label: 'Message' },
   ] as const
 
   return (
     <>
-      {/* Overlay */}
       <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose} />
 
-      {/* Drawer */}
-      <div className="fixed top-0 right-0 h-full w-full sm:w-[480px] bg-white shadow-xl z-50 flex flex-col overflow-hidden">
+      <div className="fixed top-0 right-0 h-full w-full sm:w-[500px] bg-white shadow-xl z-50 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             {company?.logo_url ? (
-              <img src={company.logo_url} alt="" className="w-8 h-8 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" />
+              <img src={company.logo_url} alt="" className="w-9 h-9 rounded-lg object-contain bg-white border border-neutral-200 flex-shrink-0" />
             ) : (
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
-                <Building2 size={14} className="text-blue-500" />
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-100 to-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
+                <Building2 size={16} className="text-blue-500" />
               </div>
             )}
             <div className="min-w-0">
@@ -155,38 +176,30 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
           </button>
         </div>
 
-        {loading && (
-          <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-neutral-400" /></div>
-        )}
-
-        {error && (
-          <div className="p-4 text-xs text-red-700 bg-red-50 flex items-center gap-2"><AlertCircle size={14} /> {error}</div>
-        )}
+        {loading && <div className="flex-1 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-neutral-400" /></div>}
+        {error && <div className="p-4 text-xs text-red-700 bg-red-50 flex items-center gap-2"><AlertCircle size={14} /> {error}</div>}
 
         {!loading && opp && (
           <>
-            {/* Score + actions rapides */}
-            <div className="px-4 py-3 border-b border-neutral-100 flex items-center gap-3 flex-shrink-0">
-              <div className="text-center">
-                <div className="text-2xl font-black text-neutral-900">{opp.total_score}</div>
-                <div className="text-[9px] text-neutral-400 font-semibold uppercase">Score</div>
-              </div>
-              <div className="h-8 w-px bg-neutral-200" />
-              {/* Status */}
-              <select
-                value={opp.status}
-                onChange={e => handleStatusChange(e.target.value)}
-                className="input py-1 text-[11px] w-auto"
-              >
+            {/* Actions bar */}
+            <div className="px-4 py-2.5 border-b border-neutral-100 flex items-center gap-2 flex-shrink-0">
+              <select value={opp.status} onChange={e => handleStatusChange(e.target.value)} className="input py-1 text-[11px] w-auto">
                 {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
-              <div className="flex gap-1 ml-auto">
+              <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-semibold ${evBadge.bg} ${evBadge.color}`}>
+                {opp.evidence_status === 'sufficient' ? <ShieldCheck size={10} className="mr-1" /> :
+                 opp.evidence_status === 'insufficient' ? <Shield size={10} className="mr-1" /> :
+                 <ShieldAlert size={10} className="mr-1" />}
+                {evBadge.label}
+              </span>
+              <span className="text-[11px] font-bold text-neutral-700 ml-auto">{opp.total_score}/100</span>
+              <div className="flex gap-1 ml-2">
                 {FEEDBACK_OPTIONS.map(f => (
                   <button key={f.type} onClick={() => handleFeedback(f.type)} title={f.label}
                     className={`w-7 h-7 rounded-lg border flex items-center justify-center transition-all ${
                       feedbackSent === f.type ? 'ring-2 ring-blue-400' : ''
                     } ${f.color}`}>
-                    <f.icon size={13} />
+                    <f.icon size={12} />
                   </button>
                 ))}
               </div>
@@ -204,24 +217,112 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
               ))}
             </div>
 
-            {/* Tab content */}
+            {/* Content */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
 
-              {tab === 'overview' && (
+              {tab === 'analysis' && (
                 <>
-                  {/* Summary */}
+                  {/* 1. Signal déclencheur principal */}
+                  {opp.primary_trigger_label && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <h4 className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <Zap size={10} /> Signal déclencheur principal
+                      </h4>
+                      <div className="text-sm font-bold text-blue-900">{opp.primary_trigger_label}</div>
+                      {opp.primary_trigger_summary && (
+                        <p className="text-xs text-blue-700 mt-1">{opp.primary_trigger_summary}</p>
+                      )}
+                      {opp.trigger_confidence > 0 && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-[10px] text-blue-600">Confiance du signal :</span>
+                          <div className="flex-1 h-1.5 bg-blue-100 rounded-full max-w-[120px]">
+                            <div className="h-full rounded-full bg-blue-600" style={{ width: `${opp.trigger_confidence}%` }} />
+                          </div>
+                          <span className="text-[10px] font-bold text-blue-700">{opp.trigger_confidence}%</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 2. Pourquoi cette opportunité existe */}
+                  {opp.opportunity_reason && (
+                    <div>
+                      <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <Lightbulb size={10} /> Pourquoi cette opportunité
+                      </h4>
+                      <p className="text-xs text-neutral-700 leading-relaxed">{opp.opportunity_reason}</p>
+                    </div>
+                  )}
+
+                  {/* 3. Preuves observées */}
                   <div>
-                    <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1.5">Résumé IA</h4>
-                    <p className="text-xs text-neutral-700 leading-relaxed">{opp.summary || 'Aucun résumé disponible.'}</p>
+                    <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                      <FileText size={10} /> Preuves observées ({evidenceItems.length})
+                    </h4>
+                    {evidenceItems.length === 0 ? (
+                      <p className="text-[11px] text-neutral-400 italic">Aucune preuve structurée disponible. Lancez le pipeline pour collecter des preuves.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {evidenceItems.map((ev: any, i: number) => {
+                          const evDate = ev.evidence_date || ev.date
+                          const dateStr = evDate ? new Date(evDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : null
+                          return (
+                            <div key={ev.id || i} className="bg-neutral-50 border border-neutral-200 rounded-lg p-2.5">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 mb-0.5">
+                                    {dateStr && <span className="text-[10px] font-semibold text-neutral-500">{dateStr}</span>}
+                                    {(ev.source_name || ev.sourceName) && (
+                                      <span className="text-[10px] text-neutral-400">via {ev.source_name || ev.sourceName}</span>
+                                    )}
+                                    {ev.confidence_score != null && (
+                                      <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${
+                                        ev.confidence_score >= 0.7 ? 'bg-green-50 text-green-700' :
+                                        ev.confidence_score >= 0.4 ? 'bg-amber-50 text-amber-700' :
+                                        'bg-neutral-100 text-neutral-500'
+                                      }`}>{Math.round(ev.confidence_score * 100)}%</span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] font-medium text-neutral-800">{ev.label}</div>
+                                  {(ev.short_excerpt || ev.shortExcerpt) && (
+                                    <p className="text-[11px] text-neutral-500 line-clamp-2 mt-0.5">{ev.short_excerpt || ev.shortExcerpt}</p>
+                                  )}
+                                </div>
+                                {(ev.source_url || ev.sourceUrl) && (
+                                  <a href={ev.source_url || ev.sourceUrl} target="_blank" rel="noopener noreferrer"
+                                    className="flex-shrink-0 text-blue-600 hover:text-blue-800 mt-0.5">
+                                    <ExternalLink size={12} />
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Angle d'approche */}
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <h4 className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-1">Angle d'approche recommandé</h4>
-                    <p className="text-xs text-blue-800">{opp.recommended_angle || '—'}</p>
-                  </div>
+                  {/* 4. Hypothèse commerciale */}
+                  {opp.business_hypothesis && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <h4 className="text-[10px] font-bold text-amber-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <Target size={10} /> Hypothèse commerciale
+                      </h4>
+                      <p className="text-xs text-amber-900 leading-relaxed">{opp.business_hypothesis}</p>
+                    </div>
+                  )}
 
-                  {/* Infos entreprise */}
+                  {/* 5. Angle d'approche */}
+                  {opp.recommended_angle && (
+                    <div>
+                      <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <ChevronRight size={10} /> Angle d'approche recommandé
+                      </h4>
+                      <p className="text-xs text-neutral-700">{opp.recommended_angle}</p>
+                    </div>
+                  )}
+
+                  {/* 6. Infos entreprise */}
                   <div>
                     <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-2">Entreprise</h4>
                     <div className="space-y-1.5 text-xs text-neutral-600">
@@ -233,25 +334,30 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
                           </a>
                         </div>
                       )}
-                      {company?.country && (
-                        <div className="flex items-center gap-2"><MapPin size={12} className="text-neutral-400" /> {company.country}</div>
-                      )}
-                      {company?.employee_range && (
-                        <div className="flex items-center gap-2"><User size={12} className="text-neutral-400" /> {company.employee_range} employés</div>
-                      )}
+                      {company?.country && <div className="flex items-center gap-2"><MapPin size={12} className="text-neutral-400" /> {company.country}</div>}
+                      {company?.employee_range && <div className="flex items-center gap-2"><User size={12} className="text-neutral-400" /> {company.employee_range} employés</div>}
                       {company?.linkedin_url && (
-                        <div className="flex items-center gap-2">
-                          <Linkedin size={12} className="text-neutral-400" />
+                        <div className="flex items-center gap-2"><Linkedin size={12} className="text-neutral-400" />
                           <a href={company.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">LinkedIn</a>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Veille source */}
-                  {watch && (
-                    <div className="text-xs text-neutral-500">
-                      <span className="font-semibold">Veille source :</span> {watch.name}
+                  {watch && <div className="text-xs text-neutral-500"><span className="font-semibold">Veille source :</span> {watch.name}</div>}
+
+                  {feedbacks.length > 0 && (
+                    <div>
+                      <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1.5">Feedbacks</h4>
+                      <div className="space-y-1">
+                        {feedbacks.map((f: any) => (
+                          <div key={f.id} className="text-[11px] text-neutral-600 flex items-center gap-2">
+                            <span className="badge badge-gray text-[9px]">{f.feedback_type}</span>
+                            {f.comment && <span className="truncate">{f.comment}</span>}
+                            <span className="text-neutral-400 ml-auto flex-shrink-0">{new Date(f.created_at).toLocaleDateString('fr-FR')}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </>
@@ -276,18 +382,14 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
                       <span className="font-black text-lg text-neutral-900">{breakdown.final ?? opp.total_score}</span>
                     </div>
                     <div className="mt-1 text-[10px] text-neutral-400">
-                      Confiance : {opp.confidence_score}/100
+                      Confiance globale : {opp.confidence_score}/100
                     </div>
                   </div>
 
-                  {/* Raisons détaillées */}
                   {['fit', 'intent', 'recency', 'reachability', 'noisePenalty'].map(key => {
                     const sub = breakdown[key]
                     if (!sub?.reasons?.length) return null
-                    const labels: Record<string, string> = {
-                      fit: 'Fit', intent: 'Intention', recency: 'Récence',
-                      reachability: 'Joignabilité', noisePenalty: 'Bruit',
-                    }
+                    const labels: Record<string, string> = { fit: 'Fit', intent: 'Intention', recency: 'Récence', reachability: 'Joignabilité', noisePenalty: 'Bruit' }
                     return (
                       <div key={key}>
                         <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1">{labels[key]}</h4>
@@ -309,25 +411,45 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
 
               {tab === 'signals' && (
                 <>
-                  {signals.length === 0 ? (
-                    <p className="text-xs text-neutral-400 text-center py-8">Aucun signal lié.</p>
+                  {allSignals.length === 0 ? (
+                    <div className="text-center py-8">
+                      <FileText size={24} className="text-neutral-300 mx-auto mb-2" />
+                      <p className="text-xs text-neutral-500">Aucun signal source détecté.</p>
+                      <p className="text-[10px] text-neutral-400 mt-1">Lancez le pipeline pour découvrir des signaux.</p>
+                    </div>
                   ) : (
                     <div className="space-y-2">
-                      {signals.map((as: any) => {
-                        const sig = as.signals
+                      {allSignals.map((sig: any, i: number) => {
+                        const isExtracted = !!sig.signal_label
+                        const title = isExtracted ? sig.signal_label : (sig.title || sig.raw_content?.slice(0, 80))
+                        const summary = isExtracted ? sig.signal_summary : null
+                        const signalType = sig.signal_type
+                        const date = sig.event_date || sig.detected_at || sig.collected_at
+                        const url = sig.source_url || sig.url
+                        const source = sig.source_name
+                        const conf = sig.confidence_score
+
                         return (
-                          <div key={as.id || sig?.id} className="bg-neutral-50 border border-neutral-200 rounded-lg p-3">
+                          <div key={sig.id || i} className="bg-neutral-50 border border-neutral-200 rounded-lg p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <div className="text-xs font-semibold text-neutral-800 line-clamp-2">{sig?.title || sig?.raw_content?.slice(0, 80)}</div>
-                                <div className="text-[10px] text-neutral-400 mt-0.5 flex items-center gap-2">
-                                  {sig?.signal_type && <span className="badge badge-gray text-[9px]">{sig.signal_type}</span>}
-                                  <span>{sig?.collected_at ? new Date(sig.collected_at).toLocaleDateString('fr-FR') : '—'}</span>
-                                  {sig?.source_name && <span>via {sig.source_name}</span>}
+                                <div className="text-xs font-semibold text-neutral-800 line-clamp-2">{title}</div>
+                                {summary && <p className="text-[11px] text-neutral-500 line-clamp-2 mt-0.5">{summary}</p>}
+                                <div className="text-[10px] text-neutral-400 mt-1 flex items-center gap-2 flex-wrap">
+                                  {signalType && (
+                                    <span className="badge badge-gray text-[9px]">{signalType}</span>
+                                  )}
+                                  {date && <span>{new Date(date).toLocaleDateString('fr-FR')}</span>}
+                                  {source && <span>via {source}</span>}
+                                  {conf != null && (
+                                    <span className={`text-[9px] font-medium ${conf >= 0.7 ? 'text-green-600' : conf >= 0.4 ? 'text-amber-600' : 'text-neutral-400'}`}>
+                                      {Math.round(conf * 100)}%
+                                    </span>
+                                  )}
                                 </div>
                               </div>
-                              {sig?.url && (
-                                <a href={sig.url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 text-blue-600 hover:text-blue-800">
+                              {url && (
+                                <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 text-blue-600 hover:text-blue-800">
                                   <ExternalLink size={13} />
                                 </a>
                               )}
@@ -346,7 +468,7 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
                     <div className="text-center py-8">
                       <User size={24} className="text-neutral-300 mx-auto mb-2" />
                       <p className="text-xs text-neutral-500">Aucun contact identifié.</p>
-                      <p className="text-[10px] text-neutral-400 mt-1">L'enrichissement de contacts sera disponible prochainement.</p>
+                      <p className="text-[10px] text-neutral-400 mt-1">L'enrichissement sera disponible prochainement.</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -394,36 +516,15 @@ export default function OpportunityDetail({ opportunityId, onClose, onStatusChan
                   {generatedMsg && (
                     <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-3 mt-3">
                       {generatedMsg.subject && (
-                        <div className="text-xs text-neutral-500 mb-2">
-                          <span className="font-semibold">Objet :</span> {generatedMsg.subject}
-                        </div>
+                        <div className="text-xs text-neutral-500 mb-2"><span className="font-semibold">Objet :</span> {generatedMsg.subject}</div>
                       )}
-                      <div className="text-xs text-neutral-700 whitespace-pre-wrap leading-relaxed">
-                        {generatedMsg.body}
-                      </div>
-                      <button onClick={copyMessage}
-                        className="mt-2 flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:text-blue-800">
+                      <div className="text-xs text-neutral-700 whitespace-pre-wrap leading-relaxed">{generatedMsg.body}</div>
+                      <button onClick={copyMessage} className="mt-2 flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:text-blue-800">
                         {copied ? <><Check size={12} /> Copié !</> : <><Copy size={12} /> Copier</>}
                       </button>
                     </div>
                   )}
                 </>
-              )}
-
-              {/* Feedbacks existants */}
-              {feedbacks.length > 0 && tab === 'overview' && (
-                <div>
-                  <h4 className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1.5">Feedbacks</h4>
-                  <div className="space-y-1">
-                    {feedbacks.map((f: any) => (
-                      <div key={f.id} className="text-[11px] text-neutral-600 flex items-center gap-2">
-                        <span className="badge badge-gray text-[9px]">{f.feedback_type}</span>
-                        {f.comment && <span className="truncate">{f.comment}</span>}
-                        <span className="text-neutral-400 ml-auto flex-shrink-0">{new Date(f.created_at).toLocaleDateString('fr-FR')}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               )}
             </div>
           </>

@@ -1,6 +1,6 @@
 /**
  * GET /api/opportunities — Liste paginée + filtres
- * POST /api/opportunities/compute (via query param ?action=compute)
+ * POST /api/opportunities — Legacy recompute (backward compat)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -43,6 +43,7 @@ export async function GET(req: NextRequest) {
         watches:primary_watch_id(id, name)
       `, { count: 'exact' })
       .eq('account_id', profile.account_id)
+      .neq('display_status', 'hidden')
 
     if (heatLevel)  query = query.eq('heat_level', heatLevel)
     if (status)     query = query.eq('status', status)

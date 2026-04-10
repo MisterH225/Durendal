@@ -6,7 +6,7 @@ const BUSY_INTERVAL_MS = 500     // 0.5s quand jobs trouvés
 
 async function main() {
   console.log('[worker] Démarrage du worker Forecast…')
-  console.log('[worker] Scheduler intégré — AI trigger toutes les 6h, close-check toutes les 1h')
+  console.log('[worker] Scheduler intégré — AI trigger 6h, close-check 1h, news-signal 4h')
 
   while (true) {
     try {

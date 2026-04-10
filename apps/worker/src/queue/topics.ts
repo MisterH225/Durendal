@@ -8,6 +8,7 @@ export const FORECAST_TOPICS = {
   SIGNAL_EXPORTED:             'forecast.signal.exported',
   QUESTION_CLOSED:             'forecast.question.closed',
   RESOLUTION_READY:            'forecast.resolution.ready',
+  NEWS_SIGNAL_REQUESTED:       'forecast.news.signal.requested',
 } as const
 
 export type ForecastTopic = (typeof FORECAST_TOPICS)[keyof typeof FORECAST_TOPICS]

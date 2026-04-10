@@ -5,9 +5,11 @@
  * Tâches planifiées :
  *   - forecast:ai-trigger    → toutes les 6h  — déclenche les estimations IA
  *   - forecast:close-check   → toutes les 1h  — ferme les questions dont la close_date est passée
+ *   - forecast:news-signal   → toutes les 4h  — génère des signaux d'actualité par canal (IA)
  */
 
 import { createWorkerSupabase } from './supabase'
+import { runNewsSignalJob } from './jobs/forecast/news-signal.job'
 
 type Task = {
   name: string
@@ -120,6 +122,12 @@ const TASKS: Task[] = [
     intervalMs:  60 * 60 * 1000,        // every 1 hour
     lastRanAt:   0,
     fn:          closeExpiredQuestions,
+  },
+  {
+    name:        'forecast:news-signal',
+    intervalMs:  4 * 60 * 60 * 1000,   // every 4 hours
+    lastRanAt:   0,
+    fn:          runNewsSignalJob,
   },
 ]
 

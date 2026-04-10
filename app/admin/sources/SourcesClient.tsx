@@ -69,9 +69,10 @@ type Source = {
   forecast_tier?: 1 | 2 | 3 | null
   forecast_channel_slugs?: string[] | null
   forecast_why?: string | null
+  is_news_source?: boolean
 }
 
-type Tab = 'web' | 'documents' | 'forecast'
+type Tab = 'web' | 'documents' | 'forecast' | 'media'
 
 const FORECAST_CHANNELS = [
   { slug: 'macro-commodities',        label: 'Macro & Commodities' },
@@ -134,9 +135,10 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
   const [dragOver, setDragOver]     = useState(false)
 
   /* ── derived ── */
-  const webSources      = sources.filter(s => s.type === 'web' && !s.forecast_tier)
+  const webSources      = sources.filter(s => s.type === 'web' && !s.forecast_tier && !s.is_news_source)
   const docSources      = sources.filter(s => s.type === 'document')
-  const forecastSources = sources.filter(s => s.forecast_tier != null)
+  const forecastSources = sources.filter(s => s.forecast_tier != null && !s.is_news_source)
+  const mediaSources    = sources.filter(s => s.is_news_source === true)
 
   const categorizedCount = sources.filter(s => s.ai_categorized_at).length
   const allAiDomains = Array.from(new Set(sources.flatMap(s => s.ai_domains ?? []))).sort()
@@ -317,7 +319,7 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
           { label: 'Sources web', count: webSources.length, sub: `${webSources.filter(s => s.is_active).length} actives`, icon: Globe, color: 'text-blue-700', bg: 'bg-blue-50', subColor: 'text-green-600' },
           { label: 'Documents', count: docSources.length, sub: `${docSources.filter(s => s.is_active).length} actifs`, icon: FileText, color: 'text-purple-700', bg: 'bg-purple-50', subColor: 'text-green-600' },
           { label: 'Sources Forecast', count: forecastSources.length, sub: `${forecastSources.filter(s => s.is_active).length} actives`, icon: TrendingUp, color: 'text-violet-700', bg: 'bg-violet-50', subColor: 'text-green-600' },
-          { label: 'Catégorisées IA', count: categorizedCount, sub: `${allAiDomains.length} domaines`, icon: Sparkles, color: 'text-amber-600', bg: 'bg-amber-50', subColor: 'text-amber-600' },
+          { label: 'Sources Médias', count: mediaSources.length, sub: `${mediaSources.filter(s => s.is_active).length} actives`, icon: Sparkles, color: 'text-rose-600', bg: 'bg-rose-50', subColor: 'text-green-600' },
           { label: 'Total sources', count: sources.length, sub: `${sources.filter(s => s.is_active).length} actives`, icon: Globe, color: 'text-neutral-600', bg: 'bg-neutral-100', subColor: 'text-green-600' },
         ].map(({ label, count, sub, icon: Icon, color, bg, subColor }) => (
           <div key={label} className="card">
@@ -337,6 +339,7 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
           { key: 'web' as Tab,      label: 'Sites web',        icon: Globe,       count: webSources.length },
           { key: 'documents' as Tab,label: 'Documents',        icon: FileText,    count: docSources.length },
           { key: 'forecast' as Tab, label: 'Sources Forecast', icon: TrendingUp,  count: forecastSources.length },
+          { key: 'media' as Tab,    label: 'Sources Médias',   icon: Sparkles,    count: mediaSources.length },
         ]).map(({ key, label, icon: Icon, count }) => (
           <button
             key={key}
@@ -703,6 +706,133 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
               <p className="text-xs mt-1">Appliquez la migration 019 pour importer les sources.</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ═══════════ TAB: SOURCES MÉDIAS ═══════════ */}
+      {activeTab === 'media' && (
+        <div className="space-y-4">
+          <div className="card-lg">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-9 h-9 rounded-xl bg-rose-50 flex items-center justify-center flex-shrink-0">
+                <Sparkles size={16} className="text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-neutral-900">Sources médias & actualités</h3>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Ces sources alimentent le job <code className="bg-neutral-100 px-1 py-0.5 rounded text-[11px]">news-signal</code> qui génère
+                  des signaux d'actualité toutes les 4h via Gemini Search Grounding.
+                  Elles ne font pas de scraping direct — elles servent de contexte d'attribution.
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-neutral-100">
+                    <th className="text-left py-2 pr-4 text-neutral-500 font-medium">Source</th>
+                    <th className="text-left py-2 pr-4 text-neutral-500 font-medium">URL</th>
+                    <th className="text-left py-2 pr-4 text-neutral-500 font-medium">Tier</th>
+                    <th className="text-left py-2 pr-4 text-neutral-500 font-medium">Canaux couverts</th>
+                    <th className="text-left py-2 pr-4 text-neutral-500 font-medium">Fiabilité</th>
+                    <th className="text-left py-2 text-neutral-500 font-medium">Statut</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-50">
+                  {mediaSources.map(source => {
+                    const tier = source.forecast_tier as keyof typeof TIER_META | null
+                    const tierMeta = tier ? TIER_META[tier] : null
+                    return (
+                      <tr key={source.id} className="hover:bg-neutral-50 transition-colors">
+                        <td className="py-3 pr-4">
+                          <p className="font-semibold text-neutral-900">{source.name}</p>
+                          {source.forecast_why && (
+                            <p className="text-[11px] text-neutral-400 mt-0.5 max-w-[240px] leading-snug">{source.forecast_why}</p>
+                          )}
+                        </td>
+                        <td className="py-3 pr-4">
+                          {source.url && (
+                            <a href={source.url} target="_blank" rel="noreferrer"
+                               className="text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors">
+                              {source.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 30)}
+                              <ExternalLink size={10} />
+                            </a>
+                          )}
+                        </td>
+                        <td className="py-3 pr-4">
+                          {tierMeta && (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${tierMeta.color}`}>
+                              {tierMeta.label}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <div className="flex flex-wrap gap-1">
+                            {(source.forecast_channel_slugs ?? []).map(slug => {
+                              const ch = FORECAST_CHANNELS.find(c => c.slug === slug)
+                              return ch ? (
+                                <span key={slug} className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600 border border-neutral-200">
+                                  {ch.label}
+                                </span>
+                              ) : null
+                            })}
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <div className="flex gap-0.5">
+                            {[1,2,3,4,5].map(i => (
+                              <span key={i} className={`w-2 h-2 rounded-sm ${i <= (source.reliability_score ?? 0) ? 'bg-emerald-500' : 'bg-neutral-200'}`} />
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-3">
+                          <button
+                            onClick={() => toggleSource(source.id, source.is_active)}
+                            disabled={toggling === source.id}
+                            className={`text-[10px] font-semibold px-2 py-1 rounded border transition-all ${
+                              source.is_active
+                                ? 'bg-green-50 text-green-700 border-green-200 hover:bg-red-50 hover:text-red-700 hover:border-red-200'
+                                : 'bg-neutral-50 text-neutral-400 border-neutral-200 hover:bg-green-50 hover:text-green-700 hover:border-green-200'
+                            }`}
+                          >
+                            {toggling === source.id ? '...' : source.is_active ? 'Active' : 'Inactive'}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {mediaSources.length === 0 && (
+              <div className="text-center py-10 text-neutral-400">
+                <Sparkles size={28} className="mx-auto mb-2 text-neutral-200" />
+                <p className="text-sm">Aucune source médias configurée.</p>
+                <p className="text-xs mt-1">Appliquez la migration 020 pour importer les sources médias.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Info box */}
+          <div className="card-lg bg-rose-50 border-rose-200">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Sparkles size={14} className="text-rose-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-rose-800">Comment fonctionne le job news-signal ?</p>
+                <ul className="text-xs text-rose-700 mt-2 space-y-1">
+                  <li>• Le worker interroge Gemini Flash avec Google Search Grounding toutes les 4h</li>
+                  <li>• Pour chaque canal actif, Gemini identifie les 3 développements les plus significatifs</li>
+                  <li>• Les signaux sont dédupliqués sur une fenêtre de 4h (fingerprint du titre)</li>
+                  <li>• Les signaux générés apparaissent sur la landing page et la page /forecast/signals</li>
+                  <li>• Déclenchement manuel : <code className="bg-rose-100 px-1 rounded">GET /api/cron/forecast-news?secret=CRON_SECRET</code></li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

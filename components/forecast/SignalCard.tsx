@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight, CheckCircle2, TrendingUp, Zap, ExternalLink } from 'lucide-react'
+import { ArrowRight, CheckCircle2, TrendingUp, Zap, Newspaper, ExternalLink } from 'lucide-react'
 import type { Locale } from '@/lib/i18n/translations'
 import { tr } from '@/lib/i18n/translations'
 
@@ -34,12 +34,14 @@ const SEVERITY_DOT: Record<string, string> = {
 function SignalIcon({ type }: { type: string }) {
   if (type === 'resolution')        return <CheckCircle2 size={14} className="text-emerald-400 flex-shrink-0" />
   if (type === 'probability_shift') return <TrendingUp   size={14} className="text-blue-400    flex-shrink-0" />
+  if (type === 'news')              return <Newspaper    size={14} className="text-violet-400   flex-shrink-0" />
   return                                    <Zap          size={14} className="text-amber-400   flex-shrink-0" />
 }
 
 function signalTypeBadge(type: string, locale: Locale): string {
   if (type === 'resolution')        return tr(locale, 'signals.type_resolve')
   if (type === 'probability_shift') return tr(locale, 'signals.type_shift')
+  if (type === 'news')              return tr(locale, 'signals.type_news')
   return tr(locale, 'signals.type_signal')
 }
 
@@ -95,6 +97,23 @@ export function SignalCard({ signal: s, locale, compact = false }: Props) {
           <p className="text-xs text-neutral-500 leading-relaxed line-clamp-2">{s.summary}</p>
         )}
       </div>
+
+      {/* For news signals: region + source attribution */}
+      {s.signal_type === 'news' && !compact && (s.data?.region || s.data?.source_hint) && (
+        <div className="flex items-center gap-3 flex-wrap">
+          {s.data.region && (
+            <span className="text-[10px] text-neutral-500 flex items-center gap-1">
+              <span className="w-1 h-1 rounded-full bg-violet-400/60 inline-block" />
+              {s.data.region as string}
+            </span>
+          )}
+          {s.data.source_hint && (
+            <span className="text-[10px] text-neutral-600">
+              via {s.data.source_hint as string}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Linked question + CTA */}
       {q && qHref && (

@@ -19,17 +19,15 @@ module.exports = {
       script: 'node_modules/.bin/tsx',
       args: 'apps/worker/src/bootstrap.ts',
       cwd: '/var/www/durendal',
+      exec_mode: 'fork',
       instances: 1,
       autorestart: true,
       watch: false,
       max_memory_restart: '256M',
-      // Restart delay to avoid spin-loop on crash
       restart_delay: 5000,
-      max_restarts: 10,
+      max_restarts: 50,
       env: {
         NODE_ENV: 'production',
-        // Node 20.6+ : charge .env.local avant le démarrage (double sécurité avec dotenv dans bootstrap.ts)
-        NODE_OPTIONS: '--env-file=.env.local',
       },
     },
   ],

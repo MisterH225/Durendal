@@ -6,7 +6,12 @@ import { tr } from '@/lib/i18n/translations'
 import { localizeChannel } from '@/lib/forecast/locale'
 import { SignalCard } from '@/components/forecast/SignalCard'
 import type { SignalData } from '@/components/forecast/SignalCard'
-import { FORECAST_SOURCES, TIER_COLORS } from '@/lib/forecast/sources'
+
+const TIER_COLORS: Record<number, string> = {
+  1: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  2: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
+  3: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -20,7 +25,7 @@ export default async function SignalsPage({
   const db     = createAdminClient()
   const locale = getLocale()
 
-  const [{ data: channels }, signalsResult] = await Promise.all([
+  const [{ data: channels }, signalsResult, sourcesResult] = await Promise.all([
     db.from('forecast_channels').select('id, slug, name, name_fr, name_en').eq('is_active', true).order('sort_order'),
     (() => {
       let q = db
@@ -34,6 +39,12 @@ export default async function SignalsPage({
       }
       return q
     })(),
+    db.from('sources')
+      .select('id, name, url, forecast_tier, forecast_channel_slugs, forecast_why, reliability_score, is_active')
+      .not('forecast_tier', 'is', null)
+      .eq('is_active', true)
+      .order('forecast_tier', { ascending: true })
+      .order('name', { ascending: true }),
   ])
 
   let signals = (signalsResult.data ?? []) as SignalData[]
@@ -90,17 +101,17 @@ export default async function SignalsPage({
     if (!groups.length)        groups.push({ label: '',              items: signals })
   }
 
-  const tierLabels: Record<1 | 2 | 3, string> = {
+  const allSources = sourcesResult.data ?? []
+  const tierLabels: Record<number, string> = {
     1: tr(locale, 'signals.tier1'),
     2: tr(locale, 'signals.tier2'),
     3: tr(locale, 'signals.tier3'),
   }
-
   const sourcesByTier = [1, 2, 3].map(t => ({
-    tier:  t as 1 | 2 | 3,
-    label: tierLabels[t as 1 | 2 | 3],
-    items: FORECAST_SOURCES.filter(s => s.tier === t),
-  }))
+    tier:  t,
+    label: tierLabels[t],
+    items: allSources.filter(s => s.forecast_tier === t),
+  })).filter(g => g.items.length > 0)
 
   function buildHref(overrides: Record<string, string | undefined>) {
     const p = new URLSearchParams()
@@ -216,8 +227,8 @@ export default async function SignalsPage({
                 T{tier} — {label.split('—')[1]?.trim() ?? label}
               </div>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {items.map(src => (
-                  <div key={src.name} className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3 space-y-1">
+                {items.map((src: any) => (
+                  <div key={src.id} className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3 space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-neutral-200">{src.name}</span>
                       {src.url && (
@@ -226,7 +237,9 @@ export default async function SignalsPage({
                         </a>
                       )}
                     </div>
-                    <p className="text-[11px] text-neutral-500 leading-relaxed">{src.why}</p>
+                    {src.forecast_why && (
+                      <p className="text-[11px] text-neutral-500 leading-relaxed">{src.forecast_why}</p>
+                    )}
                   </div>
                 ))}
               </div>

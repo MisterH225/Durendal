@@ -2,7 +2,7 @@
 import { useState, useRef, useCallback } from 'react'
 import {
   Plus, Globe, FileText, X, AlertCircle, Check, Upload, Loader2,
-  Sparkles, Search, Trash2, Download, File, FileSpreadsheet,
+  Sparkles, Search, Trash2, Download, File, FileSpreadsheet, TrendingUp, ExternalLink,
 } from 'lucide-react'
 import { ALL_COUNTRIES } from '@/lib/countries'
 
@@ -65,9 +65,29 @@ type Source = {
   file_size?: number
   file_display_type?: string
   created_at?: string
+  // Forecast fields
+  forecast_tier?: 1 | 2 | 3 | null
+  forecast_channel_slugs?: string[] | null
+  forecast_why?: string | null
 }
 
-type Tab = 'web' | 'documents'
+type Tab = 'web' | 'documents' | 'forecast'
+
+const FORECAST_CHANNELS = [
+  { slug: 'macro-commodities',        label: 'Macro & Commodities' },
+  { slug: 'politics-policy',          label: 'Politics & Policy' },
+  { slug: 'tech-ai',                  label: 'Tech & AI' },
+  { slug: 'agriculture-risk',         label: 'Agriculture Risk' },
+  { slug: 'climate',                  label: 'Climate' },
+  { slug: 'logistics',                label: 'Logistics' },
+  { slug: 'regional-business-events', label: 'Regional Business Events' },
+]
+
+const TIER_META = {
+  1: { label: 'Tier 1 — Officiel', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  2: { label: 'Tier 2 — Analytique', color: 'bg-blue-100 text-blue-700 border-blue-200' },
+  3: { label: 'Tier 3 — Spécialisé', color: 'bg-amber-100 text-amber-700 border-amber-200' },
+} as const
 
 /* ── component ─────────────────────────────────────────────── */
 
@@ -114,8 +134,9 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
   const [dragOver, setDragOver]     = useState(false)
 
   /* ── derived ── */
-  const webSources = sources.filter(s => s.type === 'web')
-  const docSources = sources.filter(s => s.type === 'document')
+  const webSources      = sources.filter(s => s.type === 'web' && !s.forecast_tier)
+  const docSources      = sources.filter(s => s.type === 'document')
+  const forecastSources = sources.filter(s => s.forecast_tier != null)
 
   const categorizedCount = sources.filter(s => s.ai_categorized_at).length
   const allAiDomains = Array.from(new Set(sources.flatMap(s => s.ai_domains ?? []))).sort()
@@ -291,10 +312,11 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-5 gap-3 mb-6">
         {[
           { label: 'Sources web', count: webSources.length, sub: `${webSources.filter(s => s.is_active).length} actives`, icon: Globe, color: 'text-blue-700', bg: 'bg-blue-50', subColor: 'text-green-600' },
           { label: 'Documents', count: docSources.length, sub: `${docSources.filter(s => s.is_active).length} actifs`, icon: FileText, color: 'text-purple-700', bg: 'bg-purple-50', subColor: 'text-green-600' },
+          { label: 'Sources Forecast', count: forecastSources.length, sub: `${forecastSources.filter(s => s.is_active).length} actives`, icon: TrendingUp, color: 'text-violet-700', bg: 'bg-violet-50', subColor: 'text-green-600' },
           { label: 'Catégorisées IA', count: categorizedCount, sub: `${allAiDomains.length} domaines`, icon: Sparkles, color: 'text-amber-600', bg: 'bg-amber-50', subColor: 'text-amber-600' },
           { label: 'Total sources', count: sources.length, sub: `${sources.filter(s => s.is_active).length} actives`, icon: Globe, color: 'text-neutral-600', bg: 'bg-neutral-100', subColor: 'text-green-600' },
         ].map(({ label, count, sub, icon: Icon, color, bg, subColor }) => (
@@ -312,8 +334,9 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-4 border-b border-neutral-200">
         {([
-          { key: 'web' as Tab, label: 'Sites web', icon: Globe, count: webSources.length },
-          { key: 'documents' as Tab, label: 'Documents', icon: FileText, count: docSources.length },
+          { key: 'web' as Tab,      label: 'Sites web',        icon: Globe,       count: webSources.length },
+          { key: 'documents' as Tab,label: 'Documents',        icon: FileText,    count: docSources.length },
+          { key: 'forecast' as Tab, label: 'Sources Forecast', icon: TrendingUp,  count: forecastSources.length },
         ]).map(({ key, label, icon: Icon, count }) => (
           <button
             key={key}
@@ -563,6 +586,124 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
             )}
           </div>
         </>
+      )}
+
+      {/* ═══════════ TAB: SOURCES FORECAST ═══════════ */}
+      {activeTab === 'forecast' && (
+        <div className="space-y-8">
+          {/* Explication tiers */}
+          <div className="grid grid-cols-3 gap-3">
+            {([1, 2, 3] as const).map(tier => {
+              const meta = TIER_META[tier]
+              const count = forecastSources.filter(s => s.forecast_tier === tier).length
+              return (
+                <div key={tier} className={`rounded-lg border px-4 py-3 ${meta.color}`}>
+                  <div className="text-xs font-bold mb-0.5">{meta.label}</div>
+                  <div className="text-lg font-bold">{count}</div>
+                  <div className="text-[10px] opacity-70">source{count > 1 ? 's' : ''}</div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Table par tier */}
+          {([1, 2, 3] as const).map(tier => {
+            const tierSources = forecastSources
+              .filter(s => s.forecast_tier === tier)
+              .sort((a, b) => a.name.localeCompare(b.name))
+            if (!tierSources.length) return null
+            const meta = TIER_META[tier]
+
+            return (
+              <div key={tier}>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.color}`}>
+                    T{tier}
+                  </span>
+                  <h3 className="text-sm font-semibold text-neutral-800">{meta.label}</h3>
+                  <span className="text-[10px] text-neutral-400">({tierSources.length})</span>
+                </div>
+
+                <div className="card-lg p-0 overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-neutral-50 border-b border-neutral-200">
+                        {['Source', 'Canaux Forecast', 'Pourquoi', 'Fiabilité', 'Statut', ''].map(h => (
+                          <th key={h} className="text-left py-2.5 px-3 text-neutral-500 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tierSources.map(source => (
+                        <tr key={source.id} className="border-b border-neutral-50 hover:bg-neutral-50 transition-colors">
+                          <td className="py-2.5 px-3 max-w-[200px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-neutral-900 truncate">{source.name}</span>
+                              {source.url && (
+                                <a href={source.url} target="_blank" rel="noopener noreferrer"
+                                  className="text-neutral-300 hover:text-blue-600 transition-colors flex-shrink-0">
+                                  <ExternalLink size={11} />
+                                </a>
+                              )}
+                            </div>
+                            {source.ai_description && (
+                              <div className="text-[10px] text-neutral-400 truncate max-w-[180px]" title={source.ai_description}>
+                                {source.ai_description}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex flex-wrap gap-0.5 max-w-[200px]">
+                              {(source.forecast_channel_slugs ?? []).map(slug => {
+                                const ch = FORECAST_CHANNELS.find(c => c.slug === slug)
+                                return (
+                                  <span key={slug} className="badge text-[9px] bg-violet-50 text-violet-700 border border-violet-200">
+                                    {ch?.label ?? slug}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 max-w-[220px]">
+                            <span className="text-[10px] text-neutral-500 line-clamp-2" title={source.forecast_why ?? ''}>
+                              {source.forecast_why}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex gap-0.5">
+                              {[1,2,3,4,5].map(i => (
+                                <div key={i} className={`w-2 h-2 rounded-sm ${i <= (source.reliability_score || 3) ? 'bg-amber-500' : 'bg-neutral-200'}`} />
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className={`badge ${source.is_active ? 'badge-green' : 'badge-gray'}`}>
+                              {source.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <button onClick={() => toggleActive(source)} disabled={toggling === source.id}
+                              className={`text-[10px] px-2 py-1 rounded transition-colors font-medium disabled:opacity-50 ${source.is_active ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-700 hover:bg-green-100'}`}>
+                              {toggling === source.id ? '...' : source.is_active ? 'Désactiver' : 'Activer'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })}
+
+          {forecastSources.length === 0 && (
+            <div className="card-lg text-center py-12 text-neutral-400">
+              <TrendingUp size={32} className="mx-auto mb-3 text-neutral-200" />
+              <p className="text-sm">Aucune source Forecast configurée.</p>
+              <p className="text-xs mt-1">Appliquez la migration 019 pour importer les sources.</p>
+            </div>
+          )}
+        </div>
       )}
 
       {/* ═══════════ MODAL: AJOUT SOURCE WEB ═══════════ */}

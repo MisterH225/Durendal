@@ -72,6 +72,7 @@ export async function callGeminiWithSearch(
   options: {
     model?: GeminiModel
     maxOutputTokens?: number
+    systemInstruction?: string
   } = {}
 ): Promise<{ text: string; sources: GroundingSource[]; tokensUsed: number }> {
   const apiKey = process.env.GEMINI_API_KEY
@@ -80,16 +81,21 @@ export async function callGeminiWithSearch(
   const model           = options.model           ?? 'gemini-2.5-flash'
   const maxOutputTokens = options.maxOutputTokens ?? 3000
 
+  const body: Record<string, unknown> = {
+    contents: [{ parts: [{ text: prompt }] }],
+    tools: [{ googleSearch: {} }],
+    generationConfig: { maxOutputTokens, temperature: 0.1 },
+  }
+  if (options.systemInstruction) {
+    body.system_instruction = { parts: [{ text: options.systemInstruction }] }
+  }
+
   const res = await fetch(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ googleSearch: {} }],
-        generationConfig: { maxOutputTokens, temperature: 0.1 },
-      }),
+      body: JSON.stringify(body),
     }
   )
 

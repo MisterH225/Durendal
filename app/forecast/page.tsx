@@ -41,7 +41,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
       .select('id, slug, title, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name, name_fr, name_en)')
       .eq('featured', true).eq('status', 'open').order('close_date', { ascending: true }).limit(3),
     db.from('forecast_signal_feed')
-      .select('id, signal_type, title, summary, severity, data, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
+      .select('id, signal_type, title, summary, severity, data, created_at, forecast_questions!left(id, slug, title, blended_probability), forecast_channels!left(id, slug, name, name_fr, name_en)')
       .order('created_at', { ascending: false })
       .limit(6),
   ])

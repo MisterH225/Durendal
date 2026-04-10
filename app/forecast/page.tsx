@@ -1,7 +1,9 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
-import { Calendar, Users, TrendingUp, ChevronRight } from 'lucide-react'
+import { SignalCard } from '@/components/forecast/SignalCard'
+import type { SignalData } from '@/components/forecast/SignalCard'
+import { Calendar, Users, TrendingUp, ChevronRight, Radio } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
 import { tr } from '@/lib/i18n/translations'
 import { localizeChannel } from '@/lib/forecast/locale'
@@ -30,7 +32,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
   const db = createAdminClient()
   const locale = getLocale()
 
-  const [{ data: channels }, channelResult, featuredResult] = await Promise.all([
+  const [{ data: channels }, channelResult, featuredResult, signalsResult] = await Promise.all([
     db.from('forecast_channels').select('id, slug, name, name_fr, name_en').eq('is_active', true).order('sort_order'),
     searchParams.channel
       ? db.from('forecast_channels').select('id').eq('slug', searchParams.channel).single()
@@ -38,6 +40,10 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
     db.from('forecast_questions')
       .select('id, slug, title, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name, name_fr, name_en)')
       .eq('featured', true).eq('status', 'open').order('close_date', { ascending: true }).limit(3),
+    db.from('forecast_signal_feed')
+      .select('id, signal_type, title, summary, severity, data, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
+      .order('created_at', { ascending: false })
+      .limit(6),
   ])
 
   const channelId = (channelResult as any)?.data?.id ?? null
@@ -48,6 +54,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
 
   const { data: questions } = await questionQuery
   const featured = featuredResult.data ?? []
+  const liveSignals = (signalsResult.data ?? []) as SignalData[]
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-10 space-y-12">
@@ -94,6 +101,40 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
           </div>
         </section>
       )}
+
+      {/* Live Signals */}
+      <section>
+        <div className="flex items-center justify-between mb-5">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Radio size={13} className="text-red-400 animate-pulse" />
+              <h2 className="text-base font-bold text-white">{tr(locale, 'signals.section_title')}</h2>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
+                {tr(locale, 'signals.live_badge')}
+              </span>
+            </div>
+            <p className="text-xs text-neutral-500">{tr(locale, 'signals.section_sub')}</p>
+          </div>
+          <Link
+            href="/forecast/signals"
+            className="flex-shrink-0 text-xs font-semibold text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            {tr(locale, 'signals.view_all')}
+          </Link>
+        </div>
+
+        {liveSignals.length > 0 ? (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {liveSignals.map(s => (
+              <SignalCard key={s.id} signal={s} locale={locale} compact />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-neutral-800 py-12 text-center text-neutral-600 text-sm">
+            {tr(locale, 'signals.empty')}
+          </div>
+        )}
+      </section>
 
       {/* Channel chips */}
       <div className="flex flex-wrap gap-2">

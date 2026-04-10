@@ -82,7 +82,8 @@ export default async function ForecastLayout({ children }: { children: React.Rea
             Durendal Forecast — {tr(locale, 'footer.disclaimer')}
           </p>
           <div className="flex items-center gap-4 text-xs text-neutral-700">
-            <Link href="/forecast" className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.explore')}</Link>
+            <Link href="/forecast"             className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.explore')}</Link>
+            <Link href="/forecast/signals"     className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.signals')}</Link>
             <Link href="/forecast/leaderboard" className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.leaderboard')}</Link>
             <Link href="/dashboard" className="hover:text-neutral-400 transition-colors">{tr(locale, 'footer.veille')}</Link>
           </div>

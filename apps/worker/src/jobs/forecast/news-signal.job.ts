@@ -30,38 +30,38 @@ interface NewsAdapter {
 const CHANNEL_NEWS_ADAPTERS: Record<string, NewsAdapter> = {
   'macro-commodities': {
     regionContext: 'marchés mondiaux avec focus sur les économies émergentes et l\'Afrique subsaharienne',
-    topicFocus: 'taux directeurs banques centrales, prix matières premières (pétrole, gaz, métaux, céréales), flux de capitaux, indicateurs macro (PMI, inflation)',
-    sourcesHint: 'Bloomberg, Reuters, Financial Times, CNBC',
+    topicFocus: 'taux directeurs banques centrales, prix matières premières (pétrole, gaz, métaux, céréales), flux de capitaux, indicateurs macro (PMI, inflation), annonces budgétaires des ministères des finances africains',
+    sourcesHint: 'Bloomberg, Reuters, Financial Times, CNBC, sites officiels des ministères des finances africains (mof.go.ke, treasury.gov.za, finances.gouv.sn, finance.gov.ng, mofep.gov.gh, minfi.gov.cm)',
   },
   'politics-policy': {
-    regionContext: 'géopolitique mondiale avec focus Afrique, Moyen-Orient et relations Europe-Afrique',
-    topicFocus: 'élections, décisions de politique étrangère, sanctions, accords diplomatiques, instabilité politique',
-    sourcesHint: 'BBC World News, Al Jazeera, RFI, France 24, Reuters',
+    regionContext: 'géopolitique africaine et mondiale — présidences, gouvernements et sécurité régionale',
+    topicFocus: 'élections, décisions des présidences africaines, décrets présidentiels, accords diplomatiques inter-africains (UA, CEDEAO, EAC, SADC), déclarations officielles des chefs d\'État',
+    sourcesHint: 'BBC World News, Al Jazeera, RFI, France 24, Reuters, sites officiels des présidences africaines (presidence.sn, statehouse.gov.ng, presidency.gov.za, president.go.ke, prc.cm, el-mouradia.dz)',
   },
   'tech-ai': {
     regionContext: 'technologie mondiale avec impact sur les marchés africains et l\'adoption numérique',
-    topicFocus: 'lancement de produits IA, régulation numérique (EU AI Act, US), fintech Afrique, infrastructures télécoms',
-    sourcesHint: 'Bloomberg, Financial Times, Reuters',
+    topicFocus: 'lancement de produits IA, régulation numérique (EU AI Act, US), fintech Afrique, infrastructures télécoms, politiques numériques gouvernementales africaines',
+    sourcesHint: 'Bloomberg, Financial Times, Reuters, presidency.gov.rw (Rwanda hub tech)',
   },
   'agriculture-risk': {
     regionContext: 'Afrique subsaharienne, Sahel, Afrique de l\'Est — production agricole et sécurité alimentaire',
-    topicFocus: 'conditions météo extrêmes, prix des céréales (blé, maïs, riz, sorgho), rapports FAO/USDA, crises alimentaires',
-    sourcesHint: 'FAO, Reuters, RFI, Al Jazeera',
+    topicFocus: 'conditions météo extrêmes, prix des céréales (blé, maïs, riz, sorgho), rapports FAO/USDA, crises alimentaires, politiques agricoles des gouvernements africains',
+    sourcesHint: 'FAO, Reuters, RFI, Al Jazeera, ministères de l\'agriculture africains, presidence.gov.mg (Madagascar/vanille)',
   },
   'climate': {
     regionContext: 'impact climatique sur l\'Afrique, transitions énergétiques et engagements internationaux',
-    topicFocus: 'événements météo extrêmes, COP/accords climatiques, transition énergétique solaire Afrique, sécheresses/inondations',
-    sourcesHint: 'BBC World News, Reuters, Euronews, France 24',
+    topicFocus: 'événements météo extrêmes, COP/accords climatiques, transition énergétique solaire Afrique, sécheresses/inondations, politiques énergétiques des présidences africaines',
+    sourcesHint: 'BBC World News, Reuters, Euronews, France 24, op.gov.na (Namibie hydrogène vert)',
   },
   'logistics': {
-    regionContext: 'routes commerciales mondiales et corridors logistiques africains',
-    topicFocus: 'tensions maritimes (Mer Rouge, Suez), ports africains, corridors CFTA, prix fret, délais douaniers',
-    sourcesHint: 'Reuters, Bloomberg, Lloyd\'s List',
+    regionContext: 'routes commerciales mondiales, corridors logistiques africains et ports stratégiques',
+    topicFocus: 'tensions maritimes (Mer Rouge, Bab-el-Mandeb, Suez), ports africains (Djibouti, Mombasa, Dar-es-Salam, Cotonou, Lomé, Durban), corridors CFTA, prix fret, délais douaniers',
+    sourcesHint: 'Reuters, Bloomberg, Lloyd\'s List, presidence.dj (Djibouti hub logistique)',
   },
   'regional-business-events': {
-    regionContext: 'économies régionales africaines — Afrique de l\'Ouest, Centrale, de l\'Est, du Nord',
-    topicFocus: 'investissements directs, annonces entreprises locales, réformes économiques nationales, IDE, partenariats commerciaux',
-    sourcesHint: 'RFI, Al Jazeera, France 24, Reuters Africa',
+    regionContext: 'économies régionales africaines — Afrique de l\'Ouest, Centrale, de l\'Est, du Nord, Australe',
+    topicFocus: 'investissements directs, annonces des présidences et primatures africaines, réformes économiques, IDE, partenariats commerciaux, plans de développement nationaux',
+    sourcesHint: 'RFI, Al Jazeera, France 24, Reuters Africa, presidence.ci (Côte d\'Ivoire), statehouse.gov.ng (Nigeria), presidency.gov.za (Afrique du Sud), pmo.gov.et (Éthiopie)',
   },
 }
 

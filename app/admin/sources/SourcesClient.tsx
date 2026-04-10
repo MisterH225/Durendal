@@ -70,9 +70,10 @@ type Source = {
   forecast_channel_slugs?: string[] | null
   forecast_why?: string | null
   is_news_source?: boolean
+  is_gov_source?: boolean
 }
 
-type Tab = 'web' | 'documents' | 'forecast' | 'media'
+type Tab = 'web' | 'documents' | 'forecast' | 'media' | 'gov'
 
 const FORECAST_CHANNELS = [
   { slug: 'macro-commodities',        label: 'Macro & Commodities' },
@@ -135,10 +136,11 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
   const [dragOver, setDragOver]     = useState(false)
 
   /* ── derived ── */
-  const webSources      = sources.filter(s => s.type === 'web' && !s.forecast_tier && !s.is_news_source)
+  const webSources      = sources.filter(s => s.type === 'web' && !s.forecast_tier && !s.is_news_source && !s.is_gov_source)
   const docSources      = sources.filter(s => s.type === 'document')
-  const forecastSources = sources.filter(s => s.forecast_tier != null && !s.is_news_source)
+  const forecastSources = sources.filter(s => s.forecast_tier != null && !s.is_news_source && !s.is_gov_source)
   const mediaSources    = sources.filter(s => s.is_news_source === true)
+  const govSources      = sources.filter(s => s.is_gov_source === true)
 
   const categorizedCount = sources.filter(s => s.ai_categorized_at).length
   const allAiDomains = Array.from(new Set(sources.flatMap(s => s.ai_domains ?? []))).sort()
@@ -320,7 +322,7 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
           { label: 'Documents', count: docSources.length, sub: `${docSources.filter(s => s.is_active).length} actifs`, icon: FileText, color: 'text-purple-700', bg: 'bg-purple-50', subColor: 'text-green-600' },
           { label: 'Sources Forecast', count: forecastSources.length, sub: `${forecastSources.filter(s => s.is_active).length} actives`, icon: TrendingUp, color: 'text-violet-700', bg: 'bg-violet-50', subColor: 'text-green-600' },
           { label: 'Sources Médias', count: mediaSources.length, sub: `${mediaSources.filter(s => s.is_active).length} actives`, icon: Sparkles, color: 'text-rose-600', bg: 'bg-rose-50', subColor: 'text-green-600' },
-          { label: 'Total sources', count: sources.length, sub: `${sources.filter(s => s.is_active).length} actives`, icon: Globe, color: 'text-neutral-600', bg: 'bg-neutral-100', subColor: 'text-green-600' },
+          { label: 'Sources Officielles', count: govSources.length, sub: `${govSources.filter(s => s.is_active).length} actives`, icon: Globe, color: 'text-emerald-700', bg: 'bg-emerald-50', subColor: 'text-green-600' },
         ].map(({ label, count, sub, icon: Icon, color, bg, subColor }) => (
           <div key={label} className="card">
             <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center mb-2`}>
@@ -336,10 +338,11 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-4 border-b border-neutral-200">
         {([
-          { key: 'web' as Tab,      label: 'Sites web',        icon: Globe,       count: webSources.length },
-          { key: 'documents' as Tab,label: 'Documents',        icon: FileText,    count: docSources.length },
-          { key: 'forecast' as Tab, label: 'Sources Forecast', icon: TrendingUp,  count: forecastSources.length },
-          { key: 'media' as Tab,    label: 'Sources Médias',   icon: Sparkles,    count: mediaSources.length },
+          { key: 'web' as Tab,      label: 'Sites web',           icon: Globe,       count: webSources.length },
+          { key: 'documents' as Tab,label: 'Documents',           icon: FileText,    count: docSources.length },
+          { key: 'forecast' as Tab, label: 'Sources Forecast',    icon: TrendingUp,  count: forecastSources.length },
+          { key: 'media' as Tab,    label: 'Sources Médias',      icon: Sparkles,    count: mediaSources.length },
+          { key: 'gov' as Tab,      label: 'Sources Officielles', icon: Globe,       count: govSources.length },
         ]).map(({ key, label, icon: Icon, count }) => (
           <button
             key={key}
@@ -832,6 +835,117 @@ export default function SourcesClient({ initialSources }: { initialSources: Sour
                 </ul>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════ TAB: SOURCES OFFICIELLES ═══════════ */}
+      {activeTab === 'gov' && (
+        <div className="space-y-4">
+          <div className="card-lg">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                <Globe size={16} className="text-emerald-700" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-neutral-900">Sources officielles africaines</h3>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Présidences, ministères des finances, de la défense et primatures.
+                  Toutes classées <strong>Tier 1</strong> — références primaires pour les canaux
+                  <em> politics-policy</em>, <em>macro-commodities</em> et <em>regional-business-events</em>.
+                </p>
+              </div>
+              <div className="ml-auto text-right flex-shrink-0">
+                <span className="text-lg font-bold text-neutral-900">{govSources.length}</span>
+                <p className="text-[11px] text-neutral-500">{govSources.filter(s => s.is_active).length} actives</p>
+              </div>
+            </div>
+
+            {/* Group by region using name prefix patterns */}
+            {[
+              { region: 'Afrique du Nord',   test: (n: string) => ['Maroc','Algérie','Tunisie','Égypte','Libye'].some(c => n.includes(c)) },
+              { region: 'Afrique de l\'Ouest', test: (n: string) => ['Sénégal','Côte d\'Ivoire','Ghana','Nigeria','Mali','Burkina','Bénin','Togo','Guinée','Niger','Mauritanie','Sierra','Liberia','Cap-Vert','Gambie'].some(c => n.includes(c)) },
+              { region: 'Afrique Centrale',  test: (n: string) => ['Cameroun','RDC','Congo','Gabon','Tchad','RCA','Équatoriale','Sao Tomé'].some(c => n.includes(c)) },
+              { region: 'Afrique de l\'Est', test: (n: string) => ['Kenya','Éthiopie','Rwanda','Tanzanie','Ouganda','Djibouti','Somalie','Burundi','Érythrée','Soudan'].some(c => n.includes(c)) },
+              { region: 'Afrique Australe',  test: (n: string) => ['Afrique du Sud','Angola','Mozambique','Zimbabwe','Zambie','Namibie','Madagascar','Maurice','Malawi','Botswana','Lesotho','Eswatini'].some(c => n.includes(c)) },
+            ].map(({ region, test }) => {
+              const regionSources = govSources.filter(s => test(s.name))
+              if (!regionSources.length) return null
+              return (
+                <div key={region} className="mb-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-bold text-emerald-700 uppercase tracking-wide">{region}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{regionSources.length}</span>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-neutral-100">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-neutral-50 border-b border-neutral-100">
+                          <th className="text-left py-2 px-3 text-neutral-500 font-medium">Source</th>
+                          <th className="text-left py-2 px-3 text-neutral-500 font-medium">URL</th>
+                          <th className="text-left py-2 px-3 text-neutral-500 font-medium">Canaux</th>
+                          <th className="text-left py-2 px-3 text-neutral-500 font-medium">Statut</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-50">
+                        {regionSources.map(source => (
+                          <tr key={source.id} className="hover:bg-neutral-50 transition-colors">
+                            <td className="py-2.5 px-3">
+                              <p className="font-semibold text-neutral-900">{source.name}</p>
+                              {source.forecast_why && (
+                                <p className="text-[11px] text-neutral-400 mt-0.5 max-w-[220px] leading-snug line-clamp-2">{source.forecast_why}</p>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {source.url && (
+                                <a href={source.url} target="_blank" rel="noreferrer"
+                                   className="text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors text-[11px]">
+                                  {source.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 28)}
+                                  <ExternalLink size={9} />
+                                </a>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="flex flex-wrap gap-1">
+                                {(source.forecast_channel_slugs ?? []).map(slug => {
+                                  const ch = FORECAST_CHANNELS.find(c => c.slug === slug)
+                                  return ch ? (
+                                    <span key={slug} className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600 border border-neutral-200">
+                                      {ch.label}
+                                    </span>
+                                  ) : null
+                                })}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <button
+                                onClick={() => toggleSource(source.id, source.is_active)}
+                                disabled={toggling === source.id}
+                                className={`text-[10px] font-semibold px-2 py-1 rounded border transition-all ${
+                                  source.is_active
+                                    ? 'bg-green-50 text-green-700 border-green-200 hover:bg-red-50 hover:text-red-700 hover:border-red-200'
+                                    : 'bg-neutral-50 text-neutral-400 border-neutral-200 hover:bg-green-50 hover:text-green-700 hover:border-green-200'
+                                }`}
+                              >
+                                {toggling === source.id ? '...' : source.is_active ? 'Active' : 'Inactive'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            })}
+
+            {govSources.length === 0 && (
+              <div className="text-center py-10 text-neutral-400">
+                <Globe size={28} className="mx-auto mb-2 text-neutral-200" />
+                <p className="text-sm">Aucune source officielle configurée.</p>
+                <p className="text-xs mt-1">Appliquez la migration 021 pour importer les sites gouvernementaux africains.</p>
+              </div>
+            )}
           </div>
         </div>
       )}

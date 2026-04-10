@@ -24,8 +24,8 @@ export default async function SignalsPage({
         .from('forecast_signal_feed')
         .select(`
           id, signal_type, title, summary, severity, data, created_at,
-          forecast_questions!left ( id, slug, title, blended_probability ),
-          forecast_channels!left  ( id, slug, name, name_fr, name_en )
+          forecast_questions ( id, slug, title, blended_probability ),
+          forecast_channels  ( id, slug, name, name_fr, name_en )
         `)
         .order('created_at', { ascending: false })
         .limit(100)

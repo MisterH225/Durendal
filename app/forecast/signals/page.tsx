@@ -212,9 +212,9 @@ export default async function SignalsPage({
                   {group.label}
                 </div>
               )}
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid sm:grid-cols-2 gap-4">
                 {group.items.map(s => (
-                  <SignalCard key={s.id} signal={s} locale={locale} compact />
+                  <SignalCard key={s.id} signal={s} locale={locale} />
                 ))}
               </div>
             </div>

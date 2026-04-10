@@ -4,7 +4,7 @@
  * Déclenche une estimation IA pour toutes les questions ouvertes.
  * Priorise les questions proches de leur date de clôture.
  *
- * Appel Vercel Cron (vercel.json) ou externe (avec CRON_SECRET).
+ * Appel externe via CRON_SECRET (cron Hostinger ou worker interne).
  * En local : curl http://localhost:3000/api/cron/forecast-ai?secret=<CRON_SECRET>
  */
 

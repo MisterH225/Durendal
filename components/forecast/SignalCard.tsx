@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { ArrowRight, CheckCircle2, TrendingUp, Zap, Newspaper, ExternalLink } from 'lucide-react'
 import type { Locale } from '@/lib/i18n/translations'
 import { tr } from '@/lib/i18n/translations'
+import { SignalImage } from './SignalImage'
 
 export interface SignalData {
   id: string
@@ -93,18 +94,7 @@ export function SignalCard({ signal: s, locale, compact = false }: Props) {
     <div className="group rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-900 transition-all overflow-hidden flex flex-col h-full">
 
       {/* Image d'illustration */}
-      {imageUrl && !compact && (
-        <div className="relative w-full h-40 bg-neutral-800 overflow-hidden flex-shrink-0">
-          <img
-            src={imageUrl}
-            alt=""
-            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-            loading="lazy"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-neutral-900 via-transparent to-transparent" />
-        </div>
-      )}
+      {imageUrl && !compact && <SignalImage src={imageUrl} />}
 
       <div className="p-5 flex flex-col gap-3 flex-1">
         {/* Badges row */}

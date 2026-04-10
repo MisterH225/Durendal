@@ -1,7 +1,8 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import Link from 'next/link'
-import { Plus, Bot, CheckCircle, Clock, XCircle, TrendingUp } from 'lucide-react'
+import { Plus, Bot, CheckCircle, Clock, XCircle, TrendingUp, Radio, Newspaper } from 'lucide-react'
 import { ForecastAdminActions } from './ForecastAdminActions'
+import { GenerateSignalsButton } from './GenerateSignalsButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,12 +20,19 @@ function fmtDate(s: string | null) { return s ? new Date(s).toLocaleDateString('
 
 export default async function ForecastAdminPage() {
   const db = createAdminClient()
-  const [{ data: questions }, { data: channels }, { data: events }] = await Promise.all([
+  const [{ data: questions }, { data: channels }, { data: events }, { data: recentSignals }] = await Promise.all([
     db.from('forecast_questions').select('id, slug, title, status, close_date, featured, forecast_count, crowd_probability, ai_probability, blended_probability, created_at, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title )').order('created_at', { ascending: false }).limit(200),
     db.from('forecast_channels').select('id, slug, name').eq('is_active', true).order('sort_order'),
     db.from('forecast_events').select('id, slug, title, channel_id, status').order('created_at', { ascending: false }).limit(50),
+    db.from('forecast_signal_feed').select('id, signal_type, title, severity, created_at').order('created_at', { ascending: false }).limit(5),
   ])
   const stats = { total: questions?.length ?? 0, open: questions?.filter(q => q.status === 'open').length ?? 0, closed: questions?.filter(q => q.status === 'closed').length ?? 0, draft: questions?.filter(q => q.status === 'draft').length ?? 0 }
+  const signalCount = recentSignals?.length ?? 0
+  const SIGNAL_TYPE_META: Record<string, { label: string; color: string }> = {
+    news:              { label: 'Actualité', color: 'bg-violet-100 text-violet-700' },
+    probability_shift: { label: 'Glissement', color: 'bg-blue-100 text-blue-700' },
+    resolution:        { label: 'Résolu', color: 'bg-green-100 text-green-700' },
+  }
 
   return (
     <div className="space-y-6">
@@ -34,6 +42,50 @@ export default async function ForecastAdminPage() {
           <p className="text-sm text-neutral-500 mt-0.5">Créez et gérez les questions de probabilité publiques.</p>
         </div>
         <Link href="/admin/forecast/questions/new" className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors font-medium"><Plus size={14} />Nouvelle question</Link>
+      </div>
+
+      {/* Signal Generator */}
+      <div className="bg-white rounded-xl border border-neutral-200 p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-violet-50 flex items-center justify-center">
+              <Radio size={15} className="text-violet-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-neutral-900">Signaux d'actualité</h3>
+              <p className="text-xs text-neutral-500">Gemini analyse les dernières 24-48h par canal via Google Search Grounding.</p>
+            </div>
+          </div>
+          <Link href="/forecast/signals" target="_blank"
+            className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+            Voir le feed →
+          </Link>
+        </div>
+
+        <GenerateSignalsButton />
+
+        {/* Recent signals */}
+        {signalCount === 0 ? (
+          <div className="rounded-lg border border-dashed border-neutral-200 py-4 text-center text-xs text-neutral-400">
+            Aucun signal dans la base. Cliquez sur "Générer" pour en créer.
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wide">Derniers signaux</p>
+            {recentSignals?.map(s => {
+              const meta = SIGNAL_TYPE_META[s.signal_type] ?? { label: s.signal_type, color: 'bg-neutral-100 text-neutral-600' }
+              return (
+                <div key={s.id} className="flex items-center gap-2 text-xs text-neutral-700 py-1.5 border-b border-neutral-50 last:border-0">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${meta.color} flex-shrink-0`}>{meta.label}</span>
+                  <span className="flex-1 truncate">{s.title}</span>
+                  <span className="text-neutral-400 flex-shrink-0">
+                    {new Date(s.created_at).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-4 gap-4">

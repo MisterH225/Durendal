@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Eye, TrendingUp, Bot, Star, MessageSquare,
-  CreditCard, X, LogOut, ChevronRight, Settings, Target
+  CreditCard, X, LogOut, ChevronRight, Settings, Target, BarChart2
 } from 'lucide-react'
 
 const navItems = [
@@ -20,6 +20,9 @@ const navItems = [
     { href: '/agents', label: 'Agents IA', icon: Bot },
     { href: '/actions', label: 'Actions marché', icon: Star },
     { href: '/assistant', label: 'Assistant IA', icon: MessageSquare },
+  ]},
+  { section: 'Intelligence', items: [
+    { href: '/forecast', label: 'Forecast', icon: BarChart2, external: false },
   ]},
   { section: 'Compte', items: [
     { href: '/forfait', label: 'Forfait', icon: CreditCard },
@@ -65,12 +68,18 @@ export default function Sidebar({ profile }: { profile: any }) {
             <div className="section-header">{section}</div>
             {items.map(({ href, label, icon: Icon }) => {
               const active = pathname === href || pathname.startsWith(href + '/')
+              const isForecast = href === '/forecast'
               return (
                 <Link key={href} href={href}
                   onClick={() => setMobileOpen(false)}
                   className={`sidebar-item ${active ? 'sidebar-item-active' : ''}`}>
-                  <Icon size={15} />
+                  <Icon size={15} className={isForecast ? 'text-violet-400' : ''} />
                   <span>{label}</span>
+                  {isForecast && !active && (
+                    <span className="ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-900/60 text-violet-300 border border-violet-700/40">
+                      NEW
+                    </span>
+                  )}
                   {active && <ChevronRight size={12} className="ml-auto opacity-50" />}
                 </Link>
               )

@@ -28,6 +28,8 @@ module.exports = {
       max_restarts: 10,
       env: {
         NODE_ENV: 'production',
+        // Node 20.6+ : charge .env.local avant le démarrage (double sécurité avec dotenv dans bootstrap.ts)
+        NODE_OPTIONS: '--env-file=.env.local',
       },
     },
   ],

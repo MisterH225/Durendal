@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
-import { BarChart2, Eye, FileText, Zap, Bot, TrendingUp, Clock, CheckCircle2, AlertCircle, XCircle } from 'lucide-react'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { BarChart2, Eye, FileText, Zap, Bot, TrendingUp, Clock, CheckCircle2, AlertCircle, XCircle, Activity } from 'lucide-react'
 import Link from 'next/link'
 
 // Statut d'un agent IA basé sur les derniers agent_jobs
@@ -149,6 +150,14 @@ export default async function DashboardPage() {
       latestJobByAgent[job.agent_number] = job
     }
   }
+
+  // ── Signaux forecast récents ─────────────────────────────────────────────
+  const adminDb = createAdminClient()
+  const { data: forecastSignals } = await adminDb
+    .from('forecast_signal_feed')
+    .select('id, signal_type, title, summary, severity, created_at, forecast_questions(slug, title), forecast_channels(name, slug)')
+    .order('created_at', { ascending: false })
+    .limit(4)
 
   const firstName = profile?.full_name?.split(' ')[0] || 'vous'
   const isNew = (watches || []).length === 0
@@ -336,6 +345,52 @@ export default async function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Signaux forecast ─────────────────────────────────────────────────── */}
+      {(forecastSignals ?? []).length > 0 && (
+        <div className="card-lg mb-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-bold text-neutral-900 flex items-center gap-1.5">
+              <Activity size={14} className="text-violet-600" />
+              Signaux forecast marché
+            </h2>
+            <Link href="/forecast" className="text-xs text-violet-700 font-medium hover:underline">
+              Explorer →
+            </Link>
+          </div>
+          <div className="space-y-3">
+            {(forecastSignals ?? []).map((s: any) => {
+              const isResolution    = s.signal_type === 'resolution'
+              const isProbShift     = s.signal_type === 'probability_shift'
+              const severityColor   = s.severity === 'high' ? 'text-red-600' : s.severity === 'medium' ? 'text-amber-600' : 'text-green-600'
+              const badge = isResolution ? '🔚 Résolu' : isProbShift ? '📊 Glissement' : '📡 Signal'
+              const qSlug = s.forecast_questions?.slug ?? s.forecast_questions?.id
+              return (
+                <div key={s.id} className="flex items-start gap-3 pb-3 border-b border-neutral-100 last:border-0 last:pb-0">
+                  <div className="flex-shrink-0 mt-0.5">
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700`}>{badge}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {qSlug ? (
+                      <Link href={`/forecast/q/${qSlug}`} className="text-xs font-semibold text-neutral-800 hover:text-violet-700 line-clamp-1">
+                        {s.title}
+                      </Link>
+                    ) : (
+                      <div className="text-xs font-semibold text-neutral-800 line-clamp-1">{s.title}</div>
+                    )}
+                    {s.summary && (
+                      <div className="text-[11px] text-neutral-500 line-clamp-1 mt-0.5">{s.summary}</div>
+                    )}
+                  </div>
+                  <div className="flex-shrink-0 text-[10px] text-neutral-400 whitespace-nowrap">
+                    {new Date(s.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Quick actions si nouveau */}
       {isNew && (

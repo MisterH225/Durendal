@@ -40,7 +40,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && isPublicRoute && !pathname.startsWith('/api')) {
+  // /forecast est public ET accessible aux users connectés (soumission de forecasts)
+  const isAuthFriendlyPublicRoute = pathname.startsWith('/forecast')
+  if (user && isPublicRoute && !pathname.startsWith('/api') && !isAuthFriendlyPublicRoute) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 

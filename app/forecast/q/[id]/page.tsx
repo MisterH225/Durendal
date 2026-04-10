@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
 import { HistorySparkline } from '@/components/forecast/HistorySparkline'
 import { SubmitForecastForm } from '@/components/forecast/SubmitForecastForm'
-import { ArrowLeft, Calendar, Users, Bot, ExternalLink, BookOpen } from 'lucide-react'
+import { ArrowLeft, Calendar, Users, Bot, ExternalLink, BookOpen, CheckCircle2 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,29 +21,44 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
   const db = createAdminClient()
   const sbUser = createClient()
 
+  // Étape 1 : récupérer la question (par slug OU uuid)
   const [{ data: { user } }, questionResult] = await Promise.all([
     sbUser.auth.getUser(),
-    db.from('forecast_questions').select('*, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title ), forecast_ai_forecasts ( probability, confidence, reasoning, model, created_at )').or(`id.eq.${params.id},slug.eq.${params.id}`).eq('forecast_ai_forecasts.is_current', true).neq('status', 'draft').maybeSingle(),
+    db
+      .from('forecast_questions')
+      .select('*, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title ), forecast_ai_forecasts ( probability, confidence, reasoning, model, created_at )')
+      .or(`id.eq.${params.id},slug.eq.${params.id}`)
+      .eq('forecast_ai_forecasts.is_current', true)
+      .neq('status', 'draft')
+      .maybeSingle(),
   ])
 
   if (!questionResult.data) notFound()
   const q = questionResult.data
 
-  // Must use q.id (UUID) — params.id may be a slug, which is not a valid question_id FK
-  const { data: historyData } = await db
-    .from('forecast_probability_history')
-    .select('snapshot_at, crowd_probability, ai_probability, blended_probability')
-    .eq('question_id', q.id)
-    .order('snapshot_at', { ascending: true })
-    .limit(60)
+  // Étape 2 : requêtes dépendantes de q.id (UUID garanti)
+  const [historyResult, userForecastResult] = await Promise.all([
+    db
+      .from('forecast_probability_history')
+      .select('snapshot_at, crowd_probability, ai_probability, blended_probability')
+      .eq('question_id', q.id)
+      .order('snapshot_at', { ascending: true })
+      .limit(60),
+    user
+      ? db
+          .from('forecast_user_forecasts')
+          .select('probability, revision')
+          .eq('question_id', q.id)
+          .eq('user_id', user.id)
+          .eq('is_current', true)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ])
 
-  const history = historyData ?? []
-
-  let userForecast: number | null = null
-  if (user) {
-    const { data: uf } = await db.from('forecast_user_forecasts').select('probability').eq('question_id', q.id).eq('user_id', user.id).eq('is_current', true).maybeSingle()
-    userForecast = uf ? Math.round(uf.probability * 100) : null
-  }
+  const history = historyResult.data ?? []
+  const userForecast = userForecastResult.data
+    ? Math.round((userForecastResult.data as any).probability * 100)
+    : null
 
   const ch = (q as any).forecast_channels
   const aiData = (q as any).forecast_ai_forecasts?.[0] ?? null
@@ -114,6 +129,23 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
         </div>
 
         <div className="space-y-4">
+          {/* Forecast actuel de l'utilisateur */}
+          {user && userForecast !== null && (
+            <div className="rounded-2xl border border-emerald-800/40 bg-emerald-950/20 p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 size={14} className="text-emerald-400" />
+                <span className="text-xs font-semibold text-emerald-300">Votre prévision actuelle</span>
+              </div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-3xl font-bold text-emerald-300 font-mono">{userForecast}%</span>
+                <span className="text-xs text-emerald-600">de probabilité</span>
+              </div>
+              <p className="text-[11px] text-emerald-700 mt-1">
+                Modifiez votre estimation ci-dessous si votre avis a changé.
+              </p>
+            </div>
+          )}
+
           {q.status === 'open' && <SubmitForecastForm questionId={q.id} currentUserProbability={userForecast} isAuthenticated={!!user} />}
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
             <div className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">Statistiques</div>

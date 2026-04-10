@@ -33,7 +33,7 @@ export async function runResolutionScoringJob(payload: ResolutionPayload): Promi
   // 1. Load question to confirm status
   const { data: question, error: qErr } = await supabase
     .from('forecast_questions')
-    .select('id, status, title')
+    .select('id, status, title, channel_id')
     .eq('id', questionId)
     .single()
 
@@ -96,6 +96,27 @@ export async function runResolutionScoringJob(payload: ResolutionPayload): Promi
   await refreshLeaderboardForUsers(supabase, affectedUserIds)
 
   console.log(`[resolution-scoring] Leaderboard mis à jour pour ${affectedUserIds.length} users.`)
+
+  // 6. Publier un signal dans forecast_signal_feed
+  await publishResolutionSignal(supabase, question, outcome, forecasts.length)
+}
+
+async function publishResolutionSignal(
+  supabase: ReturnType<typeof createWorkerSupabase>,
+  question: { id: string; title: string; channel_id?: string },
+  outcome: 'resolved_yes' | 'resolved_no',
+  participantCount: number,
+) {
+  const label = outcome === 'resolved_yes' ? '✅ OUI' : '❌ NON'
+  await supabase.from('forecast_signal_feed').insert({
+    question_id:  question.id,
+    channel_id:   (question as any).channel_id ?? null,
+    signal_type:  'resolution',
+    title:        `Résolu ${label} : ${question.title}`,
+    summary:      `Cette question forecast vient d'être résolue (${label}) avec ${participantCount} participant(s).`,
+    severity:     'high',
+    data:         { outcome, participant_count: participantCount },
+  })
 }
 
 async function refreshLeaderboardForUsers(

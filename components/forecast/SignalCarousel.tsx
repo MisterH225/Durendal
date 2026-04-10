@@ -112,9 +112,10 @@ export function SignalCarousel({ signals, locale }: { signals: SignalItem[]; loc
           const imageUrl  = s.data?.image_url  as string | undefined
 
           return (
-            <div
+            <a
               key={`${s.id}-${i}`}
-              className="flex-shrink-0 w-[280px] rounded-xl border border-neutral-800 bg-neutral-900/60 hover:border-neutral-600 hover:bg-neutral-900 transition-all overflow-hidden group cursor-default"
+              href={`/forecast/signals/${s.id}`}
+              className="flex-shrink-0 w-[280px] rounded-xl border border-neutral-800 bg-neutral-900/60 hover:border-neutral-600 hover:bg-neutral-900 transition-all overflow-hidden group cursor-pointer no-underline"
             >
               {/* Image compacte */}
               {imageUrl && (
@@ -165,7 +166,7 @@ export function SignalCarousel({ signals, locale }: { signals: SignalItem[]; loc
                   </a>
                 )}
               </div>
-            </div>
+            </a>
           )
         })}
       </div>

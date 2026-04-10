@@ -172,5 +172,11 @@ export function SignalCard({ signal: s, locale, compact = false }: Props) {
     </div>
   )
 
-  return cardContent
+  const detailHref = `/forecast/signals/${s.id}`
+
+  return (
+    <Link href={detailHref} className="block">
+      {cardContent}
+    </Link>
+  )
 }

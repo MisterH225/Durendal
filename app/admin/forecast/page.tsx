@@ -1,0 +1,107 @@
+import { createAdminClient } from '@/lib/supabase/admin'
+import Link from 'next/link'
+import { Plus, Bot, CheckCircle, Clock, XCircle, TrendingUp } from 'lucide-react'
+import { ForecastAdminActions } from './ForecastAdminActions'
+
+export const dynamic = 'force-dynamic'
+
+const STATUS_META: Record<string, { label: string; color: string }> = {
+  draft:        { label: 'Brouillon',  color: 'bg-neutral-200 text-neutral-700' },
+  open:         { label: 'Ouvert',     color: 'bg-green-100 text-green-800' },
+  closed:       { label: 'Fermé',      color: 'bg-amber-100 text-amber-800' },
+  resolved_yes: { label: 'Oui ✓',     color: 'bg-blue-100 text-blue-800' },
+  resolved_no:  { label: 'Non ✗',     color: 'bg-red-100 text-red-800' },
+  annulled:     { label: 'Annulé',     color: 'bg-neutral-100 text-neutral-500' },
+}
+
+function fmtProb(v: number | null) { return v === null ? '—' : `${Math.round(v * 100)}%` }
+function fmtDate(s: string | null) { return s ? new Date(s).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—' }
+
+export default async function ForecastAdminPage() {
+  const db = createAdminClient()
+  const [{ data: questions }, { data: channels }, { data: events }] = await Promise.all([
+    db.from('forecast_questions').select('id, slug, title, status, close_date, featured, forecast_count, crowd_probability, ai_probability, blended_probability, created_at, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title )').order('created_at', { ascending: false }).limit(200),
+    db.from('forecast_channels').select('id, slug, name').eq('is_active', true).order('sort_order'),
+    db.from('forecast_events').select('id, slug, title, channel_id, status').order('created_at', { ascending: false }).limit(50),
+  ])
+  const stats = { total: questions?.length ?? 0, open: questions?.filter(q => q.status === 'open').length ?? 0, closed: questions?.filter(q => q.status === 'closed').length ?? 0, draft: questions?.filter(q => q.status === 'draft').length ?? 0 }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-neutral-900 flex items-center gap-2"><TrendingUp size={18} className="text-blue-600" />Forecast Éditorial</h2>
+          <p className="text-sm text-neutral-500 mt-0.5">Créez et gérez les questions de probabilité publiques.</p>
+        </div>
+        <Link href="/admin/forecast/questions/new" className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors font-medium"><Plus size={14} />Nouvelle question</Link>
+      </div>
+
+      <div className="grid grid-cols-4 gap-4">
+        {[{ label: 'Total', value: stats.total, icon: TrendingUp, color: 'text-neutral-600' }, { label: 'Ouvertes', value: stats.open, icon: CheckCircle, color: 'text-green-600' }, { label: 'Fermées', value: stats.closed, icon: Clock, color: 'text-amber-600' }, { label: 'Brouillons', value: stats.draft, icon: XCircle, color: 'text-neutral-400' }].map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="bg-white rounded-xl border border-neutral-200 p-4 flex items-center gap-3">
+            <Icon size={20} className={color} />
+            <div><div className="text-2xl font-bold text-neutral-900">{value}</div><div className="text-xs text-neutral-500">{label}</div></div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-neutral-100"><span className="text-sm font-semibold text-neutral-800">Questions ({stats.total})</span></div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-neutral-50 border-b border-neutral-100">
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-neutral-500 uppercase tracking-wide">Question</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-neutral-500 uppercase tracking-wide">Channel</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-neutral-500 uppercase tracking-wide">Statut</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-neutral-500 uppercase tracking-wide">Crowd</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-neutral-500 uppercase tracking-wide">IA</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-neutral-500 uppercase tracking-wide">Blended</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-neutral-500 uppercase tracking-wide">Clôture</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-neutral-500 uppercase tracking-wide">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-50">
+              {!questions?.length && <tr><td colSpan={8} className="text-center text-sm text-neutral-400 py-12">Aucune question.</td></tr>}
+              {questions?.map(q => {
+                const meta = STATUS_META[q.status] ?? STATUS_META.draft
+                const channel = (q as any).forecast_channels
+                return (
+                  <tr key={q.id} className="hover:bg-neutral-50 transition-colors">
+                    <td className="px-4 py-3 max-w-xs"><div className="font-medium text-neutral-900 truncate" title={q.title}>{q.title}</div><div className="text-xs text-neutral-400 mt-0.5">/{q.slug}</div></td>
+                    <td className="px-3 py-3"><span className="text-xs text-neutral-600 bg-neutral-100 px-2 py-0.5 rounded-full">{channel?.name ?? '—'}</span></td>
+                    <td className="px-3 py-3"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${meta.color}`}>{meta.label}</span></td>
+                    <td className="px-3 py-3 text-right font-mono text-xs text-neutral-700">{fmtProb(q.crowd_probability)}</td>
+                    <td className="px-3 py-3 text-right font-mono text-xs text-blue-700">{fmtProb(q.ai_probability)}</td>
+                    <td className="px-3 py-3 text-right font-mono text-xs font-semibold text-neutral-900">{fmtProb(q.blended_probability)}</td>
+                    <td className="px-3 py-3 text-xs text-neutral-500">{fmtDate(q.close_date)}</td>
+                    <td className="px-4 py-3 text-right"><ForecastAdminActions questionId={q.id} status={q.status} /></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-neutral-100 flex items-center justify-between">
+          <span className="text-sm font-semibold text-neutral-800">Événements ({events?.length ?? 0})</span>
+          <Link href="/admin/forecast/events/new" className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"><Plus size={12} />Ajouter</Link>
+        </div>
+        <div className="divide-y divide-neutral-50">
+          {!events?.length && <div className="text-center text-sm text-neutral-400 py-8">Aucun événement.</div>}
+          {events?.map(ev => {
+            const ch = channels?.find(c => c.id === ev.channel_id)
+            return (
+              <div key={ev.id} className="px-5 py-3 flex items-center justify-between hover:bg-neutral-50">
+                <div><div className="text-sm font-medium text-neutral-800">{ev.title}</div><div className="text-xs text-neutral-400">{ch?.name ?? '—'} · /{ev.slug}</div></div>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_META[ev.status]?.color ?? 'bg-neutral-100 text-neutral-500'}`}>{STATUS_META[ev.status]?.label ?? ev.status}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}

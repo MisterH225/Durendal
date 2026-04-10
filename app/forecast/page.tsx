@@ -1,8 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
-import { SignalCard } from '@/components/forecast/SignalCard'
-import type { SignalData } from '@/components/forecast/SignalCard'
+import { SignalCarousel } from '@/components/forecast/SignalCarousel'
 import { Calendar, Users, TrendingUp, ChevronRight, Radio } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
 import { tr } from '@/lib/i18n/translations'
@@ -44,7 +43,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
       .select('id, signal_type, title, summary, severity, data, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
       .gte('created_at', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
-      .limit(4),
+      .limit(8),
   ])
 
   const channelId = (channelResult as any)?.data?.id ?? null
@@ -55,7 +54,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
 
   const { data: questions } = await questionQuery
   const featured = featuredResult.data ?? []
-  const liveSignals = (signalsResult.data ?? []) as SignalData[]
+  const liveSignals = signalsResult.data ?? []
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-10 space-y-12">
@@ -125,11 +124,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
         </div>
 
         {liveSignals.length > 0 ? (
-          <div className="grid sm:grid-cols-2 gap-4">
-            {liveSignals.map(s => (
-              <SignalCard key={s.id} signal={s} locale={locale} />
-            ))}
-          </div>
+          <SignalCarousel signals={liveSignals as any} locale={locale} />
         ) : (
           <div className="rounded-2xl border border-dashed border-neutral-800 py-12 text-center text-neutral-600 text-sm">
             {tr(locale, 'signals.empty')}

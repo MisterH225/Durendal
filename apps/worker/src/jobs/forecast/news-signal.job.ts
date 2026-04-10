@@ -29,46 +29,46 @@ interface NewsAdapter {
 
 const CHANNEL_NEWS_ADAPTERS: Record<string, NewsAdapter> = {
   'macro-commodities': {
-    regionContext: 'marchés mondiaux avec focus sur les économies émergentes et l\'Afrique subsaharienne',
-    topicFocus: 'taux directeurs banques centrales, prix matières premières (pétrole, gaz, métaux, céréales), flux de capitaux, indicateurs macro (PMI, inflation), annonces budgétaires des ministères des finances africains',
-    sourcesHint: 'Bloomberg, Reuters, Financial Times, CNBC, sites officiels des ministères des finances africains (mof.go.ke, treasury.gov.za, finances.gouv.sn, finance.gov.ng, mofep.gov.gh, minfi.gov.cm)',
+    regionContext: 'couverture MONDIALE — décisions de la Fed, BCE, BoE, BoJ, banques centrales des pays émergents. Impact sur les marchés africains et les économies en développement',
+    topicFocus: 'guerres et conflits géopolitiques affectant les prix (ex: conflit Iran/Israël/USA → pétrole), sanctions économiques, décisions OPEP+, taux directeurs (Fed, BCE), prix matières premières (pétrole, gaz, or, cuivre, céréales), inflation mondiale, crises de dette souveraine, flux de capitaux vers les émergents',
+    sourcesHint: 'Bloomberg, Reuters, Financial Times, CNBC, Wall Street Journal, The Economist',
   },
   'politics-policy': {
-    regionContext: 'géopolitique africaine et mondiale — présidences, gouvernements et sécurité régionale',
-    topicFocus: 'élections, décisions des présidences africaines, décrets présidentiels, accords diplomatiques inter-africains (UA, CEDEAO, EAC, SADC), déclarations officielles des chefs d\'État',
-    sourcesHint: 'BBC World News, Al Jazeera, RFI, France 24, Reuters, sites officiels des présidences africaines (presidence.sn, statehouse.gov.ng, presidency.gov.za, president.go.ke, prc.cm, el-mouradia.dz)',
+    regionContext: 'géopolitique MONDIALE — grandes puissances (USA, Chine, Russie, UE), conflits en cours, et leurs répercussions sur l\'Afrique et les marchés émergents',
+    topicFocus: 'guerres et tensions (Moyen-Orient, Ukraine-Russie, mer de Chine), sommets G7/G20/BRICS, sanctions internationales, élections majeures (USA, UE, Inde, Nigeria), accords commerciaux, politique étrangère US/Chine en Afrique, décisions ONU/UA/CEDEAO',
+    sourcesHint: 'BBC World News, Al Jazeera, Reuters, CNN International, France 24, Foreign Affairs, The Guardian',
   },
   'tech-ai': {
-    regionContext: 'technologie mondiale avec impact sur les marchés africains et l\'adoption numérique',
-    topicFocus: 'lancement de produits IA, régulation numérique (EU AI Act, US), fintech Afrique, infrastructures télécoms, politiques numériques gouvernementales africaines',
-    sourcesHint: 'Bloomberg, Financial Times, Reuters, presidency.gov.rw (Rwanda hub tech)',
+    regionContext: 'innovation technologique MONDIALE — Silicon Valley, Chine, Europe, et adoption dans les marchés émergents',
+    topicFocus: 'lancements majeurs IA (OpenAI, Google, Meta, Anthropic), régulations (EU AI Act, executive orders US), semi-conducteurs et guerre des puces (TSMC, Nvidia), fintech mondiale, cybersécurité, adoption numérique Afrique/Asie/LATAM',
+    sourcesHint: 'Bloomberg, Financial Times, TechCrunch, The Verge, Reuters, Wired',
   },
   'agriculture-risk': {
-    regionContext: 'Afrique subsaharienne, Sahel, Afrique de l\'Est — production agricole et sécurité alimentaire',
-    topicFocus: 'conditions météo extrêmes, prix des céréales (blé, maïs, riz, sorgho), rapports FAO/USDA, crises alimentaires, politiques agricoles des gouvernements africains',
-    sourcesHint: 'FAO, Reuters, RFI, Al Jazeera, ministères de l\'agriculture africains, presidence.gov.mg (Madagascar/vanille)',
+    regionContext: 'sécurité alimentaire MONDIALE — production agricole, chaînes d\'approvisionnement, impact des conflits et du climat sur les prix alimentaires',
+    topicFocus: 'prix mondiaux des céréales (blé, maïs, riz, soja), perturbations d\'exportation (Ukraine/Russie/mer Noire), rapports FAO/USDA, sécheresses et inondations (El Niño, La Niña), embargo et restrictions d\'exportation, impact des conflits sur l\'approvisionnement alimentaire',
+    sourcesHint: 'Reuters, Bloomberg, FAO, USDA, Al Jazeera, Financial Times',
   },
   'climate': {
-    regionContext: 'impact climatique sur l\'Afrique, transitions énergétiques et engagements internationaux',
-    topicFocus: 'événements météo extrêmes, COP/accords climatiques, transition énergétique solaire Afrique, sécheresses/inondations, politiques énergétiques des présidences africaines',
-    sourcesHint: 'BBC World News, Reuters, Euronews, France 24, op.gov.na (Namibie hydrogène vert)',
+    regionContext: 'changement climatique MONDIAL — événements extrêmes, transitions énergétiques, politiques environnementales des grandes puissances',
+    topicFocus: 'catastrophes naturelles majeures, décisions énergétiques (pétrole vs renouvelable), COP et accords climatiques, marché carbone, transition énergétique (hydrogène vert, solaire), impact des guerres sur la politique énergétique, nouvelles centrales nucléaires',
+    sourcesHint: 'BBC World News, Reuters, The Guardian, Euronews, Bloomberg Green, Financial Times',
   },
   'logistics': {
-    regionContext: 'routes commerciales mondiales, corridors logistiques africains et ports stratégiques',
-    topicFocus: 'tensions maritimes (Mer Rouge, Bab-el-Mandeb, Suez), ports africains (Djibouti, Mombasa, Dar-es-Salam, Cotonou, Lomé, Durban), corridors CFTA, prix fret, délais douaniers',
-    sourcesHint: 'Reuters, Bloomberg, Lloyd\'s List, presidence.dj (Djibouti hub logistique)',
+    regionContext: 'chaînes d\'approvisionnement MONDIALES — routes maritimes, corridors commerciaux, perturbations géopolitiques',
+    topicFocus: 'tensions en mer Rouge/Bab-el-Mandeb/détroit d\'Hormuz, canal de Suez/Panama, guerre commerciale USA-Chine (tarifs douaniers), perturbations portuaires, prix du fret mondial, corridors africains (AfCFTA), restrictions d\'exportation',
+    sourcesHint: 'Reuters, Bloomberg, Lloyd\'s List, Financial Times, Wall Street Journal, CNBC',
   },
   'regional-business-events': {
-    regionContext: 'économies régionales africaines — Afrique de l\'Ouest, Centrale, de l\'Est, du Nord, Australe',
-    topicFocus: 'investissements directs, annonces des présidences et primatures africaines, réformes économiques, IDE, partenariats commerciaux, plans de développement nationaux',
-    sourcesHint: 'RFI, Al Jazeera, France 24, Reuters Africa, presidence.ci (Côte d\'Ivoire), statehouse.gov.ng (Nigeria), presidency.gov.za (Afrique du Sud), pmo.gov.et (Éthiopie)',
+    regionContext: 'événements économiques MONDIAUX ayant un impact sur les affaires en Afrique et dans les marchés émergents',
+    topicFocus: 'IDE et investissements majeurs, fusions-acquisitions internationales, réformes économiques, accords commerciaux bilatéraux, expansions d\'entreprises multinationales en Afrique/Asie/LATAM, crises bancaires, politiques monétaires des pays émergents',
+    sourcesHint: 'Reuters, Bloomberg, Financial Times, RFI, Al Jazeera, The Economist, Africa Report',
   },
 }
 
 const DEFAULT_NEWS_ADAPTER: NewsAdapter = {
-  regionContext: 'marchés émergents et Afrique subsaharienne',
-  topicFocus: 'développements économiques, politiques et sectoriels significatifs',
-  sourcesHint: 'Reuters, BBC World News, RFI',
+  regionContext: 'couverture mondiale avec impact sur les marchés émergents et l\'Afrique',
+  topicFocus: 'développements géopolitiques, économiques et sectoriels majeurs à l\'échelle mondiale',
+  sourcesHint: 'Reuters, Bloomberg, BBC World News, Financial Times',
 }
 
 // ─── Gemini response type ─────────────────────────────────────────────────────
@@ -101,18 +101,48 @@ function titleFingerprint(title: string): string {
 async function fetchOgImage(url: string): Promise<string | null> {
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 5000)
+    const timeout = setTimeout(() => controller.abort(), 8000)
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'DurendalBot/1.0 (news-signal)' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
+      },
       redirect: 'follow',
     })
     clearTimeout(timeout)
     if (!res.ok) return null
-    const html = await res.text()
-    const match = html.match(/<meta\s+(?:property|name)=["']og:image["']\s+content=["']([^"']+)["']/i)
-      || html.match(/content=["']([^"']+)["']\s+(?:property|name)=["']og:image["']/i)
-    return match?.[1] ?? null
+
+    // Only read the first 50KB to find the og:image meta tag (usually in <head>)
+    const reader = res.body?.getReader()
+    if (!reader) return null
+    let html = ''
+    const decoder = new TextDecoder()
+    while (html.length < 50_000) {
+      const { done, value } = await reader.read()
+      if (done) break
+      html += decoder.decode(value, { stream: true })
+      // Early exit if we've passed the </head> tag
+      if (html.includes('</head>')) break
+    }
+    reader.cancel().catch(() => {})
+
+    // Multiple regex patterns to match og:image in various formats
+    const patterns = [
+      /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+      /<meta[^>]+name=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']og:image["']/i,
+      /<meta[^>]+property=["']twitter:image["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i,
+    ]
+
+    for (const pattern of patterns) {
+      const match = html.match(pattern)
+      if (match?.[1] && match[1].startsWith('http')) return match[1]
+    }
+    return null
   } catch {
     return null
   }
@@ -156,9 +186,10 @@ export async function runNewsSignalJob(): Promise<void> {
     // Bug 2 fix: systemInstruction is passed via the options object (named property),
     // NOT as a raw string second argument. callGeminiWithSearch now supports it.
     const systemInstruction = [
-      `Tu es un analyste senior en intelligence économique spécialisé dans la surveillance des actualités pour le canal "${channel.name}".`,
-      `Ta mission : identifier les développements les plus significatifs des dernières 24-48h dans ton domaine.`,
-      `Contexte géographique prioritaire : ${adapter.regionContext}.`,
+      `Tu es un analyste senior en intelligence économique et géopolitique couvrant l'actualité MONDIALE pour le canal "${channel.name}".`,
+      `Ta mission : identifier les événements mondiaux les plus significatifs des dernières 24-48h qui affectent les marchés, les entreprises et les décideurs économiques.`,
+      `IMPORTANT : ne te limite PAS à l'Afrique. Couvre les événements MONDIAUX (USA, Europe, Chine, Moyen-Orient, Asie) et explique leur impact potentiel sur les marchés émergents et l'Afrique quand c'est pertinent.`,
+      `Contexte : ${adapter.regionContext}.`,
       `Focus thématique : ${adapter.topicFocus}.`,
       `Sources de référence : ${adapter.sourcesHint}.`,
       `IMPORTANT : retourne UNIQUEMENT un objet JSON valide avec une clé "signals", sans markdown ni texte autour.`,
@@ -167,12 +198,13 @@ export async function runNewsSignalJob(): Promise<void> {
     // Bug 1 fix: prompt asks for {"signals":[...]} wrapper object so parseGeminiJson
     // (which uses the regex \{[\s\S]*\}) can extract it — bare arrays [..] are not matched.
     const prompt = [
-      `Identifie les 3 développements les plus importants et actionnables des dernières 24-48h pour le canal "${channel.name}".`,
+      `Identifie les 3 développements MONDIAUX les plus importants et actionnables des dernières 24-48h pour le canal "${channel.name}".`,
       ``,
       `Critères de sélection :`,
-      `- Significatif pour les acteurs économiques (décisions d'investissement, gestion du risque)`,
+      `- Événements d'envergure MONDIALE ou régionale ayant un impact économique concret`,
+      `- Inclure au minimum 1 événement hors Afrique (USA, Europe, Moyen-Orient, Asie, LATAM)`,
       `- Basé sur des faits vérifiables récents (pas de rumeurs)`,
-      `- Pertinent pour la région : ${adapter.regionContext}`,
+      `- Expliquer l'impact potentiel sur les marchés, les investisseurs et les entreprises`,
       ``,
       `Pour chaque développement, crée un objet avec ces champs :`,
       `- "title" : titre court et percutant (max 90 caractères)`,
@@ -227,6 +259,7 @@ export async function runNewsSignalJob(): Promise<void> {
             || null
 
           const imageUrl = url ? await fetchOgImage(url) : null
+          if (url) console.log(`[news-signal] OG image ${imageUrl ? '✓' : '✗'} pour ${url.slice(0, 60)}…`)
 
           return {
             channel_id:  channel.id,

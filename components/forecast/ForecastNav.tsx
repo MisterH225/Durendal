@@ -1,14 +1,16 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import type { Locale } from '@/lib/i18n/translations'
+import { tr } from '@/lib/i18n/translations'
 
-const links = [
-  { href: '/forecast', label: 'Explorer', exact: true },
-  { href: '/forecast/leaderboard', label: 'Classement', exact: false },
-]
-
-export function ForecastNav() {
+export function ForecastNav({ locale }: { locale: Locale }) {
   const pathname = usePathname()
+
+  const links = [
+    { href: '/forecast', label: tr(locale, 'nav.explore'),     exact: true  },
+    { href: '/forecast/leaderboard', label: tr(locale, 'nav.leaderboard'), exact: false },
+  ]
 
   return (
     <nav className="hidden md:flex items-center gap-1">

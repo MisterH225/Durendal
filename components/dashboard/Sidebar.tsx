@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -8,32 +8,44 @@ import {
   LayoutDashboard, Eye, TrendingUp, Bot, Star, MessageSquare,
   CreditCard, X, LogOut, ChevronRight, Settings, Target, BarChart2
 } from 'lucide-react'
+import { tr } from '@/lib/i18n/translations'
+import type { Locale } from '@/lib/i18n/translations'
 
-const navItems = [
-  { section: 'Principal', items: [
-    { href: '/dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
-    { href: '/veilles', label: 'Mes veilles', icon: Eye },
-    { href: '/opportunities', label: 'Opportunités', icon: Target },
-    { href: '/marche', label: 'Analyse marché', icon: TrendingUp },
-  ]},
-  { section: 'Agents IA', items: [
-    { href: '/agents', label: 'Agents IA', icon: Bot },
-    { href: '/actions', label: 'Actions marché', icon: Star },
-    { href: '/assistant', label: 'Assistant IA', icon: MessageSquare },
-  ]},
-  { section: 'Intelligence', items: [
-    { href: '/forecast', label: 'Forecast', icon: BarChart2, external: false },
-  ]},
-  { section: 'Compte', items: [
-    { href: '/forfait', label: 'Forfait', icon: CreditCard },
-  ]},
-]
+function useLocale(): Locale {
+  const [locale, setLocale] = useState<Locale>('fr')
+  useEffect(() => {
+    const match = document.cookie.match(/(?:^|;\s*)locale=([^;]+)/)
+    if (match?.[1] === 'en') setLocale('en')
+  }, [])
+  return locale
+}
 
 export default function Sidebar({ profile }: { profile: any }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const locale = useLocale()
+
+  const navItems = [
+    { section: tr(locale, 'sb.principal'), items: [
+      { href: '/dashboard',     label: tr(locale, 'sb.dashboard'),     icon: LayoutDashboard },
+      { href: '/veilles',       label: tr(locale, 'sb.watches'),       icon: Eye },
+      { href: '/opportunities', label: tr(locale, 'sb.opportunities'), icon: Target },
+      { href: '/marche',        label: tr(locale, 'sb.market'),        icon: TrendingUp },
+    ]},
+    { section: tr(locale, 'sb.ai_agents'), items: [
+      { href: '/agents',    label: tr(locale, 'sb.ai_agents'),  icon: Bot },
+      { href: '/actions',   label: tr(locale, 'sb.actions'),    icon: Star },
+      { href: '/assistant', label: tr(locale, 'sb.assistant'),  icon: MessageSquare },
+    ]},
+    { section: tr(locale, 'sb.intelligence'), items: [
+      { href: '/forecast', label: tr(locale, 'sb.forecast'), icon: BarChart2 },
+    ]},
+    { section: tr(locale, 'sb.account'), items: [
+      { href: '/forfait', label: tr(locale, 'sb.plan'), icon: CreditCard },
+    ]},
+  ]
 
   async function logout() {
     await supabase.auth.signOut()
@@ -90,11 +102,11 @@ export default function Sidebar({ profile }: { profile: any }) {
         {/* Admin link */}
         {isAdmin && (
           <div>
-            <div className="section-header">Administration</div>
+            <div className="section-header">{tr(locale, 'sb.admin_section')}</div>
             <Link href="/admin" onClick={() => setMobileOpen(false)}
               className={`sidebar-item ${pathname.startsWith('/admin') ? 'sidebar-item-active' : ''}`}>
               <Settings size={15} />
-              <span>Panel Admin</span>
+              <span>{tr(locale, 'sb.admin_link')}</span>
             </Link>
           </div>
         )}

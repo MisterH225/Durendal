@@ -2,15 +2,19 @@ import Link from 'next/link'
 import { TrendingUp, LayoutDashboard, LogIn, User } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { ForecastNav } from '@/components/forecast/ForecastNav'
+import { LocaleSwitcher } from '@/components/LocaleSwitcher'
+import { getLocale } from '@/lib/i18n/server'
+import { tr } from '@/lib/i18n/translations'
 
 export default async function ForecastLayout({ children }: { children: React.ReactNode }) {
-  // Optionnel : récupère l'utilisateur connecté pour adapter la nav
   let user: { email?: string; id: string } | null = null
   try {
     const supabase = createClient()
     const { data } = await supabase.auth.getUser()
     user = data.user as typeof user
-  } catch { /* mode non-auth : nav publique */ }
+  } catch { /* mode non-auth */ }
+
+  const locale = getLocale()
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -22,11 +26,14 @@ export default async function ForecastLayout({ children }: { children: React.Rea
               <TrendingUp size={16} className="text-blue-400" />
               <span>Durendal <span className="text-blue-400">Forecast</span></span>
             </Link>
-            <ForecastNav />
+            <ForecastNav locale={locale} />
           </div>
 
           {/* Actions droite */}
           <div className="flex items-center gap-3">
+            {/* Sélecteur de langue */}
+            <LocaleSwitcher current={locale} />
+
             {user ? (
               <>
                 <Link
@@ -34,7 +41,7 @@ export default async function ForecastLayout({ children }: { children: React.Rea
                   className="hidden sm:flex items-center gap-1.5 text-xs text-neutral-400 hover:text-white transition-colors"
                 >
                   <LayoutDashboard size={13} />
-                  Tableau de bord
+                  {tr(locale, 'nav.dashboard')}
                 </Link>
                 <Link
                   href="/profil"
@@ -52,14 +59,14 @@ export default async function ForecastLayout({ children }: { children: React.Rea
                   href="/dashboard"
                   className="hidden sm:inline text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
                 >
-                  Veille →
+                  {tr(locale, 'footer.veille')} →
                 </Link>
                 <Link
                   href="/login"
                   className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
                 >
                   <LogIn size={13} />
-                  Connexion
+                  {tr(locale, 'nav.login')}
                 </Link>
               </>
             )}
@@ -72,12 +79,12 @@ export default async function ForecastLayout({ children }: { children: React.Rea
       <footer className="border-t border-neutral-800 mt-20 py-8">
         <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-xs text-neutral-600">
-            Durendal Forecast — Probabilités agrégées à titre informatif uniquement. Aucun pari, aucun token.
+            Durendal Forecast — {tr(locale, 'footer.disclaimer')}
           </p>
           <div className="flex items-center gap-4 text-xs text-neutral-700">
-            <Link href="/forecast" className="hover:text-neutral-400 transition-colors">Explorer</Link>
-            <Link href="/forecast/leaderboard" className="hover:text-neutral-400 transition-colors">Classement</Link>
-            <Link href="/dashboard" className="hover:text-neutral-400 transition-colors">Veille Pro</Link>
+            <Link href="/forecast" className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.explore')}</Link>
+            <Link href="/forecast/leaderboard" className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.leaderboard')}</Link>
+            <Link href="/dashboard" className="hover:text-neutral-400 transition-colors">{tr(locale, 'footer.veille')}</Link>
           </div>
         </div>
       </footer>

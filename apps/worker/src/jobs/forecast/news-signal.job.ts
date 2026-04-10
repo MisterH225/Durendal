@@ -79,6 +79,7 @@ interface NewsSignalItem {
   severity: 'low' | 'medium' | 'high'
   region?: string
   source_hint?: string
+  source_url?: string
 }
 
 // Wrapper object so parseGeminiJson (regex \{…\}) can extract the array
@@ -159,6 +160,7 @@ export async function runNewsSignalJob(): Promise<void> {
       `- "severity" : "high" | "medium" | "low" selon l'impact potentiel`,
       `- "region" : région géographique principale concernée (ex: "Afrique de l'Ouest", "Mondial", "Sahel")`,
       `- "source_hint" : source/publication de référence principale`,
+      `- "source_url" : URL directe vers l'article ou la source (le plus précis possible)`,
       ``,
       `Format attendu (objet JSON uniquement, sans markdown) :`,
       `{`,
@@ -168,7 +170,8 @@ export async function runNewsSignalJob(): Promise<void> {
       `      "summary": "...",`,
       `      "severity": "high",`,
       `      "region": "...",`,
-      `      "source_hint": "..."`,
+      `      "source_hint": "...",`,
+      `      "source_url": "https://..."`,
       `    }`,
       `  ]`,
       `}`,
@@ -177,7 +180,7 @@ export async function runNewsSignalJob(): Promise<void> {
     try {
       // Bug 2 fix: pass systemInstruction as a named option, not a bare string
       // Bug 3 fix: destructure { text } — callGeminiWithSearch returns { text, sources, tokensUsed }
-      const { text } = await callGeminiWithSearch(prompt, { systemInstruction })
+      const { text, sources: groundingSources } = await callGeminiWithSearch(prompt, { systemInstruction })
 
       const parsed = parseGeminiJson<NewsSignalResponse>(text)
       const signals: NewsSignalItem[] = parsed?.signals ?? []
@@ -196,18 +199,27 @@ export async function runNewsSignalJob(): Promise<void> {
           recentFingerprints.add(fp)
           return true
         })
-        .map((s) => ({
-          channel_id:  channel.id,
-          signal_type: 'news' as const,
-          title:       s.title.slice(0, 120),
-          summary:     s.summary.slice(0, 280),
-          severity:    (['high', 'medium', 'low'] as const).includes(s.severity) ? s.severity : 'medium',
-          data: {
-            region:       s.region      ?? null,
-            source_hint:  s.source_hint ?? null,
-            channel_slug: channel.slug,
-            generated_by: 'gemini-news-signal',
-          },
+        .map((s) => {
+          // Priorité : URL fournie par Gemini > première URL du grounding Google
+          const url = s.source_url
+            || groundingSources.find(gs => gs.url && gs.title)?.url
+            || null
+
+          return {
+            channel_id:  channel.id,
+            signal_type: 'news' as const,
+            title:       s.title.slice(0, 120),
+            summary:     s.summary.slice(0, 280),
+            severity:    (['high', 'medium', 'low'] as const).includes(s.severity) ? s.severity : 'medium',
+            data: {
+              region:           s.region      ?? null,
+              source_hint:      s.source_hint ?? null,
+              source_url:       url,
+              grounding_sources: groundingSources.slice(0, 5).map(gs => ({ title: gs.title, url: gs.url })),
+              channel_slug:     channel.slug,
+              generated_by:     'gemini-news-signal',
+            },
+          }
         }))
 
       if (!toInsert.length) {

@@ -115,6 +115,43 @@ export function SignalCard({ signal: s, locale, compact = false }: Props) {
         </div>
       )}
 
+      {/* Source link for news signals */}
+      {s.signal_type === 'news' && s.data?.source_url && (
+        <div className="border-t border-neutral-800 pt-3">
+          <a
+            href={s.data.source_url as string}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            <ExternalLink size={11} className="flex-shrink-0" />
+            {locale === 'fr' ? 'Lire l\'article source' : 'Read source article'}
+            <ArrowRight size={10} className="ml-auto" />
+          </a>
+        </div>
+      )}
+
+      {/* Grounding sources (additional references) */}
+      {s.signal_type === 'news' && !compact && Array.isArray(s.data?.grounding_sources) && (s.data.grounding_sources as any[]).length > 0 && !s.data?.source_url && (
+        <div className="border-t border-neutral-800 pt-3 space-y-1">
+          <p className="text-[9px] font-semibold text-neutral-600 uppercase tracking-wider">Sources</p>
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+            {(s.data.grounding_sources as { title: string; url: string }[]).slice(0, 3).map((gs, i) => (
+              <a
+                key={i}
+                href={gs.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-blue-400/70 hover:text-blue-300 transition-colors flex items-center gap-1 truncate max-w-[200px]"
+              >
+                <ExternalLink size={8} className="flex-shrink-0" />
+                {gs.title || new URL(gs.url).hostname}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Linked question + CTA */}
       {q && qHref && (
         <div className="border-t border-neutral-800 pt-3 flex items-center justify-between gap-2">

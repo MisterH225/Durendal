@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
 import { Calendar, Users, TrendingUp, ChevronRight } from 'lucide-react'
+import { getLocale, localizeChannel } from '@/lib/forecast/locale'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,8 +26,9 @@ function daysLeft(closeDate: string) {
 
 export default async function ForecastPage({ searchParams }: { searchParams: { channel?: string } }) {
   const db = createAdminClient()
+  const locale = getLocale()
   const [{ data: channels }, channelResult, featuredResult] = await Promise.all([
-    db.from('forecast_channels').select('id, slug, name').eq('is_active', true).order('sort_order'),
+    db.from('forecast_channels').select('id, slug, name, name_fr, name_en').eq('is_active', true).order('sort_order'),
     searchParams.channel ? db.from('forecast_channels').select('id').eq('slug', searchParams.channel).single() : Promise.resolve({ data: null }),
     db.from('forecast_questions').select('id, slug, title, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name)').eq('featured', true).eq('status', 'open').order('close_date', { ascending: true }).limit(3),
   ])
@@ -54,7 +56,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
               return (
                 <Link key={q.id} href={`/forecast/q/${q.slug ?? q.id}`} className="group rounded-2xl border border-neutral-800 bg-neutral-900/60 hover:border-neutral-700 hover:bg-neutral-900 transition-all p-5 space-y-4">
                   <div className="flex items-start justify-between gap-2">
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>{ch?.name ?? ''}</span>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>{ch ? localizeChannel(ch, locale) : ''}</span>
                     <span className="text-[10px] text-neutral-600">{daysLeft(q.close_date)}</span>
                   </div>
                   <h3 className="text-sm font-semibold text-neutral-100 leading-snug group-hover:text-white transition-colors line-clamp-3">{q.title}</h3>
@@ -75,7 +77,9 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
       <div className="flex flex-wrap gap-2">
         <Link href="/forecast" className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${!searchParams.channel ? 'bg-white text-neutral-900 border-white' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}`}>Tout</Link>
         {channels?.map(ch => (
-          <Link key={ch.id} href={`/forecast?channel=${ch.slug}`} className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${searchParams.channel === ch.slug ? 'bg-white text-neutral-900 border-white' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}`}>{ch.name}</Link>
+          <Link key={ch.id} href={`/forecast?channel=${ch.slug}`} className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${searchParams.channel === ch.slug ? 'bg-white text-neutral-900 border-white' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}`}>
+            {localizeChannel(ch, locale)}
+          </Link>
         ))}
       </div>
 
@@ -89,7 +93,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
             <Link key={q.id} href={`/forecast/q/${q.slug ?? q.id}`} className="group flex items-center gap-4 rounded-xl border border-neutral-800 bg-neutral-900/40 hover:border-neutral-700 hover:bg-neutral-900/70 transition-all px-5 py-4">
               <div className="flex-shrink-0"><ProbabilityGauge value={prob} size={56} strokeWidth={6} /></div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1"><span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>{ch?.name ?? ''}</span><span className="text-[10px] text-neutral-600">{daysLeft(q.close_date)}</span></div>
+                <div className="flex items-center gap-2 mb-1"><span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>{ch ? localizeChannel(ch, locale) : ''}</span><span className="text-[10px] text-neutral-600">{daysLeft(q.close_date)}</span></div>
                 <h3 className="text-sm font-semibold text-neutral-200 group-hover:text-white transition-colors line-clamp-2 leading-snug">{q.title}</h3>
               </div>
               <div className="flex-shrink-0 hidden sm:flex flex-col items-end gap-1.5 text-[10px]">

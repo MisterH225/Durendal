@@ -6,6 +6,7 @@ import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
 import { HistorySparkline } from '@/components/forecast/HistorySparkline'
 import { SubmitForecastForm } from '@/components/forecast/SubmitForecastForm'
 import { ArrowLeft, Calendar, Users, Bot, ExternalLink, BookOpen, CheckCircle2 } from 'lucide-react'
+import { getLocale, localizeChannel } from '@/lib/forecast/locale'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +27,7 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
     sbUser.auth.getUser(),
     db
       .from('forecast_questions')
-      .select('*, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title ), forecast_ai_forecasts ( probability, confidence, reasoning, model, created_at )')
+      .select('*, forecast_channels ( id, slug, name, name_fr, name_en ), forecast_events ( id, slug, title ), forecast_ai_forecasts ( probability, confidence, reasoning, model, created_at )')
       .or(`id.eq.${params.id},slug.eq.${params.id}`)
       .eq('forecast_ai_forecasts.is_current', true)
       .neq('status', 'draft')
@@ -60,6 +61,7 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
     ? Math.round((userForecastResult.data as any).probability * 100)
     : null
 
+  const locale = getLocale()
   const ch = (q as any).forecast_channels
   const aiData = (q as any).forecast_ai_forecasts?.[0] ?? null
   const aiReason = aiData?.reasoning as Record<string, any> | null
@@ -74,7 +76,7 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          {ch && <span className="text-xs font-semibold text-neutral-300 bg-neutral-800 px-2.5 py-0.5 rounded-full">{ch.name}</span>}
+          {ch && <span className="text-xs font-semibold text-neutral-300 bg-neutral-800 px-2.5 py-0.5 rounded-full">{localizeChannel(ch, locale)}</span>}
           <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusMeta.color}`}>{statusMeta.label}</span>
           <span className="text-xs text-neutral-600 flex items-center gap-1"><Calendar size={10} />Clôture : {new Date(q.close_date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}</span>
         </div>

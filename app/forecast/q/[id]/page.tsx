@@ -21,15 +21,23 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
   const db = createAdminClient()
   const sbUser = createClient()
 
-  const [{ data: { user } }, questionResult, historyResult] = await Promise.all([
+  const [{ data: { user } }, questionResult] = await Promise.all([
     sbUser.auth.getUser(),
     db.from('forecast_questions').select('*, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title ), forecast_ai_forecasts ( probability, confidence, reasoning, model, created_at )').or(`id.eq.${params.id},slug.eq.${params.id}`).eq('forecast_ai_forecasts.is_current', true).neq('status', 'draft').maybeSingle(),
-    db.from('forecast_probability_history').select('snapshot_at, crowd_probability, ai_probability, blended_probability').eq('question_id', params.id).order('snapshot_at', { ascending: true }).limit(60),
   ])
 
   if (!questionResult.data) notFound()
   const q = questionResult.data
-  const history = historyResult.data ?? []
+
+  // Must use q.id (UUID) — params.id may be a slug, which is not a valid question_id FK
+  const { data: historyData } = await db
+    .from('forecast_probability_history')
+    .select('snapshot_at, crowd_probability, ai_probability, blended_probability')
+    .eq('question_id', q.id)
+    .order('snapshot_at', { ascending: true })
+    .limit(60)
+
+  const history = historyData ?? []
 
   let userForecast: number | null = null
   if (user) {

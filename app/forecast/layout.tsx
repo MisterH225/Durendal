@@ -19,7 +19,7 @@ export default async function ForecastLayout({ children }: { children: React.Rea
           <div className="flex items-center gap-6">
             <Link href="/forecast" className="flex items-center gap-2 text-sm font-bold text-white">
               <TrendingUp size={16} className="text-blue-400" />
-              <span>MarketLens <span className="text-blue-400">Forecast</span></span>
+              <span>Durendal <span className="text-blue-400">Forecast</span></span>
             </Link>
             <nav className="hidden md:flex items-center gap-4">
               <Link href="/forecast" className="text-xs text-neutral-400 hover:text-white transition-colors">
@@ -78,7 +78,7 @@ export default async function ForecastLayout({ children }: { children: React.Rea
       <footer className="border-t border-neutral-800 mt-20 py-8">
         <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-xs text-neutral-600">
-            MarketLens Forecast — Probabilités agrégées à titre informatif uniquement. Aucun pari, aucun token.
+            Durendal Forecast — Probabilités agrégées à titre informatif uniquement. Aucun pari, aucun token.
           </p>
           <div className="flex items-center gap-4 text-xs text-neutral-700">
             <Link href="/forecast" className="hover:text-neutral-400 transition-colors">Explorer</Link>

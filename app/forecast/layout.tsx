@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { TrendingUp, LayoutDashboard, LogIn, User } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
+import { ForecastNav } from '@/components/forecast/ForecastNav'
 
 export default async function ForecastLayout({ children }: { children: React.ReactNode }) {
   // Optionnel : récupère l'utilisateur connecté pour adapter la nav
@@ -21,14 +22,7 @@ export default async function ForecastLayout({ children }: { children: React.Rea
               <TrendingUp size={16} className="text-blue-400" />
               <span>Durendal <span className="text-blue-400">Forecast</span></span>
             </Link>
-            <nav className="hidden md:flex items-center gap-4">
-              <Link href="/forecast" className="text-xs text-neutral-400 hover:text-white transition-colors">
-                Explorer
-              </Link>
-              <Link href="/forecast/leaderboard" className="text-xs text-neutral-400 hover:text-white transition-colors">
-                Classement
-              </Link>
-            </nav>
+            <ForecastNav />
           </div>
 
           {/* Actions droite */}

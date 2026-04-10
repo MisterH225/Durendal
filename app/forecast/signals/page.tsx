@@ -27,8 +27,9 @@ export default async function SignalsPage({
           forecast_questions ( id, slug, title, blended_probability ),
           forecast_channels  ( id, slug, name, name_fr, name_en )
         `)
+        .gte('created_at', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString())
         .order('created_at', { ascending: false })
-        .limit(100)
+        .limit(30)
       if (searchParams.type) q = q.eq('signal_type', searchParams.type)
       return q
     })(),
@@ -211,7 +212,7 @@ export default async function SignalsPage({
                   {group.label}
                 </div>
               )}
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid sm:grid-cols-2 gap-4">
                 {group.items.map(s => (
                   <SignalCard key={s.id} signal={s} locale={locale} />
                 ))}

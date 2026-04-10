@@ -98,6 +98,26 @@ function titleFingerprint(title: string): string {
     .slice(0, 80)
 }
 
+async function fetchOgImage(url: string): Promise<string | null> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5000)
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'DurendalBot/1.0 (news-signal)' },
+      redirect: 'follow',
+    })
+    clearTimeout(timeout)
+    if (!res.ok) return null
+    const html = await res.text()
+    const match = html.match(/<meta\s+(?:property|name)=["']og:image["']\s+content=["']([^"']+)["']/i)
+      || html.match(/content=["']([^"']+)["']\s+(?:property|name)=["']og:image["']/i)
+    return match?.[1] ?? null
+  } catch {
+    return null
+  }
+}
+
 // ─── Main job ──────────────────────────────────────────────────────────────────
 
 export async function runNewsSignalJob(): Promise<void> {
@@ -190,20 +210,23 @@ export async function runNewsSignalJob(): Promise<void> {
         continue
       }
 
-      // 4. Filtrer doublons + préparer rows
-      const toInsert = signals
-        .filter((s) => {
-          if (!s.title || !s.summary) return false
-          const fp = titleFingerprint(s.title)
-          if (recentFingerprints.has(fp)) return false
-          recentFingerprints.add(fp)
-          return true
-        })
-        .map((s) => {
-          // Priorité : URL fournie par Gemini > première URL du grounding Google
+      // 4. Filtrer doublons
+      const filtered = signals.filter((s) => {
+        if (!s.title || !s.summary) return false
+        const fp = titleFingerprint(s.title)
+        if (recentFingerprints.has(fp)) return false
+        recentFingerprints.add(fp)
+        return true
+      })
+
+      // 5. Enrichir avec image OG (en parallèle, max 3 signaux)
+      const toInsert = await Promise.all(
+        filtered.map(async (s) => {
           const url = s.source_url
             || groundingSources.find(gs => gs.url && gs.title)?.url
             || null
+
+          const imageUrl = url ? await fetchOgImage(url) : null
 
           return {
             channel_id:  channel.id,
@@ -212,15 +235,17 @@ export async function runNewsSignalJob(): Promise<void> {
             summary:     s.summary.slice(0, 280),
             severity:    (['high', 'medium', 'low'] as const).includes(s.severity) ? s.severity : 'medium',
             data: {
-              region:           s.region      ?? null,
-              source_hint:      s.source_hint ?? null,
-              source_url:       url,
+              region:            s.region      ?? null,
+              source_hint:       s.source_hint ?? null,
+              source_url:        url,
+              image_url:         imageUrl,
               grounding_sources: groundingSources.slice(0, 5).map(gs => ({ title: gs.title, url: gs.url })),
-              channel_slug:     channel.slug,
-              generated_by:     'gemini-news-signal',
+              channel_slug:      channel.slug,
+              generated_by:      'gemini-news-signal',
             },
           }
-        }))
+        })
+      )
 
       if (!toInsert.length) {
         console.log(`[news-signal] Canal ${channel.slug} — tous doublons, skip.`)

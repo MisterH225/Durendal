@@ -42,8 +42,9 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
       .eq('featured', true).eq('status', 'open').order('close_date', { ascending: true }).limit(3),
     db.from('forecast_signal_feed')
       .select('id, signal_type, title, summary, severity, data, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
+      .gte('created_at', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
-      .limit(6),
+      .limit(4),
   ])
 
   const channelId = (channelResult as any)?.data?.id ?? null
@@ -124,9 +125,9 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
         </div>
 
         {liveSignals.length > 0 ? (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid sm:grid-cols-2 gap-4">
             {liveSignals.map(s => (
-              <SignalCard key={s.id} signal={s} locale={locale} compact />
+              <SignalCard key={s.id} signal={s} locale={locale} />
             ))}
           </div>
         ) : (

@@ -25,10 +25,10 @@ const CHANNEL_COLORS: Record<string, string> = {
   'regional-business-events': 'bg-purple-500/10 text-purple-400 border-purple-500/20',
 }
 
-const SEVERITY_DOT: Record<string, string> = {
-  high:   'bg-red-500',
-  medium: 'bg-amber-500',
-  low:    'bg-emerald-500',
+const SEVERITY_COLORS: Record<string, string> = {
+  high:   'bg-red-500/10 text-red-400 border-red-500/20',
+  medium: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  low:    'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
 }
 
 function SignalIcon({ type }: { type: string }) {
@@ -52,6 +52,24 @@ function channelName(ch: SignalData['forecast_channels'], locale: Locale): strin
   return ch.name
 }
 
+function timeAgo(dateStr: string, locale: Locale): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60_000)
+  const hrs  = Math.floor(diff / 3_600_000)
+  const days = Math.floor(diff / 86_400_000)
+
+  if (locale === 'fr') {
+    if (mins < 60) return `il y a ${mins}min`
+    if (hrs < 24)  return `il y a ${hrs}h`
+    if (days === 1) return 'hier'
+    return `il y a ${days}j`
+  }
+  if (mins < 60) return `${mins}m ago`
+  if (hrs < 24)  return `${hrs}h ago`
+  if (days === 1) return 'yesterday'
+  return `${days}d ago`
+}
+
 interface Props {
   signal:  SignalData
   locale:  Locale
@@ -63,108 +81,106 @@ export function SignalCard({ signal: s, locale, compact = false }: Props) {
   const q         = s.forecast_questions
   const qHref     = q ? `/forecast/q/${q.slug ?? q.id}` : null
   const chColor   = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
-  const sevDot    = SEVERITY_DOT[s.severity ?? 'low'] ?? 'bg-neutral-600'
+  const sevColor  = SEVERITY_COLORS[s.severity ?? 'low'] ?? SEVERITY_COLORS.low
   const typeLabel = signalTypeBadge(s.signal_type, locale)
-  const dateStr   = new Date(s.created_at).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', {
-    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-  })
 
-  return (
-    <div className="group rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-900 transition-all p-5 flex flex-col gap-3">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
+  const sourceUrl  = s.data?.source_url as string | undefined
+  const imageUrl   = s.data?.image_url  as string | undefined
+  const region     = s.data?.region     as string | undefined
+  const sourceHint = s.data?.source_hint as string | undefined
+
+  const cardContent = (
+    <div className="group rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-900 transition-all overflow-hidden flex flex-col h-full">
+
+      {/* Image d'illustration */}
+      {imageUrl && !compact && (
+        <div className="relative w-full h-40 bg-neutral-800 overflow-hidden flex-shrink-0">
+          <img
+            src={imageUrl}
+            alt=""
+            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+            loading="lazy"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-neutral-900 via-transparent to-transparent" />
+        </div>
+      )}
+
+      <div className="p-5 flex flex-col gap-3 flex-1">
+        {/* Badges row */}
+        <div className="flex items-center gap-1.5 flex-wrap">
           {ch && (
             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
               {channelName(ch, locale)}
             </span>
           )}
-          <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-neutral-700 text-neutral-400 bg-neutral-800">
-            <SignalIcon type={s.signal_type} />
-            {typeLabel}
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${sevColor}`}>
+            {s.severity === 'high' ? '●' : s.severity === 'medium' ? '◐' : '○'}{' '}
+            {s.severity === 'high' ? (locale === 'fr' ? 'Impact fort' : 'High impact')
+              : s.severity === 'medium' ? (locale === 'fr' ? 'Impact modéré' : 'Moderate')
+              : (locale === 'fr' ? 'Info' : 'Info')}
+          </span>
+          <span className="text-[10px] text-neutral-600 ml-auto whitespace-nowrap">
+            {timeAgo(s.created_at, locale)}
           </span>
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <span className={`w-1.5 h-1.5 rounded-full ${sevDot}`} title={s.severity ?? ''} />
-          <span className="text-[10px] text-neutral-600 whitespace-nowrap">{dateStr}</span>
-        </div>
-      </div>
 
-      {/* Body */}
-      <div className="flex-1 space-y-1.5">
-        <p className="text-sm font-semibold text-neutral-100 leading-snug line-clamp-2">{s.title}</p>
+        {/* Title */}
+        <h3 className="text-sm font-semibold text-neutral-100 leading-snug line-clamp-2">{s.title}</h3>
+
+        {/* Summary */}
         {s.summary && !compact && (
-          <p className="text-xs text-neutral-500 leading-relaxed line-clamp-2">{s.summary}</p>
+          <p className="text-xs text-neutral-400 leading-relaxed line-clamp-3">{s.summary}</p>
+        )}
+
+        {/* Meta: region + source */}
+        {(region || sourceHint) && !compact && (
+          <div className="flex items-center gap-3 flex-wrap mt-auto">
+            {region && (
+              <span className="text-[10px] text-neutral-500 flex items-center gap-1">
+                <span className="w-1 h-1 rounded-full bg-violet-400/60 inline-block" />
+                {region}
+              </span>
+            )}
+            {sourceHint && (
+              <span className="text-[10px] text-neutral-600">
+                via {sourceHint}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* CTA: source link or question link */}
+        {sourceUrl && (
+          <div className="border-t border-neutral-800 pt-3 mt-auto">
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              <ExternalLink size={11} className="flex-shrink-0" />
+              {locale === 'fr' ? 'Lire l\'article' : 'Read article'}
+              <ArrowRight size={10} className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
+            </a>
+          </div>
+        )}
+
+        {q && qHref && (
+          <div className="border-t border-neutral-800 pt-3 mt-auto flex items-center justify-between gap-2">
+            <p className="text-xs text-neutral-500 line-clamp-1 flex-1">{q.title}</p>
+            <Link
+              href={qHref}
+              className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap"
+            >
+              {tr(locale, 'signals.view_question')}
+              <ArrowRight size={11} />
+            </Link>
+          </div>
         )}
       </div>
-
-      {/* For news signals: region + source attribution */}
-      {s.signal_type === 'news' && !compact && (s.data?.region || s.data?.source_hint) && (
-        <div className="flex items-center gap-3 flex-wrap">
-          {s.data.region && (
-            <span className="text-[10px] text-neutral-500 flex items-center gap-1">
-              <span className="w-1 h-1 rounded-full bg-violet-400/60 inline-block" />
-              {s.data.region as string}
-            </span>
-          )}
-          {s.data.source_hint && (
-            <span className="text-[10px] text-neutral-600">
-              via {s.data.source_hint as string}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Source link for news signals */}
-      {s.signal_type === 'news' && s.data?.source_url && (
-        <div className="border-t border-neutral-800 pt-3">
-          <a
-            href={s.data.source_url as string}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
-          >
-            <ExternalLink size={11} className="flex-shrink-0" />
-            {locale === 'fr' ? 'Lire l\'article source' : 'Read source article'}
-            <ArrowRight size={10} className="ml-auto" />
-          </a>
-        </div>
-      )}
-
-      {/* Grounding sources (additional references) */}
-      {s.signal_type === 'news' && !compact && Array.isArray(s.data?.grounding_sources) && (s.data.grounding_sources as any[]).length > 0 && !s.data?.source_url && (
-        <div className="border-t border-neutral-800 pt-3 space-y-1">
-          <p className="text-[9px] font-semibold text-neutral-600 uppercase tracking-wider">Sources</p>
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-            {(s.data.grounding_sources as { title: string; url: string }[]).slice(0, 3).map((gs, i) => (
-              <a
-                key={i}
-                href={gs.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] text-blue-400/70 hover:text-blue-300 transition-colors flex items-center gap-1 truncate max-w-[200px]"
-              >
-                <ExternalLink size={8} className="flex-shrink-0" />
-                {gs.title || new URL(gs.url).hostname}
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Linked question + CTA */}
-      {q && qHref && (
-        <div className="border-t border-neutral-800 pt-3 flex items-center justify-between gap-2">
-          <p className="text-xs text-neutral-500 line-clamp-1 flex-1">{q.title}</p>
-          <Link
-            href={qHref}
-            className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap"
-          >
-            {tr(locale, 'signals.view_question')}
-            <ArrowRight size={11} />
-          </Link>
-        </div>
-      )}
     </div>
   )
+
+  return cardContent
 }

@@ -3,7 +3,7 @@ export type Locale = 'fr' | 'en'
 const dict = {
   fr: {
     // Nav
-    'nav.explore':    'Explorer',
+    'nav.explore':    'Trending',
     'nav.signals':    'Signaux',
     'nav.leaderboard':'Classement',
     'nav.dashboard':  'Tableau de bord',
@@ -11,7 +11,7 @@ const dict = {
 
     // Hero
     'hero.badge':    'Intelligence probabiliste en temps réel',
-    'hero.title':    'Que va-t-il se passer\u00a0?',
+    'hero.title':    'Trending',
     'hero.subtitle': 'Des questions curatées. Des probabilités agrégées. La sagesse des foules rencontre l\'analyse IA.',
 
     // Forecast listing
@@ -20,6 +20,8 @@ const dict = {
     'page.no_questions':    'Aucune question ouverte.',
     'page.no_questions_ch': 'Aucune question ouverte dans ce canal.',
     'page.trend':           'Tendance',
+    'page.open_questions':  'Questions en cours',
+    'page.signals_feed':    'Fil d\'actualité',
 
     // Status
     'status.open':         'Ouverte',
@@ -173,7 +175,7 @@ const dict = {
 
   en: {
     // Nav
-    'nav.explore':    'Explore',
+    'nav.explore':    'Trending',
     'nav.signals':    'Signals',
     'nav.leaderboard':'Leaderboard',
     'nav.dashboard':  'Dashboard',
@@ -181,7 +183,7 @@ const dict = {
 
     // Hero
     'hero.badge':    'Real-time probabilistic intelligence',
-    'hero.title':    'What will happen next?',
+    'hero.title':    'Trending',
     'hero.subtitle': 'Curated questions. Aggregated probabilities. Crowd wisdom meets AI analysis.',
 
     // Forecast listing
@@ -190,6 +192,8 @@ const dict = {
     'page.no_questions':    'No open questions.',
     'page.no_questions_ch': 'No open questions in this channel.',
     'page.trend':           'Trend',
+    'page.open_questions':  'Open questions',
+    'page.signals_feed':    'News feed',
 
     // Status
     'status.open':         'Open',

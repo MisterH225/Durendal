@@ -1,9 +1,10 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
-import { BlendedMicroSpark } from '@/components/forecast/BlendedMicroSpark'
-import { SignalCarousel } from '@/components/forecast/SignalCarousel'
-import { Calendar, Users, TrendingUp, ChevronRight, Radio } from 'lucide-react'
+import { SignalFeedVertical } from '@/components/forecast/SignalFeedVertical'
+import { TrendingCard } from '@/components/forecast/TrendingCard'
+import { QuickVoteSlider } from '@/components/forecast/QuickVoteSlider'
+import { Calendar, Users, TrendingUp, Radio, ChevronRight } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
 import { tr } from '@/lib/i18n/translations'
 import { localizeChannel } from '@/lib/forecast/locale'
@@ -32,25 +33,22 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
   const db = createAdminClient()
   const locale = getLocale()
 
-  const [{ data: channels }, channelResult, featuredResult, signalsResult] = await Promise.all([
+  const [{ data: channels }, channelResult, signalsResult] = await Promise.all([
     db.from('forecast_channels').select('id, slug, name, name_fr, name_en').eq('is_active', true).order('sort_order'),
     searchParams.channel
       ? db.from('forecast_channels').select('id').eq('slug', searchParams.channel).single()
       : Promise.resolve({ data: null }),
-    db.from('forecast_questions')
-      .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name, name_fr, name_en)')
-      .eq('featured', true).eq('status', 'open').order('close_date', { ascending: true }).limit(3),
     db.from('forecast_signal_feed')
       .select('id, signal_type, title, summary, severity, data, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
       .gte('created_at', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
-      .limit(8),
+      .limit(15),
   ])
 
   const channelId = (channelResult as any)?.data?.id ?? null
   let questionQuery = db.from('forecast_questions')
     .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, image_url, forecast_channels(slug, name, name_fr, name_en)')
-    .eq('status', 'open').order('close_date', { ascending: true }).limit(24)
+    .eq('status', 'open').order('close_date', { ascending: true }).limit(30)
   if (channelId) questionQuery = questionQuery.eq('channel_id', channelId)
 
   const { data: questions } = await questionQuery
@@ -59,12 +57,13 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
 
   type AiCard = { aiPct: number | null; summary: string | null }
   const aiByQuestion = new Map<string, AiCard>()
-  const histByQuestion = new Map<string, (number | null)[]>()
+  type HistPoint = { snapshot_at: string; blended_probability: number | null; crowd_probability: number | null; ai_probability: number | null }
+  const histByQuestion = new Map<string, HistPoint[]>()
 
   if (qIds.length) {
     const [aiRes, histRes] = await Promise.all([
       db.from('forecast_ai_forecasts').select('question_id, probability, reasoning').eq('is_current', true).in('question_id', qIds),
-      db.from('forecast_probability_history').select('question_id, snapshot_at, blended_probability').in('question_id', qIds).order('snapshot_at', { ascending: true }).limit(900),
+      db.from('forecast_probability_history').select('question_id, snapshot_at, blended_probability, crowd_probability, ai_probability').in('question_id', qIds).order('snapshot_at', { ascending: true }).limit(1500),
     ])
     for (const row of aiRes.data ?? []) {
       const reasoning = row.reasoning as Record<string, unknown> | null
@@ -74,99 +73,56 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
         summary,
       })
     }
-    const buckets = new Map<string, { blended_probability: number | null }[]>()
     for (const row of histRes.data ?? []) {
-      const arr = buckets.get(row.question_id) ?? []
-      arr.push({ blended_probability: row.blended_probability })
-      buckets.set(row.question_id, arr)
-    }
-    for (const id of qIds) {
-      const full = buckets.get(id) ?? []
-      histByQuestion.set(id, full.slice(-18).map(h => h.blended_probability))
+      const arr = histByQuestion.get(row.question_id) ?? []
+      arr.push(row as HistPoint)
+      histByQuestion.set(row.question_id, arr)
     }
   }
 
-  const featured = featuredResult.data ?? []
   const liveSignals = signalsResult.data ?? []
 
+  // Pick the "trending" question: most votes, or highest blended, or first featured
+  const trendingQ = [...qList].sort((a, b) => {
+    const aScore = (a.forecast_count ?? 0) * 10 + (a.blended_probability != null ? Math.abs(a.blended_probability - 0.5) * 100 : 0)
+    const bScore = (b.forecast_count ?? 0) * 10 + (b.blended_probability != null ? Math.abs(b.blended_probability - 0.5) * 100 : 0)
+    return bScore - aScore
+  })[0] ?? null
+
+  const trendingData = trendingQ ? {
+    id: trendingQ.id,
+    slug: trendingQ.slug,
+    title: trendingQ.title,
+    description: (trendingQ as any).description,
+    close_date: trendingQ.close_date,
+    blended_probability: trendingQ.blended_probability,
+    ai_probability: trendingQ.ai_probability,
+    crowd_probability: trendingQ.crowd_probability,
+    forecast_count: trendingQ.forecast_count ?? 0,
+    channel_slug: (trendingQ as any).forecast_channels?.slug ?? '',
+    channel_name: (trendingQ as any).forecast_channels ? localizeChannel((trendingQ as any).forecast_channels, locale) : '',
+    image_url: (trendingQ as any).image_url,
+    history: histByQuestion.get(trendingQ.id) ?? [],
+    aiSummary: aiByQuestion.get(trendingQ.id)?.summary ?? null,
+    commentCount: 0,
+  } : null
+
+  const restQuestions = qList.filter(q => q.id !== trendingQ?.id)
+
   return (
-    <div className="max-w-6xl mx-auto px-4 py-10 space-y-12">
-      {/* Hero */}
-      <div className="text-center space-y-3 pt-4">
+    <div className="max-w-7xl mx-auto px-4 py-6">
+      {/* Hero compact */}
+      <div className="text-center space-y-2 pt-2 pb-4">
         <div className="inline-flex items-center gap-2 text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full">
           <TrendingUp size={11} />
           {tr(locale, 'hero.badge')}
         </div>
-        <h1 className="text-4xl md:text-5xl font-bold text-white tracking-tight">{tr(locale, 'hero.title')}</h1>
-        <p className="text-neutral-400 text-base max-w-xl mx-auto">{tr(locale, 'hero.subtitle')}</p>
+        <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight">{tr(locale, 'hero.title')}</h1>
+        <p className="text-neutral-400 text-sm max-w-xl mx-auto">{tr(locale, 'hero.subtitle')}</p>
       </div>
 
-      {/* Featured */}
-      {featured.length > 0 && (
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-xs font-semibold text-neutral-500 uppercase tracking-widest">{tr(locale, 'page.featured')}</span>
-          </div>
-          <div className="grid md:grid-cols-3 gap-4">
-            {featured.map(q => {
-              const ch = (q as any).forecast_channels
-              const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
-              return (
-                <Link key={q.id} href={`/forecast/q/${encodeURIComponent(q.slug ?? q.id)}`}
-                  className="group rounded-2xl border border-neutral-800 bg-neutral-900/60 hover:border-neutral-700 hover:bg-neutral-900 transition-all p-5 space-y-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
-                      {ch ? localizeChannel(ch, locale) : ''}
-                    </span>
-                    <span className="text-[10px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
-                  </div>
-                  <h3 className="text-sm font-semibold text-neutral-100 leading-snug group-hover:text-white transition-colors line-clamp-3">{q.title}</h3>
-                  <div className="flex items-center justify-between">
-                    <ProbabilityGauge value={q.blended_probability !== null ? Math.round(q.blended_probability * 100) : null} size={72} strokeWidth={7} />
-                    <div className="text-right space-y-1">
-                      <div className="text-[10px] text-neutral-600 flex items-center gap-1 justify-end"><Users size={9} />{q.forecast_count ?? 0} votes</div>
-                      <div className="text-[10px] text-neutral-600 flex items-center gap-1 justify-end"><Calendar size={9} />{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</div>
-                    </div>
-                  </div>
-                </Link>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Live Signals */}
-      <section>
-        <div className="flex items-center justify-between mb-5">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Radio size={13} className="text-red-400 animate-pulse" />
-              <h2 className="text-base font-bold text-white">{tr(locale, 'signals.section_title')}</h2>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
-                {tr(locale, 'signals.live_badge')}
-              </span>
-            </div>
-            <p className="text-xs text-neutral-500">{tr(locale, 'signals.section_sub')}</p>
-          </div>
-          <Link
-            href="/forecast/signals"
-            className="flex-shrink-0 text-xs font-semibold text-blue-400 hover:text-blue-300 transition-colors"
-          >
-            {tr(locale, 'signals.view_all')}
-          </Link>
-        </div>
-
-        {liveSignals.length > 0 ? (
-          <SignalCarousel signals={liveSignals as any} locale={locale} />
-        ) : (
-          <div className="rounded-2xl border border-dashed border-neutral-800 py-12 text-center text-neutral-600 text-sm">
-            {tr(locale, 'signals.empty')}
-          </div>
-        )}
-      </section>
-
-      {/* Channel chips */}
-      <div className="flex flex-wrap gap-2">
+      {/* Channel chips — right below subtitle */}
+      <div className="flex flex-wrap justify-center gap-2 pb-6">
         <Link href="/forecast"
           className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${!searchParams.channel ? 'bg-white text-neutral-900 border-white' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}`}>
           {tr(locale, 'page.all')}
@@ -179,86 +135,114 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
         ))}
       </div>
 
-      {/* Questions — cartes */}
-      <section className="space-y-4">
-        {!qList.length && (
-          <div className="text-center py-20 text-neutral-600">
-            {searchParams.channel ? tr(locale, 'page.no_questions_ch') : tr(locale, 'page.no_questions')}
+      {/* Two-panel layout */}
+      <div className="flex gap-5">
+
+        {/* Left panel: live signals feed (vertical scroll) */}
+        <aside className="hidden lg:block w-72 flex-shrink-0">
+          <div className="sticky top-20">
+            <div className="flex items-center gap-2 mb-3">
+              <Radio size={12} className="text-red-400 animate-pulse" />
+              <h2 className="text-xs font-bold text-white uppercase tracking-wider">{tr(locale, 'page.signals_feed')}</h2>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
+                {tr(locale, 'signals.live_badge')}
+              </span>
+            </div>
+            <div className="max-h-[calc(100vh-10rem)] overflow-y-auto pr-1 space-y-0" style={{ scrollbarWidth: 'thin', scrollbarColor: '#262626 transparent' }}>
+              <SignalFeedVertical signals={liveSignals as any} locale={locale} />
+            </div>
+            <Link
+              href="/forecast/signals"
+              className="flex items-center gap-1 mt-3 text-[10px] font-semibold text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              {tr(locale, 'signals.view_all')}
+            </Link>
           </div>
-        )}
-        <div className="grid sm:grid-cols-2 gap-4">
-          {qList.map(q => {
-            const ch = (q as { forecast_channels?: { slug?: string; name?: string; name_fr?: string; name_en?: string } }).forecast_channels
-            const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
-            const blended = q.blended_probability !== null ? Math.round(q.blended_probability * 100) : null
-            const aiCard = aiByQuestion.get(q.id)
-            const aiPct = aiCard?.aiPct ?? (q.ai_probability != null ? Math.round(q.ai_probability * 100) : null)
-            const snippet = (aiCard?.summary ?? (q as any).description ?? '').replace(/\s+/g, ' ').trim().slice(0, 340)
-            const histVals = histByQuestion.get(q.id) ?? []
-            const href = `/forecast/q/${encodeURIComponent(q.slug ?? q.id)}`
-            const imgUrl = (q as any).image_url as string | null
-            return (
-              <Link key={q.id} href={href}
-                className="group flex flex-col rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-600 hover:bg-neutral-900/80 transition-all overflow-hidden min-h-[200px]">
-                {imgUrl && (
-                  <div className="relative h-36 w-full overflow-hidden bg-neutral-800 flex-shrink-0">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={imgUrl} alt="" className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/80 via-transparent to-transparent" />
-                    <div className="absolute top-2 left-2 flex items-center gap-2">
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border backdrop-blur-sm ${chColor}`}>
-                        {ch ? localizeChannel(ch, locale) : ''}
-                      </span>
-                      <span className="text-[10px] text-neutral-300/80 backdrop-blur-sm bg-neutral-950/40 px-1.5 py-0.5 rounded">{daysLeft(q.close_date, locale)}</span>
-                    </div>
+        </aside>
+
+        {/* Right panel: trending card + question grid */}
+        <div className="flex-1 min-w-0 space-y-6">
+
+          {/* Trending card */}
+          {trendingData && (
+            <TrendingCard q={trendingData} locale={locale} />
+          )}
+
+          {/* Mobile signals (visible on small screens) */}
+          <div className="lg:hidden">
+            <div className="flex items-center gap-2 mb-3">
+              <Radio size={12} className="text-red-400 animate-pulse" />
+              <h2 className="text-xs font-bold text-white uppercase tracking-wider">{tr(locale, 'page.signals_feed')}</h2>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
+                {tr(locale, 'signals.live_badge')}
+              </span>
+            </div>
+            <div className="max-h-80 overflow-y-auto">
+              <SignalFeedVertical signals={(liveSignals as any).slice(0, 6)} locale={locale} />
+            </div>
+          </div>
+
+          {/* Open questions header */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-white uppercase tracking-wider">{tr(locale, 'page.open_questions')}</h2>
+            <span className="text-[10px] text-neutral-600">{restQuestions.length} {locale === 'fr' ? 'questions' : 'questions'}</span>
+          </div>
+
+          {/* Compact question cards */}
+          {!restQuestions.length && (
+            <div className="text-center py-12 text-neutral-600 text-sm">
+              {searchParams.channel ? tr(locale, 'page.no_questions_ch') : tr(locale, 'page.no_questions')}
+            </div>
+          )}
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {restQuestions.map(q => {
+              const ch = (q as { forecast_channels?: { slug?: string; name?: string; name_fr?: string; name_en?: string } }).forecast_channels
+              const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
+              const blended = q.blended_probability !== null ? Math.round(q.blended_probability * 100) : null
+              const href = `/forecast/q/${encodeURIComponent(q.slug ?? q.id)}`
+
+              return (
+                <div key={q.id}
+                  className="group flex flex-col rounded-xl border border-neutral-800/60 bg-neutral-900/40 hover:border-neutral-700 hover:bg-neutral-900/70 transition-all p-3.5 gap-2.5">
+
+                  {/* Top: channel + days left */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
+                      {ch ? localizeChannel(ch, locale) : ''}
+                    </span>
+                    <span className="text-[9px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
                   </div>
-                )}
-                <div className="p-5 flex flex-col flex-1">
-                  {!imgUrl && (
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="flex flex-wrap items-center gap-2 min-w-0">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
-                          {ch ? localizeChannel(ch, locale) : ''}
-                        </span>
-                        <span className="text-[10px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
-                      </div>
-                      <ChevronRight size={16} className="text-neutral-600 group-hover:text-neutral-400 flex-shrink-0 transition-colors" />
+
+                  {/* Title (clickable → detail page) */}
+                  <Link href={href} className="flex-1 min-h-0">
+                    <h3 className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors line-clamp-2 leading-snug">
+                      {q.title}
+                    </h3>
+                  </Link>
+
+                  {/* Gauge + participants */}
+                  <div className="flex items-end justify-between pt-2 border-t border-neutral-800/50">
+                    <div className="text-center">
+                      <ProbabilityGauge value={blended} size={56} strokeWidth={5} />
+                      <div className="text-[8px] text-neutral-500 mt-0.5">{locale === 'fr' ? 'Probabilité' : 'Probability'}</div>
                     </div>
-                  )}
-                  <h3 className="text-sm font-semibold text-neutral-100 group-hover:text-white transition-colors line-clamp-3 leading-snug mb-3">{q.title}</h3>
-                  {snippet && (
-                    <p className="text-xs text-neutral-500 line-clamp-4 leading-relaxed mb-4 flex-1">{snippet}</p>
-                  )}
-                  <div className="mt-auto pt-3 border-t border-neutral-800/80 space-y-3">
-                  <div className="flex items-end justify-between gap-3">
-                    <div className="flex items-center gap-4">
-                      <div className="text-center">
-                        <ProbabilityGauge value={blended} size={64} strokeWidth={6} colorOverride="#818cf8" />
-                        <div className="text-[9px] text-neutral-600 mt-1 uppercase tracking-wide">{tr(locale, 'q.blended')}</div>
-                      </div>
-                      <div className="text-center">
-                        <ProbabilityGauge value={aiPct} size={64} strokeWidth={6} colorOverride="#60a5fa" />
-                        <div className="text-[9px] text-blue-500/80 mt-1 uppercase tracking-wide">{tr(locale, 'q.ai')}</div>
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1 text-[10px] text-neutral-500">
-                      <span className="flex items-center gap-1"><Users size={10} />{q.forecast_count ?? 0}</span>
+                    <div className="flex flex-col items-end gap-1 text-[9px] text-neutral-500 pb-1">
+                      <span className="flex items-center gap-1 font-medium"><Users size={10} />{q.forecast_count ?? 0} {locale === 'fr' ? 'avis' : 'votes'}</span>
                       <span className="text-neutral-600">{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</span>
                     </div>
                   </div>
-                  {histVals.length >= 2 && (
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[9px] text-neutral-600 uppercase tracking-wide">{tr(locale, 'page.trend')}</span>
-                      <BlendedMicroSpark values={histVals} className="opacity-90" />
-                    </div>
-                  )}
+
+                  {/* Quick vote slider */}
+                  <div className="pt-2 border-t border-neutral-800/50">
+                    <QuickVoteSlider questionId={q.id} locale={locale} />
                   </div>
                 </div>
-              </Link>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
-      </section>
+      </div>
     </div>
   )
 }

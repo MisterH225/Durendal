@@ -1,6 +1,6 @@
 /**
  * Génère automatiquement des événements + questions « chaudes » par canal.
- * Aligné sur le plan éditorial : 2–3 sujets / événements, questions binaires engageantes, brouillon.
+ * Aligné sur le plan éditorial : 2–3 sujets / événements, questions binaires engageantes, publiées en `open`.
  *
  * - Déduplication : empreinte du titre de question sur 7 jours (par canal)
  * - created_by : null (source IA côté admin)
@@ -182,7 +182,7 @@ export async function runQuestionGeneratorJob(): Promise<void> {
             resolution_source: q.resolution_source.slice(0, 500),
             resolution_criteria: q.resolution_criteria.slice(0, 4000),
             resolution_url: q.resolution_url?.slice(0, 2000) ?? null,
-            status: 'draft',
+            status: 'open',
             tags: ['auto', channel.slug],
             featured: false,
             created_by: null,
@@ -204,5 +204,5 @@ export async function runQuestionGeneratorJob(): Promise<void> {
     await new Promise((r) => setTimeout(r, 3000))
   }
 
-  console.log(`[question-generator] Terminé — ${createdEvents} événement(s), ${createdQuestions} question(s) brouillon.`)
+  console.log(`[question-generator] Terminé — ${createdEvents} événement(s), ${createdQuestions} question(s) ouvertes.`)
 }

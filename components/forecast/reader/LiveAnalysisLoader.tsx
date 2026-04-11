@@ -18,7 +18,7 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
 
-  const t = (fr: string, en: string) => locale === 'fr' ? fr : en
+  const isFr = locale === 'fr'
 
   const fetchAnalysis = useCallback(async () => {
     setLoading(true)
@@ -44,7 +44,7 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
 
       const raw = json.analysis
       if (!raw || typeof raw !== 'object') {
-        throw new Error(t('L\'IA n\'a pas retourné d\'analyse valide', 'AI did not return a valid analysis'))
+        throw new Error(isFr ? 'L\'IA n\'a pas retourné d\'analyse valide' : 'AI did not return a valid analysis')
       }
 
       const mapped: ArticleImplicationAnalysis = {
@@ -73,26 +73,24 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
         || mapped.secondOrderEffects.length > 0
 
       if (!hasAnyContent) {
-        throw new Error(t(
-          'L\'analyse générée est vide. L\'article source n\'a peut-être pas pu être extrait.',
-          'Generated analysis is empty. The source article may not have been extractable.'
-        ))
+        throw new Error(isFr
+          ? 'L\'analyse générée est vide. L\'article source n\'a peut-être pas pu être extrait.'
+          : 'Generated analysis is empty. The source article may not have been extractable.')
       }
 
       setAnalysis(mapped)
     } catch (err: any) {
       if (err?.name === 'AbortError') {
-        setErrorMsg(t(
-          'L\'analyse a pris trop de temps (>45s). Cliquez sur Réessayer.',
-          'Analysis took too long (>45s). Click Retry.'
-        ))
+        setErrorMsg(isFr
+          ? 'L\'analyse a pris trop de temps (>45s). Cliquez sur Réessayer.'
+          : 'Analysis took too long (>45s). Click Retry.')
       } else {
-        setErrorMsg(err?.message ?? t('Erreur inconnue', 'Unknown error'))
+        setErrorMsg(err?.message ?? (isFr ? 'Erreur inconnue' : 'Unknown error'))
       }
     } finally {
       setLoading(false)
     }
-  }, [signalId, locale, t])
+  }, [signalId, locale, isFr])
 
   useEffect(() => {
     fetchAnalysis()
@@ -107,13 +105,12 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
           </div>
           <div>
             <p className="text-xs font-medium text-neutral-300">
-              {t('Analyse IA en cours...', 'AI analysis in progress...')}
+              {isFr ? 'Analyse IA en cours...' : 'AI analysis in progress...'}
             </p>
             <p className="text-[10px] text-neutral-600">
-              {t(
-                'L\'IA récupère et analyse le contenu complet de l\'article. Cela peut prendre 15-30 secondes.',
-                'AI is fetching and analyzing the full article content. This may take 15-30 seconds.'
-              )}
+              {isFr
+                ? 'L\'IA récupère et analyse le contenu complet de l\'article. Cela peut prendre 15-30 secondes.'
+                : 'AI is fetching and analyzing the full article content. This may take 15-30 seconds.'}
             </p>
           </div>
         </div>
@@ -131,7 +128,7 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
             <Zap size={12} className="text-blue-400" />
           </div>
           <h2 className="text-sm font-bold text-white">
-            {t('Analyse des implications', 'Implications Analysis')}
+            {isFr ? 'Analyse des implications' : 'Implications Analysis'}
           </h2>
           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
             IA
@@ -144,7 +141,7 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
             <AlertTriangle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
             <div className="space-y-1">
               <p className="text-sm font-medium text-red-300">
-                {t('L\'analyse n\'a pas pu être générée', 'Analysis could not be generated')}
+                {isFr ? 'L\'analyse n\'a pas pu être générée' : 'Analysis could not be generated'}
               </p>
               <p className="text-xs text-neutral-500">{errorMsg}</p>
             </div>
@@ -154,7 +151,7 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-medium hover:bg-blue-500/20 transition-colors"
           >
             <RefreshCw size={12} />
-            {t('Réessayer l\'analyse', 'Retry analysis')}
+            {isFr ? 'Réessayer l\'analyse' : 'Retry analysis'}
           </button>
         </div>
 
@@ -162,7 +159,7 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
         {fallbackAnalysis.executiveTakeaway && (
           <div className="rounded-lg bg-neutral-800/30 border border-neutral-800 p-4 space-y-2">
             <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider">
-              {t('Résumé disponible', 'Available summary')}
+              {isFr ? 'Résumé disponible' : 'Available summary'}
             </p>
             <p className="text-sm text-neutral-300 leading-relaxed">
               {fallbackAnalysis.executiveTakeaway}

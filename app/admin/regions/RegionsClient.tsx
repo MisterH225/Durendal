@@ -141,32 +141,55 @@ export default function RegionsClient({ initialRegions }: { initialRegions: Regi
         {regions.map(r => {
           const color = REGION_COLORS[r.region_code] ?? '#9ca3af'
           return (
-            <div key={r.id} className={`flex items-center gap-4 px-5 py-4 ${!r.is_active ? 'opacity-50' : ''}`}>
-              <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-neutral-800">{r.label_fr}</div>
-                <div className="text-[11px] text-neutral-400">{r.region_code} · {r.label_en}</div>
+            <div key={r.id} className={`px-5 py-4 ${!r.is_active ? 'opacity-40' : ''}`}>
+              <div className="flex items-center gap-4">
+                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-neutral-800">{r.label_fr}</div>
+                  <div className="text-[11px] text-neutral-400">{r.region_code} · {r.label_en}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => updateWeight(r.id, r.weight - 5)}
+                    disabled={r.weight <= 0}
+                    className="w-7 h-7 rounded-md border border-neutral-300 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-sm font-bold transition-colors"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={r.weight}
+                    onChange={e => updateWeight(r.id, Number(e.target.value) || 0)}
+                    className="w-14 h-8 text-center text-sm font-bold border border-neutral-300 rounded-lg tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    style={{ color }}
+                  />
+                  <button
+                    onClick={() => updateWeight(r.id, r.weight + 5)}
+                    disabled={r.weight >= 100}
+                    className="w-7 h-7 rounded-md border border-neutral-300 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-sm font-bold transition-colors"
+                  >
+                    +
+                  </button>
+                  <span className="text-sm text-neutral-400 w-4">%</span>
+                  <button
+                    onClick={() => toggleActive(r.id)}
+                    className="ml-2 text-neutral-400 hover:text-neutral-600 transition-colors"
+                    title={r.is_active ? 'Désactiver' : 'Activer'}
+                  >
+                    {r.is_active ? <ToggleRight size={22} className="text-emerald-500" /> : <ToggleLeft size={22} />}
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={r.weight}
-                  onChange={e => updateWeight(r.id, Number(e.target.value))}
-                  className="w-32 h-1.5 appearance-none rounded-full cursor-pointer"
-                  style={{ accentColor: color }}
-                />
-                <span className="text-sm font-bold tabular-nums w-10 text-right" style={{ color }}>
-                  {r.weight}%
-                </span>
-                <button
-                  onClick={() => toggleActive(r.id)}
-                  className="text-neutral-400 hover:text-neutral-600 transition-colors"
-                  title={r.is_active ? 'Désactiver' : 'Activer'}
-                >
-                  {r.is_active ? <ToggleRight size={20} className="text-emerald-500" /> : <ToggleLeft size={20} />}
-                </button>
+              {/* Progress bar */}
+              <div className="mt-2 ml-7">
+                <div className="w-full h-2 bg-neutral-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{ width: `${r.weight}%`, backgroundColor: color }}
+                  />
+                </div>
               </div>
             </div>
           )

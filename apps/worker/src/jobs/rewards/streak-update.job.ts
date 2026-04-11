@@ -6,8 +6,8 @@
  */
 
 import { createWorkerSupabase } from '../../supabase'
-import { checkExpiredStreaks } from '../../../../lib/rewards/streaks'
-import { expireFeatureUnlocks } from '../../../../lib/rewards/pro-grants'
+import { checkExpiredStreaks } from '../../../../../lib/rewards/streaks'
+import { expireFeatureUnlocks } from '../../../../../lib/rewards/pro-grants'
 
 export async function runStreakUpdateJob(): Promise<void> {
   const supabase = createWorkerSupabase()

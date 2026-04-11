@@ -7,8 +7,8 @@
  */
 
 import { createWorkerSupabase } from '../../supabase'
-import { awardResolutionPoints } from '../../../../lib/rewards/scoring'
-import { checkAndAwardBadges } from '../../../../lib/rewards/badges'
+import { awardResolutionPoints } from '../../../../../lib/rewards/scoring'
+import { checkAndAwardBadges } from '../../../../../lib/rewards/badges'
 
 interface RewardPayload {
   questionId: string

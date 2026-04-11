@@ -7,8 +7,8 @@
  */
 
 import { createWorkerSupabase } from '../../supabase'
-import { grantLeaderboardRewards } from '../../../../lib/rewards/pro-grants'
-import { checkAndAwardBadges } from '../../../../lib/rewards/badges'
+import { grantLeaderboardRewards } from '../../../../../lib/rewards/pro-grants'
+import { checkAndAwardBadges } from '../../../../../lib/rewards/badges'
 
 export async function runLeaderboardSnapshotJob(): Promise<void> {
   const supabase = createWorkerSupabase()

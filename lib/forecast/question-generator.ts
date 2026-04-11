@@ -162,6 +162,25 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
 
   const since = new Date(Date.now() - DEDUP_DAYS * 86_400_000).toISOString()
 
+  // Pre-load signal images per channel for fallback
+  const signalImagesByChannel = new Map<string, string[]>()
+  {
+    const { data: recentSignals } = await supabase
+      .from('forecast_signal_feed')
+      .select('channel_id, data')
+      .gte('created_at', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(60)
+    for (const sig of recentSignals ?? []) {
+      const imgUrl = (sig.data as Record<string, unknown> | null)?.image_url
+      if (typeof imgUrl === 'string' && imgUrl.startsWith('https://')) {
+        const arr = signalImagesByChannel.get(sig.channel_id) ?? []
+        arr.push(imgUrl)
+        signalImagesByChannel.set(sig.channel_id, arr)
+      }
+    }
+  }
+
   let createdEvents = 0
   let createdQuestions = 0
 
@@ -213,7 +232,12 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       `  - 2 à 3 questions : la MAJORITÉ en OUI/NON (question_type: "binary"), mais AU MOINS 1 question à CHOIX MULTIPLE (question_type: "multi_choice")`,
       `  - Pour les questions BINARY : inclure "ai_initial_probability" (float 0.01-0.99)`,
       `  - Pour les questions MULTI_CHOICE : inclure "outcomes" (tableau de 2-4 options), chacune avec "label" et "ai_initial_probability". La SOMME des probabilités doit faire ~1.0`,
-      `  - Chaque question : "description" riche (3-5 phrases), "resolution_criteria" précis`,
+      `  - Chaque question : "description" RICHE et CONTEXTUALISÉE (4-6 phrases minimum). La description doit :`,
+      `    * Expliquer le CONTEXTE actuel et les ENJEUX concrets`,
+      `    * Mentionner les FAITS récents qui rendent cette question pertinente`,
+      `    * Citer des CHIFFRES ou DONNÉES vérifiables quand c'est possible`,
+      `    * Donner envie à l'utilisateur de se forger un avis`,
+      `  - resolution_criteria PRÉCIS et mesurable`,
       `  - Si possible, inclure "image_url" d'un média réel (Reuters, AFP, BBC)`,
     ].join('\n')
 
@@ -264,7 +288,9 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       `- AU MOINS 1 question multi_choice par événement quand c'est pertinent`,
       `- Pour multi_choice : 2 à 4 outcomes, somme des probabilités = 1.0`,
       `- close_date_days entre 7 et 45`,
-      `- Descriptions factuelles, détaillées et vérifiables`,
+      `- Descriptions RICHES, factuelles, détaillées et vérifiables (4-6 phrases par question)`,
+      `  * MAUVAIS exemple : "Le projet de chemin de fer Kenya-Ouganda fait face à des défis."`,
+      `  * BON exemple : "Le projet de chemin de fer à écartement standard (SGR) Kenya-Ouganda, estimé à 3,6 milliards USD, traverse une phase critique. Lancé en 2017 avec un financement initial de la China Exim Bank, le tronçon Nairobi-Naivasha est achevé mais l'extension vers Kisumu et Malaba reste bloquée par un désaccord sur le partage des coûts. Le Kenya a récemment proposé un modèle PPP, tandis que l'Ouganda explore un financement alternatif via la Banque africaine de développement. Les prochaines négociations trilatérales sont prévues pour juin 2026."`,
       `- resolution_criteria PRÉCIS et mesurable`,
       `- image_url : uniquement des URLs HTTPS réelles. Si indisponible, omets le champ`,
     ].join('\n')
@@ -360,8 +386,17 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
             resolve_after: resolveAfterDate,
           }
 
-          if (hasImageCol && q.image_url && q.image_url.startsWith('https://')) {
-            insertRow.image_url = q.image_url.slice(0, 2000)
+          if (hasImageCol) {
+            if (q.image_url && q.image_url.startsWith('https://')) {
+              insertRow.image_url = q.image_url.slice(0, 2000)
+            } else {
+              // Fallback: borrow an image from recent signal articles in the same channel
+              const channelImages = signalImagesByChannel.get(channel.id) ?? []
+              if (channelImages.length > 0) {
+                const idx = createdQuestions % channelImages.length
+                insertRow.image_url = channelImages[idx]
+              }
+            }
           }
           if (hasQuestionType) {
             insertRow.question_type = isMulti ? 'multi_choice' : 'binary'

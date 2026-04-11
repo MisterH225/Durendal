@@ -167,19 +167,19 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
     })
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6 overflow-x-hidden">
       {/* Hero compact */}
-      <div className="text-center space-y-2 pt-2 pb-4">
+      <div className="text-center space-y-2 pt-1 sm:pt-2 pb-3 sm:pb-4">
         <div className="inline-flex items-center gap-2 text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full">
           <TrendingUp size={11} />
           {tr(locale, 'hero.badge')}
         </div>
-        <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight">{tr(locale, 'hero.title')}</h1>
-        <p className="text-neutral-400 text-sm max-w-xl mx-auto">{tr(locale, 'hero.subtitle')}</p>
+        <h1 className="text-2xl sm:text-4xl md:text-5xl font-black text-white tracking-tight">{tr(locale, 'hero.title')}</h1>
+        <p className="text-neutral-400 text-xs sm:text-sm max-w-xl mx-auto">{tr(locale, 'hero.subtitle')}</p>
       </div>
 
       {/* Channel chips + Region selector */}
-      <div className="flex flex-wrap items-center justify-center gap-2 pb-6">
+      <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 pb-4 sm:pb-6">
         <Link href="/forecast"
           className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${!searchParams.channel ? 'bg-white text-neutral-900 border-white' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}`}>
           {tr(locale, 'page.all')}
@@ -195,7 +195,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
       </div>
 
       {/* Two-panel layout */}
-      <div className="flex gap-5">
+      <div className="flex gap-4 sm:gap-5">
 
         {/* Left panel: live signals */}
         <aside className="hidden lg:block w-72 flex-shrink-0">
@@ -246,7 +246,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
             </div>
           )}
 
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {restQuestions.map(q => {
               const ch = (q as any).forecast_channels as { slug?: string; name?: string; name_fr?: string; name_en?: string } | undefined
               const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
@@ -256,63 +256,99 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
               const outcomes = outcomesByQuestion.get(q.id) ?? []
               const qRegion = (q as any).region as string | null
               const isUserRegion = qRegion === userRegion && userRegion !== 'global'
+              const imgUrl = (q as any).image_url as string | null
+              const desc = (q as any).description as string | null
+              const aiCard = aiByQuestion.get(q.id)
+              const contextText = aiCard?.summary ?? desc ?? null
 
               return (
                 <div key={q.id}
-                  className={`group flex flex-col rounded-xl border ${isUserRegion ? 'border-blue-800/40 bg-blue-950/10' : 'border-neutral-800/60 bg-neutral-900/40'} hover:border-neutral-700 hover:bg-neutral-900/70 transition-all p-3.5 gap-2.5`}>
+                  className={`group flex flex-col rounded-xl border min-w-0 overflow-hidden ${isUserRegion ? 'border-blue-800/40 bg-blue-950/10' : 'border-neutral-800/60 bg-neutral-900/40'} hover:border-neutral-700 hover:bg-neutral-900/70 transition-all`}>
 
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
-                        {ch ? localizeChannel(ch, locale) : ''}
-                      </span>
-                      {isUserRegion && (
-                        <span className="text-[8px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
-                          <MapPin size={7} />
-                          {REGION_LABELS[userRegion]?.[locale === 'fr' ? 'fr' : 'en'] ?? ''}
+                  {/* Image header */}
+                  <Link href={href} className="relative block w-full h-28 sm:h-32 bg-neutral-800 overflow-hidden flex-shrink-0">
+                    {imgUrl ? (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={imgUrl} alt="" className="w-full h-full object-cover opacity-70 group-hover:opacity-90 group-hover:scale-105 transition-all duration-500" loading="lazy" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-neutral-900 via-neutral-900/50 to-transparent" />
+                      </>
+                    ) : (
+                      <div className={`w-full h-full flex items-center justify-center ${
+                        ch?.slug === 'macro-commodities' ? 'bg-gradient-to-br from-amber-950/60 via-neutral-900 to-neutral-900' :
+                        ch?.slug === 'politics-policy' ? 'bg-gradient-to-br from-rose-950/60 via-neutral-900 to-neutral-900' :
+                        ch?.slug === 'tech-ai' ? 'bg-gradient-to-br from-blue-950/60 via-neutral-900 to-neutral-900' :
+                        ch?.slug === 'agriculture-risk' ? 'bg-gradient-to-br from-green-950/60 via-neutral-900 to-neutral-900' :
+                        ch?.slug === 'climate' ? 'bg-gradient-to-br from-teal-950/60 via-neutral-900 to-neutral-900' :
+                        ch?.slug === 'logistics' ? 'bg-gradient-to-br from-orange-950/60 via-neutral-900 to-neutral-900' :
+                        'bg-gradient-to-br from-neutral-800 via-neutral-900 to-neutral-900'
+                      }`}>
+                        <TrendingUp size={28} className="text-neutral-700/50" />
+                      </div>
+                    )}
+                    {/* Overlay tags */}
+                    <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border backdrop-blur-sm whitespace-nowrap ${chColor}`}>
+                          {ch ? localizeChannel(ch, locale) : ''}
                         </span>
-                      )}
+                        {isUserRegion && (
+                          <span className="text-[8px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 whitespace-nowrap backdrop-blur-sm">
+                            <MapPin size={7} />
+                            {REGION_LABELS[userRegion]?.[locale === 'fr' ? 'fr' : 'en'] ?? ''}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[9px] text-neutral-300 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full flex-shrink-0">{daysLeft(q.close_date, locale)}</span>
                     </div>
-                    <span className="text-[9px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
-                  </div>
-
-                  <Link href={href} className="flex-1 min-h-0">
-                    <h3 className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors line-clamp-2 leading-snug">
-                      {q.title}
-                    </h3>
                   </Link>
 
-                  {/* Conditional display: binary gauge vs multi-choice bars */}
-                  {isMulti && outcomes.length >= 2 ? (
-                    <>
-                      <div className="pt-2 border-t border-neutral-800/50">
-                        <OutcomeBars outcomes={outcomes} compact />
-                      </div>
-                      <div className="flex items-center justify-between text-[9px] text-neutral-500">
-                        <span className="flex items-center gap-1 font-medium"><Users size={10} />{q.forecast_count ?? 0} {locale === 'fr' ? 'avis' : 'votes'}</span>
-                        <span className="text-neutral-600">{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</span>
-                      </div>
-                      <div className="pt-2 border-t border-neutral-800/50">
-                        <QuickVoteMulti questionId={q.id} outcomes={outcomes} locale={locale} />
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex items-end justify-between pt-2 border-t border-neutral-800/50">
-                        <div className="text-center">
-                          <ProbabilityGauge value={blended} size={56} strokeWidth={5} />
-                          <div className="text-[8px] text-neutral-500 mt-0.5">{locale === 'fr' ? 'Probabilité' : 'Probability'}</div>
+                  {/* Content body */}
+                  <div className="flex flex-col flex-1 p-3 sm:p-3.5 gap-2 min-w-0">
+                    <Link href={href} className="min-w-0">
+                      <h3 className="text-[13px] font-semibold text-neutral-200 group-hover:text-white transition-colors line-clamp-2 leading-snug break-words">
+                        {q.title}
+                      </h3>
+                    </Link>
+
+                    {/* Context snippet */}
+                    {contextText && (
+                      <p className="text-[10px] text-neutral-500 leading-relaxed line-clamp-2 break-words">
+                        {contextText.slice(0, 160)}
+                      </p>
+                    )}
+
+                    {isMulti && outcomes.length >= 2 ? (
+                      <>
+                        <div className="pt-2 border-t border-neutral-800/50 min-w-0">
+                          <OutcomeBars outcomes={outcomes} compact />
                         </div>
-                        <div className="flex flex-col items-end gap-1 text-[9px] text-neutral-500 pb-1">
+                        <div className="flex items-center justify-between text-[9px] text-neutral-500">
                           <span className="flex items-center gap-1 font-medium"><Users size={10} />{q.forecast_count ?? 0} {locale === 'fr' ? 'avis' : 'votes'}</span>
                           <span className="text-neutral-600">{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</span>
                         </div>
-                      </div>
-                      <div className="pt-2 border-t border-neutral-800/50">
-                        <QuickVoteSlider questionId={q.id} locale={locale} />
-                      </div>
-                    </>
-                  )}
+                        <div className="pt-2 border-t border-neutral-800/50 min-w-0">
+                          <QuickVoteMulti questionId={q.id} outcomes={outcomes} locale={locale} />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-end justify-between pt-2 border-t border-neutral-800/50">
+                          <div className="text-center flex-shrink-0">
+                            <ProbabilityGauge value={blended} size={48} strokeWidth={4} />
+                            <div className="text-[8px] text-neutral-500 mt-0.5">{locale === 'fr' ? 'Probabilité' : 'Probability'}</div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1 text-[9px] text-neutral-500 pb-1">
+                            <span className="flex items-center gap-1 font-medium"><Users size={10} />{q.forecast_count ?? 0} {locale === 'fr' ? 'avis' : 'votes'}</span>
+                            <span className="text-neutral-600">{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</span>
+                          </div>
+                        </div>
+                        <div className="pt-2 border-t border-neutral-800/50 min-w-0">
+                          <QuickVoteSlider questionId={q.id} locale={locale} />
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               )
             })}

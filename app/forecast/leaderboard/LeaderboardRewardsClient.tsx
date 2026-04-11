@@ -98,15 +98,15 @@ export default function LeaderboardRewardsClient({
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 py-5 sm:py-8 overflow-x-hidden">
       {/* Header */}
-      <div className="text-center mb-8 space-y-2">
+      <div className="text-center mb-5 sm:mb-8 space-y-2">
         <div className="inline-flex items-center gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full">
           <Trophy size={11} />
           {tr(locale, 'lb.badge')}
         </div>
-        <h1 className="text-3xl font-bold text-white">{isFr ? 'Classement & Recompenses' : 'Leaderboard & Rewards'}</h1>
-        <p className="text-sm text-neutral-500">{tr(locale, 'lb.subtitle')}</p>
+        <h1 className="text-2xl sm:text-3xl font-bold text-white">{isFr ? 'Classement & Recompenses' : 'Leaderboard & Rewards'}</h1>
+        <p className="text-xs sm:text-sm text-neutral-500">{tr(locale, 'lb.subtitle')}</p>
       </div>
 
       {/* Two-panel layout */}

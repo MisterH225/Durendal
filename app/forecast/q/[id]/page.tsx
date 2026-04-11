@@ -110,13 +110,13 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
   const imgUrl = typeof q.image_url === 'string' ? q.image_url : null
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+    <div className="max-w-4xl mx-auto px-3 sm:px-4 py-6 sm:py-10 space-y-6 sm:space-y-8 overflow-x-hidden">
       <Link href="/forecast" className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors">
         <ArrowLeft size={12} />{tr(locale, 'q.back')}
       </Link>
 
       {imgUrl && (
-        <div className="relative w-full h-48 md:h-64 rounded-2xl overflow-hidden bg-neutral-800">
+        <div className="relative w-full h-36 sm:h-48 md:h-64 rounded-xl sm:rounded-2xl overflow-hidden bg-neutral-800">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={imgUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
           <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/70 via-transparent to-neutral-950/20" />
@@ -124,14 +124,14 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
       )}
 
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           {ch && <span className="text-xs font-semibold text-neutral-300 bg-neutral-800 px-2.5 py-0.5 rounded-full">{localizeChannel(ch, locale)}</span>}
           <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${statusColor}`}>{statusLabel}</span>
-          <span className="text-xs text-neutral-600 flex items-center gap-1">
+          <span className="text-[10px] sm:text-xs text-neutral-600 flex items-center gap-1">
             <Calendar size={10} />{tr(locale, 'q.close_date')} : {new Date(q.close_date).toLocaleDateString(dateFmt, { day: '2-digit', month: 'long', year: 'numeric' })}
           </span>
         </div>
-        <h1 className="text-2xl md:text-3xl font-bold text-white leading-tight">{q.title}</h1>
+        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white leading-tight break-words">{q.title}</h1>
         {(q.description || situationSummary) && (
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/50 p-5 space-y-3">
             <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">{tr(locale, 'q.situation')}</h2>
@@ -156,20 +156,20 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
           <OutcomeBars outcomes={outcomes} />
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5 flex flex-col items-center gap-2">
-            <ProbabilityGauge value={crowdPct} size={100} label={tr(locale, 'q.crowd')} sublabel={`${q.forecast_count ?? 0} votes`} colorOverride="#34d399" />
+        <div className="grid grid-cols-3 gap-2 sm:gap-4">
+          <div className="rounded-xl sm:rounded-2xl border border-neutral-800 bg-neutral-900/60 p-2.5 sm:p-5 flex flex-col items-center gap-1 sm:gap-2">
+            <ProbabilityGauge value={crowdPct} size={72} label={tr(locale, 'q.crowd')} sublabel={`${q.forecast_count ?? 0} votes`} colorOverride="#34d399" />
           </div>
-          <div className="rounded-2xl border border-blue-900/40 bg-blue-950/20 p-5 flex flex-col items-center gap-2">
-            <ProbabilityGauge value={aiPct} size={100} label={tr(locale, 'q.ai')} sublabel={aiData?.model ?? 'Gemini'} colorOverride="#60a5fa" />
+          <div className="rounded-xl sm:rounded-2xl border border-blue-900/40 bg-blue-950/20 p-2.5 sm:p-5 flex flex-col items-center gap-1 sm:gap-2">
+            <ProbabilityGauge value={aiPct} size={72} label={tr(locale, 'q.ai')} sublabel={aiData?.model ?? 'Gemini'} colorOverride="#60a5fa" />
           </div>
-          <div className="rounded-2xl border border-indigo-800/40 bg-indigo-950/20 p-5 flex flex-col items-center gap-2">
-            <ProbabilityGauge value={blendedPct} size={100} label={tr(locale, 'q.blended')} sublabel={locale === 'fr' ? 'Agrégé' : 'Aggregated'} colorOverride="#818cf8" />
+          <div className="rounded-xl sm:rounded-2xl border border-indigo-800/40 bg-indigo-950/20 p-2.5 sm:p-5 flex flex-col items-center gap-1 sm:gap-2">
+            <ProbabilityGauge value={blendedPct} size={72} label={tr(locale, 'q.blended')} sublabel={locale === 'fr' ? 'Agrégé' : 'Aggregated'} colorOverride="#818cf8" />
           </div>
         </div>
       )}
 
-      <div className="grid md:grid-cols-[1fr_320px] gap-6">
+      <div className="grid md:grid-cols-[1fr_280px] lg:grid-cols-[1fr_320px] gap-4 sm:gap-6">
         <div className="space-y-6">
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5">
             <div className="flex items-center justify-between mb-4">

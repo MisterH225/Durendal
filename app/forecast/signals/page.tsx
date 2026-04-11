@@ -105,18 +105,18 @@ export default async function SignalsPage({
   ]
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-10 space-y-10">
+    <div className="max-w-6xl mx-auto px-3 sm:px-4 py-6 sm:py-10 space-y-6 sm:space-y-10 overflow-x-hidden">
 
       {/* Header */}
       <div className="space-y-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Radio size={15} className="text-red-400 animate-pulse" />
-          <h1 className="text-2xl font-bold text-white">{tr(locale, 'signals.page_title')}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-white">{tr(locale, 'signals.page_title')}</h1>
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
             {tr(locale, 'signals.live_badge')}
           </span>
         </div>
-        <p className="text-sm text-neutral-500">{tr(locale, 'signals.page_sub')}</p>
+        <p className="text-xs sm:text-sm text-neutral-500">{tr(locale, 'signals.page_sub')}</p>
       </div>
 
       {/* Filter bar */}

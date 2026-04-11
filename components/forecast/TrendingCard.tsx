@@ -68,8 +68,8 @@ export function TrendingCard({ q, locale }: { q: TrendingQuestion; locale: Local
   const isMulti = q.question_type === 'multi_choice' && (q.outcomes?.length ?? 0) >= 2
 
   return (
-    <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 overflow-hidden">
-      <div className="px-5 pt-4 pb-2 flex items-center gap-2">
+    <div className="rounded-xl sm:rounded-2xl border border-neutral-800 bg-neutral-900/60 overflow-hidden">
+      <div className="px-3 sm:px-5 pt-3 sm:pt-4 pb-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
         <span className={`text-[10px] font-semibold uppercase tracking-wider ${chColor}`}>
           {q.channel_name}
         </span>
@@ -84,22 +84,21 @@ export function TrendingCard({ q, locale }: { q: TrendingQuestion; locale: Local
         )}
       </div>
 
-      <Link href={href} className="block px-5 group">
-        <h2 className="text-lg md:text-xl font-bold text-white leading-snug group-hover:text-blue-300 transition-colors">
+      <Link href={href} className="block px-3 sm:px-5 group">
+        <h2 className="text-base sm:text-lg md:text-xl font-bold text-white leading-snug group-hover:text-blue-300 transition-colors break-words">
           {q.title}
         </h2>
       </Link>
 
-      <div className="px-5 pt-4 pb-3">
-        <div className="flex flex-col md:flex-row gap-5">
-          {/* Left: probability display */}
-          <div className="flex flex-col gap-3 md:w-48 flex-shrink-0">
+      <div className="px-3 sm:px-5 pt-3 sm:pt-4 pb-3">
+        <div className="flex flex-col md:flex-row gap-4 sm:gap-5">
+          <div className="flex flex-col gap-3 md:w-48 flex-shrink-0 min-w-0">
             {isMulti ? (
               <OutcomeBars outcomes={q.outcomes!} />
             ) : (
               <>
                 <div className="text-center md:text-left">
-                  <div className={`text-4xl font-black tabular-nums ${blended != null ? probColor(blended) : 'text-neutral-600'}`}>
+                  <div className={`text-3xl sm:text-4xl font-black tabular-nums ${blended != null ? probColor(blended) : 'text-neutral-600'}`}>
                     {blended != null ? `${blended}%` : '—'}
                   </div>
                   <div className="text-[10px] text-neutral-500 uppercase tracking-wide mt-0.5">
@@ -136,7 +135,6 @@ export function TrendingCard({ q, locale }: { q: TrendingQuestion; locale: Local
             </div>
           </div>
 
-          {/* Right: probability history chart */}
           <div className="flex-1 min-w-0">
             <HistorySparkline
               data={q.history}
@@ -148,8 +146,8 @@ export function TrendingCard({ q, locale }: { q: TrendingQuestion; locale: Local
       </div>
 
       {(q.aiSummary || q.description) && (
-        <div className="px-5 pb-3">
-          <p className="text-xs text-neutral-400 leading-relaxed line-clamp-3">
+        <div className="px-3 sm:px-5 pb-3">
+          <p className="text-xs text-neutral-400 leading-relaxed line-clamp-3 break-words">
             {(q.aiSummary ?? q.description ?? '').slice(0, 300)}
           </p>
         </div>
@@ -157,7 +155,7 @@ export function TrendingCard({ q, locale }: { q: TrendingQuestion; locale: Local
 
       <Link
         href={href}
-        className="flex items-center justify-between px-5 py-3 border-t border-neutral-800/60 hover:bg-neutral-800/30 transition-colors group"
+        className="flex items-center justify-between px-3 sm:px-5 py-2.5 sm:py-3 border-t border-neutral-800/60 hover:bg-neutral-800/30 transition-colors group"
       >
         <span className="text-xs font-medium text-blue-400 group-hover:text-blue-300">
           {locale === 'fr' ? 'Voir le détail & participer' : 'View details & participate'}

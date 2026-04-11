@@ -9,6 +9,11 @@ export type ForecastEventType =
   | 'forecast.signal.exported'
   | 'forecast.question.closed'
   | 'forecast.resolution.ready'
+  | 'forecast.resolution.job.created'
+  | 'forecast.resolution.evidence.ready'
+  | 'forecast.resolution.approved'
+  | 'forecast.resolution.disputed'
+  | 'forecast.resolution.finalized'
 
 export interface EventEnvelope<TPayload = Record<string, unknown>> {
   id: string

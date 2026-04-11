@@ -9,6 +9,13 @@ export const FORECAST_TOPICS = {
   QUESTION_CLOSED:             'forecast.question.closed',
   RESOLUTION_READY:            'forecast.resolution.ready',
   NEWS_SIGNAL_REQUESTED:       'forecast.news.signal.requested',
+
+  // Resolution engine topics
+  RESOLUTION_JOB_CREATED:      'forecast.resolution.job.created',
+  RESOLUTION_EVIDENCE_READY:   'forecast.resolution.evidence.ready',
+  RESOLUTION_APPROVED:         'forecast.resolution.approved',
+  RESOLUTION_DISPUTED:         'forecast.resolution.disputed',
+  RESOLUTION_FINALIZED:        'forecast.resolution.finalized',
 } as const
 
 export type ForecastTopic = (typeof FORECAST_TOPICS)[keyof typeof FORECAST_TOPICS]

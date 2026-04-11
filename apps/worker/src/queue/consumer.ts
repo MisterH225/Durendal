@@ -3,6 +3,8 @@ import { runBlendedRecomputeJob } from '../jobs/forecast/blended-recompute.job'
 import { runAIForecastJob } from '../jobs/forecast/ai-forecast.job'
 import { runResolutionScoringJob } from '../jobs/forecast/resolution-scoring.job'
 import { runNewsSignalJob } from '../jobs/forecast/news-signal.job'
+import { runResolutionSourceJob } from '../jobs/resolution/resolution-source.job'
+import { runResolutionProposalJob } from '../jobs/resolution/resolution-proposal.job'
 import { FORECAST_TOPICS } from './topics'
 
 type QueueRow = {
@@ -81,6 +83,18 @@ async function processOne(row: QueueRow) {
 
     case FORECAST_TOPICS.NEWS_SIGNAL_REQUESTED:
       await runNewsSignalJob()
+      break
+
+    case FORECAST_TOPICS.RESOLUTION_JOB_CREATED:
+      await runResolutionSourceJob(jobPayload)
+      break
+
+    case FORECAST_TOPICS.RESOLUTION_EVIDENCE_READY:
+      await runResolutionProposalJob(jobPayload)
+      break
+
+    case FORECAST_TOPICS.RESOLUTION_APPROVED:
+      // Scoring is triggered by resolution-finalize after dispute window
       break
 
     case FORECAST_TOPICS.USER_FORECAST_SUBMITTED:

@@ -337,6 +337,8 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
             ? Math.max(0.01, Math.min(0.99, q.ai_initial_probability))
             : null
 
+          const resolveAfterDate = new Date(now + (days + 1) * 86_400_000).toISOString()
+
           const insertRow: Record<string, unknown> = {
             event_id: evRow.id,
             channel_id: channel.id,
@@ -353,6 +355,9 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
             created_by: null,
             ai_probability: aiInitProb,
             blended_probability: aiInitProb,
+            resolution_class: 'B',
+            resolution_mode: 'assisted',
+            resolve_after: resolveAfterDate,
           }
 
           if (hasImageCol && q.image_url && q.image_url.startsWith('https://')) {
@@ -397,6 +402,26 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
               console.error(`[question-generator] Outcomes ${channel.slug}:`, oErr.message)
             }
           }
+
+          // Create resolution profile
+          await supabase.from('resolution_profiles').insert({
+            question_id: qRow.id,
+            resolution_class: 'B',
+            resolution_mode: 'assisted',
+            outcome_type: isMulti ? 'multi_choice' : 'binary',
+            primary_source_type: 'ai_search',
+            primary_source_url: q.resolution_url?.slice(0, 2000) ?? null,
+            resolve_after: resolveAfterDate,
+            resolve_deadline: new Date(now + (days + 7) * 86_400_000).toISOString(),
+            tie_break_rule: 'En cas d\'ambiguïté, la question sera examinée manuellement par un admin.',
+            cancellation_rule: 'Si l\'événement sous-jacent est annulé ou ne se produit pas.',
+            ambiguity_rule: 'Si les critères de résolution sont ambigus, annuler la question.',
+            auto_resolve_eligible: false,
+            requires_multi_source: false,
+            min_source_confidence: 'high',
+          }).then(({ error: rpErr }) => {
+            if (rpErr) console.error(`[question-generator] Resolution profile:`, rpErr.message)
+          })
 
           // Enqueue AI forecast
           await supabase.from('forecast_event_queue').insert({

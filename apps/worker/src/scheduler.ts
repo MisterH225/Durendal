@@ -12,6 +12,8 @@
 import { createWorkerSupabase } from './supabase'
 import { runNewsSignalJob } from './jobs/forecast/news-signal.job'
 import { runQuestionGeneratorJob } from './jobs/forecast/question-generator.job'
+import { runResolutionCheckJob } from './jobs/resolution/resolution-check.job'
+import { runResolutionFinalizeJob } from './jobs/resolution/resolution-finalize.job'
 
 type Task = {
   name: string
@@ -136,6 +138,18 @@ const TASKS: Task[] = [
     intervalMs:  6 * 60 * 60 * 1000,   // every 6 hours
     lastRanAt:   0,
     fn:          runQuestionGeneratorJob,
+  },
+  {
+    name:        'resolution:check',
+    intervalMs:  60 * 60 * 1000,        // every 1 hour
+    lastRanAt:   0,
+    fn:          runResolutionCheckJob,
+  },
+  {
+    name:        'resolution:finalize',
+    intervalMs:  60 * 60 * 1000,        // every 1 hour
+    lastRanAt:   0,
+    fn:          runResolutionFinalizeJob,
   },
 ]
 

@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getBypassAdminProfile, isAuthUiBypassEnabled } from '@/lib/auth/ui-bypass'
-import { LayoutDashboard, Users, Package, Globe, Key, Bot, CreditCard, Settings, TrendingUp, Layers, MapPin } from 'lucide-react'
+import { LayoutDashboard, Users, Package, Globe, Key, Bot, CreditCard, Settings, TrendingUp, Layers, MapPin, Scale } from 'lucide-react'
 
 const adminNav = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
@@ -14,6 +14,7 @@ const adminNav = [
   { href: '/admin/forecast', label: 'Forecast éditorial', icon: TrendingUp },
   { href: '/admin/channels', label: 'Catégories Forecast', icon: Layers },
   { href: '/admin/regions', label: 'Régions & Pondération', icon: MapPin },
+  { href: '/admin/resolution', label: 'Résolution', icon: Scale },
   { href: '/admin/billing', label: 'Paiements', icon: CreditCard },
   { href: '/admin/settings', label: 'Paramètres', icon: Settings },
 ]

@@ -25,11 +25,16 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
     setErrorMsg(null)
 
     try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 45000)
+
       const res = await fetch('/api/forecast/analyze-signal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ signalId, locale }),
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
 
       const json = await res.json()
 
@@ -76,7 +81,14 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
 
       setAnalysis(mapped)
     } catch (err: any) {
-      setErrorMsg(err?.message ?? t('Erreur inconnue', 'Unknown error'))
+      if (err?.name === 'AbortError') {
+        setErrorMsg(t(
+          'L\'analyse a pris trop de temps (>45s). Cliquez sur Réessayer.',
+          'Analysis took too long (>45s). Click Retry.'
+        ))
+      } else {
+        setErrorMsg(err?.message ?? t('Erreur inconnue', 'Unknown error'))
+      }
     } finally {
       setLoading(false)
     }

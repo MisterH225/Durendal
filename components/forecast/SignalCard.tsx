@@ -3,6 +3,7 @@ import { ArrowRight, CheckCircle2, TrendingUp, Zap, Newspaper, ExternalLink } fr
 import type { Locale } from '@/lib/i18n/translations'
 import { tr } from '@/lib/i18n/translations'
 import { SignalImage } from './SignalImage'
+import { BookmarkButton, ShareButton } from './SignalActions'
 
 export interface SignalData {
   id: string
@@ -39,13 +40,6 @@ function SignalIcon({ type }: { type: string }) {
   return                                    <Zap          size={14} className="text-amber-400   flex-shrink-0" />
 }
 
-function signalTypeBadge(type: string, locale: Locale): string {
-  if (type === 'resolution')        return tr(locale, 'signals.type_resolve')
-  if (type === 'probability_shift') return tr(locale, 'signals.type_shift')
-  if (type === 'news')              return tr(locale, 'signals.type_news')
-  return tr(locale, 'signals.type_signal')
-}
-
 function channelName(ch: SignalData['forecast_channels'], locale: Locale): string {
   if (!ch) return ''
   if (locale === 'fr' && ch.name_fr) return ch.name_fr
@@ -75,28 +69,31 @@ interface Props {
   signal:  SignalData
   locale:  Locale
   compact?: boolean
+  bookmarkedIds?: Set<string>
 }
 
-export function SignalCard({ signal: s, locale, compact = false }: Props) {
+export function SignalCard({ signal: s, locale, compact = false, bookmarkedIds }: Props) {
   const ch        = s.forecast_channels
   const q         = s.forecast_questions
   const qHref     = q ? `/forecast/q/${q.slug ?? q.id}` : null
   const chColor   = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
   const sevColor  = SEVERITY_COLORS[s.severity ?? 'low'] ?? SEVERITY_COLORS.low
-  const typeLabel = signalTypeBadge(s.signal_type, locale)
 
   const sourceUrl  = s.data?.source_url as string | undefined
   const imageUrl   = s.data?.image_url  as string | undefined
   const region     = s.data?.region     as string | undefined
   const sourceHint = s.data?.source_hint as string | undefined
 
-  const cardContent = (
-    <div className="group rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-900 transition-all overflow-hidden flex flex-col h-full">
+  const detailHref = `/forecast/signals/${s.id}`
+  const isBookmarked = bookmarkedIds?.has(s.id) ?? false
 
-      {/* Image d'illustration */}
+  return (
+    <div className="group rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-900 transition-all overflow-hidden flex flex-col h-full relative">
+
+      {/* Image */}
       {imageUrl && !compact && <SignalImage src={imageUrl} />}
 
-      <div className="p-5 flex flex-col gap-3 flex-1">
+      <div className="p-4 sm:p-5 flex flex-col gap-3 flex-1">
         {/* Badges row */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {ch && (
@@ -115,8 +112,10 @@ export function SignalCard({ signal: s, locale, compact = false }: Props) {
           </span>
         </div>
 
-        {/* Title */}
-        <h3 className="text-sm font-semibold text-neutral-100 leading-snug line-clamp-2">{s.title}</h3>
+        {/* Title (clickable) */}
+        <Link href={detailHref}>
+          <h3 className="text-sm font-semibold text-neutral-100 leading-snug line-clamp-2 hover:text-white transition-colors">{s.title}</h3>
+        </Link>
 
         {/* Summary */}
         {s.summary && !compact && (
@@ -140,24 +139,37 @@ export function SignalCard({ signal: s, locale, compact = false }: Props) {
           </div>
         )}
 
-        {/* CTA: source link or question link */}
-        {sourceUrl && (
-          <div className="border-t border-neutral-800 pt-3 mt-auto">
+        {/* Actions: bookmark + share + source */}
+        <div className="border-t border-neutral-800 pt-3 mt-auto flex items-center gap-2">
+          <BookmarkButton signalId={s.id} initialBookmarked={isBookmarked} locale={locale} compact />
+          <ShareButton signalId={s.id} signalTitle={s.title} locale={locale} compact />
+
+          <div className="flex-1" />
+
+          {sourceUrl && (
             <a
               href={sourceUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
+              onClick={e => e.stopPropagation()}
+              className="flex items-center gap-1 text-[10px] font-medium text-blue-400 hover:text-blue-300 transition-colors"
             >
-              <ExternalLink size={11} className="flex-shrink-0" />
-              {locale === 'fr' ? 'Lire l\'article' : 'Read article'}
-              <ArrowRight size={10} className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
+              <ExternalLink size={10} />
+              {locale === 'fr' ? 'Source' : 'Source'}
             </a>
-          </div>
-        )}
+          )}
+
+          <Link
+            href={detailHref}
+            className="flex items-center gap-1 text-[10px] font-medium text-neutral-500 hover:text-neutral-300 transition-colors"
+          >
+            {locale === 'fr' ? 'Détail' : 'Detail'}
+            <ArrowRight size={10} />
+          </Link>
+        </div>
 
         {q && qHref && (
-          <div className="border-t border-neutral-800 pt-3 mt-auto flex items-center justify-between gap-2">
+          <div className="border-t border-neutral-800 pt-3 flex items-center justify-between gap-2">
             <p className="text-xs text-neutral-500 line-clamp-1 flex-1">{q.title}</p>
             <Link
               href={qHref}
@@ -170,13 +182,5 @@ export function SignalCard({ signal: s, locale, compact = false }: Props) {
         )}
       </div>
     </div>
-  )
-
-  const detailHref = `/forecast/signals/${s.id}`
-
-  return (
-    <Link href={detailHref} className="block">
-      {cardContent}
-    </Link>
   )
 }

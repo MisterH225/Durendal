@@ -12,6 +12,7 @@
  */
 
 import { createWorkerSupabase } from '../../supabase'
+import { FORECAST_TOPICS } from '../../queue/topics'
 
 interface ResolutionPayload {
   questionId: string
@@ -99,6 +100,36 @@ export async function runResolutionScoringJob(payload: ResolutionPayload): Promi
 
   // 6. Publier un signal dans forecast_signal_feed
   await publishResolutionSignal(supabase, question, outcome, forecasts.length)
+
+  // 7. Queue reward processing for each scored user
+  const questionCreatedAt = await getQuestionCreatedAt(supabase, questionId)
+  for (const row of brierRows) {
+    const forecastMeta = forecasts.find(f => f.user_id === row.user_id)
+    await supabase.from('forecast_event_queue').insert({
+      event_type: FORECAST_TOPICS.REWARD_PROCESS,
+      correlation_id: questionId,
+      payload: {
+        id: crypto.randomUUID(),
+        type: FORECAST_TOPICS.REWARD_PROCESS,
+        occurredAt: new Date().toISOString(),
+        correlationId: questionId,
+        producer: 'worker',
+        version: 1,
+        payload: {
+          questionId,
+          userId: row.user_id,
+          brierScore: row.brier_score,
+          isEarly: isEarlyForecast(forecastMeta, questionCreatedAt),
+          isContrarian: false,
+          participantCount: forecasts.length,
+        },
+      },
+      status: 'pending',
+      attempts: 0,
+      max_attempts: 3,
+    })
+  }
+  console.log(`[resolution-scoring] ${brierRows.length} reward events queued.`)
 }
 
 async function publishResolutionSignal(
@@ -117,6 +148,27 @@ async function publishResolutionSignal(
     severity:     'high',
     data:         { outcome, participant_count: participantCount },
   })
+}
+
+async function getQuestionCreatedAt(
+  supabase: ReturnType<typeof createWorkerSupabase>,
+  questionId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('forecast_questions')
+    .select('created_at')
+    .eq('id', questionId)
+    .single()
+  return data?.created_at ?? null
+}
+
+function isEarlyForecast(
+  forecast: { id: string; user_id: string; probability: number; revision: number } | undefined,
+  questionCreatedAt: string | null,
+): boolean {
+  if (!forecast || !questionCreatedAt) return false
+  // First revision only counts as early
+  return forecast.revision === 1
 }
 
 async function refreshLeaderboardForUsers(

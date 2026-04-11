@@ -16,6 +16,9 @@ export const FORECAST_TOPICS = {
   RESOLUTION_APPROVED:         'forecast.resolution.approved',
   RESOLUTION_DISPUTED:         'forecast.resolution.disputed',
   RESOLUTION_FINALIZED:        'forecast.resolution.finalized',
+
+  // Reward engine topics
+  REWARD_PROCESS:              'forecast.reward.process',
 } as const
 
 export type ForecastTopic = (typeof FORECAST_TOPICS)[keyof typeof FORECAST_TOPICS]

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { publishForecastEvent } from '@/lib/forecast/queue/publisher'
+import { ensureRewardProfile, awardPoints } from '@/lib/rewards/scoring'
+import { updateStreak } from '@/lib/rewards/streaks'
+import { checkAndAwardBadges } from '@/lib/rewards/badges'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient()
@@ -65,7 +68,34 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     payload: { questionId: params.id, reason: 'user_forecast' as const },
   })
 
+  // Reward engine: points, streaks, badges (fire-and-forget)
+  processSubmissionRewards(db, user.id, revision, !!reasoning).catch(() => {})
+
   return NextResponse.json({ forecast }, { status: 201 })
+}
+
+async function processSubmissionRewards(
+  db: ReturnType<typeof createAdminClient>,
+  userId: string,
+  revision: number,
+  hasReasoning: boolean,
+) {
+  await ensureRewardProfile(db, userId)
+
+  const isNewForecast = revision === 1
+  if (isNewForecast) {
+    await awardPoints(db, userId, 'forecast_submitted')
+    await updateStreak(db, userId, 'daily_forecast')
+  } else {
+    await awardPoints(db, userId, 'forecast_updated')
+    await updateStreak(db, userId, 'update_streak')
+  }
+
+  if (hasReasoning) {
+    await awardPoints(db, userId, 'reasoning_submitted')
+  }
+
+  await checkAndAwardBadges(db, userId, { action: 'forecast_submit' })
 }
 
 async function handleMultiChoiceVote(
@@ -131,6 +161,9 @@ async function handleMultiChoiceVote(
     correlationId: questionId,
     payload: { questionId, reason: 'user_forecast' as const },
   })
+
+  // Reward engine for multi-choice votes
+  processSubmissionRewards(db, userId, revision, false).catch(() => {})
 
   return NextResponse.json({ ok: true, revision }, { status: 201 })
 }

@@ -11,6 +11,7 @@ export function ForecastNav({ locale }: { locale: Locale }) {
     { href: '/forecast',            label: tr(locale, 'nav.explore'),     exact: true  },
     { href: '/forecast/signals',    label: tr(locale, 'nav.signals'),     exact: false },
     { href: '/forecast/leaderboard',label: tr(locale, 'nav.leaderboard'), exact: false },
+    { href: '/forecast/rewards',    label: locale === 'fr' ? 'Recompenses' : 'Rewards', exact: false },
   ]
 
   return (

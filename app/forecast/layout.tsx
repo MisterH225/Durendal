@@ -85,6 +85,7 @@ export default async function ForecastLayout({ children }: { children: React.Rea
             <Link href="/forecast"             className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.explore')}</Link>
             <Link href="/forecast/signals"     className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.signals')}</Link>
             <Link href="/forecast/leaderboard" className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.leaderboard')}</Link>
+            <Link href="/forecast/rewards" className="hover:text-neutral-400 transition-colors">{locale === 'fr' ? 'Recompenses' : 'Rewards'}</Link>
             <Link href="/dashboard" className="hover:text-neutral-400 transition-colors">{tr(locale, 'footer.veille')}</Link>
           </div>
         </div>

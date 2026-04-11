@@ -14,6 +14,8 @@ import { runNewsSignalJob } from './jobs/forecast/news-signal.job'
 import { runQuestionGeneratorJob } from './jobs/forecast/question-generator.job'
 import { runResolutionCheckJob } from './jobs/resolution/resolution-check.job'
 import { runResolutionFinalizeJob } from './jobs/resolution/resolution-finalize.job'
+import { runStreakUpdateJob } from './jobs/rewards/streak-update.job'
+import { runLeaderboardSnapshotJob } from './jobs/rewards/leaderboard-snapshot.job'
 
 type Task = {
   name: string
@@ -150,6 +152,18 @@ const TASKS: Task[] = [
     intervalMs:  60 * 60 * 1000,        // every 1 hour
     lastRanAt:   0,
     fn:          runResolutionFinalizeJob,
+  },
+  {
+    name:        'rewards:streak-update',
+    intervalMs:  30 * 60 * 1000,        // every 30 minutes
+    lastRanAt:   0,
+    fn:          runStreakUpdateJob,
+  },
+  {
+    name:        'rewards:leaderboard-snapshot',
+    intervalMs:  24 * 60 * 60 * 1000,   // once per day
+    lastRanAt:   0,
+    fn:          runLeaderboardSnapshotJob,
   },
 ]
 

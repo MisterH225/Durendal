@@ -19,6 +19,7 @@ const dict = {
     'page.all':             'Tout',
     'page.no_questions':    'Aucune question ouverte.',
     'page.no_questions_ch': 'Aucune question ouverte dans ce canal.',
+    'page.trend':           'Tendance',
 
     // Status
     'status.open':         'Ouverte',
@@ -63,6 +64,10 @@ const dict = {
     'q.close_date':       'Clôture',
     'q.your_forecast':    'Votre prévision actuelle',
     'q.your_forecast_hint':'Modifiez votre estimation ci-dessous si votre avis a changé.',
+    'q.situation':        'Contexte & synthèse',
+    'q.situation_ai':     'Synthèse IA',
+    'q.history_empty':    'L’historique apparaîtra dès que plusieurs instantanés de probabilité auront été enregistrés (votes, mise à jour IA, worker).',
+    'q.estimate_section': 'Participer',
 
     // Submit form
     'form.title':        'Votre estimation',
@@ -79,6 +84,18 @@ const dict = {
     'form.success_msg':  'Merci. Votre probabilité a été prise en compte.',
     'form.login_prompt': 'Connectez-vous pour soumettre votre estimation.',
     'form.login_btn':    'Se connecter',
+
+    // Commentaires question
+    'comments.title':        'Discussion',
+    'comments.loading':      'Chargement…',
+    'comments.empty':        'Aucun commentaire pour l’instant. Soyez le premier à réagir.',
+    'comments.placeholder_lbl': 'Votre message',
+    'comments.placeholder':     'Partagez une info, un lien ou votre lecture de la situation…',
+    'comments.submit':       'Publier',
+    'comments.sending':      'Publication…',
+    'comments.login':        'Se connecter',
+    'comments.login_hint':   'pour commenter.',
+    'comments.error':        'Impossible d’enregistrer le commentaire.',
 
     // Leaderboard
     'lb.badge':          'Classement des prévisionnistes',
@@ -172,6 +189,7 @@ const dict = {
     'page.all':             'All',
     'page.no_questions':    'No open questions.',
     'page.no_questions_ch': 'No open questions in this channel.',
+    'page.trend':           'Trend',
 
     // Status
     'status.open':         'Open',
@@ -216,6 +234,10 @@ const dict = {
     'q.close_date':       'Closes',
     'q.your_forecast':    'Your current forecast',
     'q.your_forecast_hint':'Update your estimate below if your view has changed.',
+    'q.situation':        'Context & summary',
+    'q.situation_ai':     'AI summary',
+    'q.history_empty':    'History will appear after several probability snapshots are recorded (votes, AI updates, background jobs).',
+    'q.estimate_section': 'Participate',
 
     // Submit form
     'form.title':        'Your estimate',
@@ -232,6 +254,17 @@ const dict = {
     'form.success_msg':  'Thank you. Your probability has been recorded.',
     'form.login_prompt': 'Sign in to submit your estimate.',
     'form.login_btn':    'Sign in',
+
+    'comments.title':        'Discussion',
+    'comments.loading':      'Loading…',
+    'comments.empty':        'No comments yet. Be the first to share your view.',
+    'comments.placeholder_lbl': 'Your message',
+    'comments.placeholder':     'Share context, a link, or how you read the situation…',
+    'comments.submit':       'Post',
+    'comments.sending':      'Posting…',
+    'comments.login':        'Sign in',
+    'comments.login_hint':   'to comment.',
+    'comments.error':        'Could not save your comment.',
 
     // Leaderboard
     'lb.badge':          'Forecaster leaderboard',

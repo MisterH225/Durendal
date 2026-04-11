@@ -13,9 +13,23 @@ async function assertSuperadmin() {
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   if (!await assertSuperadmin()) return NextResponse.json({ error: 'Accès refusé' }, { status: 403 })
   const db = createAdminClient()
-  const { data, error } = await db.from('forecast_questions').select('*, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title ), forecast_ai_forecasts ( id, probability, confidence, model, reasoning, created_at )').or(`id.eq.${params.id},slug.eq.${params.id}`).eq('forecast_ai_forecasts.is_current', true).single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 404 })
-  return NextResponse.json({ question: data })
+  const { data: row, error } = await db
+    .from('forecast_questions')
+    .select('*, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title )')
+    .or(`id.eq.${params.id},slug.eq.${params.id}`)
+    .single()
+  if (error || !row) return NextResponse.json({ error: error?.message ?? 'Introuvable' }, { status: 404 })
+
+  const { data: aiRows } = await db
+    .from('forecast_ai_forecasts')
+    .select('id, probability, confidence, model, reasoning, created_at')
+    .eq('question_id', row.id)
+    .eq('is_current', true)
+    .limit(1)
+
+  const ai = aiRows?.[0]
+  const question = { ...row, forecast_ai_forecasts: ai ? [ai] : [] }
+  return NextResponse.json({ question })
 }
 
 const QUESTION_STATUSES = new Set(['draft', 'open', 'paused', 'closed', 'resolved_yes', 'resolved_no', 'annulled'])

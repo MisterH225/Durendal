@@ -1,14 +1,17 @@
 'use client'
 
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import type { Locale } from '@/lib/i18n/translations'
 
 interface HistoryPoint { snapshot_at: string; blended_probability: number | null; crowd_probability: number | null; ai_probability: number | null }
-interface Props { data: HistoryPoint[]; compact?: boolean }
+interface Props { data: HistoryPoint[]; compact?: boolean; locale?: Locale; emptyLabel?: string }
 
-export function HistorySparkline({ data, compact = false }: Props) {
-  if (!data.length) return <div className="flex items-center justify-center text-neutral-600 text-xs" style={{ height: compact ? 60 : 140 }}>Pas encore de données</div>
+export function HistorySparkline({ data, compact = false, locale = 'fr', emptyLabel }: Props) {
+  const dateLocale = locale === 'en' ? 'en-GB' : 'fr-FR'
+  const empty = emptyLabel ?? (locale === 'en' ? 'No history yet' : 'Pas encore de données')
+  if (!data.length) return <div className="flex items-center justify-center text-neutral-600 text-xs" style={{ height: compact ? 60 : 140 }}>{empty}</div>
   const chartData = data.map(d => ({
-    date:    new Date(d.snapshot_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+    date:    new Date(d.snapshot_at).toLocaleDateString(dateLocale, { day: '2-digit', month: 'short' }),
     blended: d.blended_probability !== null ? Math.round(d.blended_probability * 100) : null,
     crowd:   d.crowd_probability   !== null ? Math.round(d.crowd_probability   * 100) : null,
     ai:      d.ai_probability      !== null ? Math.round(d.ai_probability      * 100) : null,

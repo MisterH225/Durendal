@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
 import { HistorySparkline } from '@/components/forecast/HistorySparkline'
 import { SubmitForecastForm } from '@/components/forecast/SubmitForecastForm'
+import { QuestionComments } from '@/components/forecast/QuestionComments'
 import { ArrowLeft, Calendar, Users, Bot, ExternalLink, BookOpen, CheckCircle2 } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
 import { tr } from '@/lib/i18n/translations'
@@ -21,28 +22,42 @@ const STATUS_COLORS: Record<string, string> = {
   annulled:     'text-neutral-400 bg-neutral-800 border-neutral-700',
 }
 
+function isSafeQuestionParam(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
+    || /^[a-z0-9-]{1,220}$/i.test(s)
+}
+
 export default async function ForecastQuestionPage({ params }: { params: { id: string } }) {
+  const raw = params.id
+  if (!isSafeQuestionParam(raw)) notFound()
+
   const db = createAdminClient()
   const sbUser = createClient()
 
-  // Étape 1 : récupérer la question (par slug OU uuid)
+  // Étape 1 : question sans jointure IA (sinon INNER implicite → 404 si pas encore de forecast IA)
   const [{ data: { user } }, questionResult] = await Promise.all([
     sbUser.auth.getUser(),
     db
       .from('forecast_questions')
-      .select('*, forecast_channels ( id, slug, name, name_fr, name_en ), forecast_events ( id, slug, title ), forecast_ai_forecasts ( probability, confidence, reasoning, model, created_at )')
-      .or(`id.eq.${params.id},slug.eq.${params.id}`)
-      .eq('forecast_ai_forecasts.is_current', true)
+      .select('*, forecast_channels ( id, slug, name, name_fr, name_en ), forecast_events ( id, slug, title )')
+      .or(`id.eq.${raw},slug.eq.${raw}`)
       .neq('status', 'draft')
       .neq('status', 'paused')
       .maybeSingle(),
   ])
 
   if (!questionResult.data) notFound()
-  const q = questionResult.data
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const q = questionResult.data as any
 
-  // Étape 2 : requêtes dépendantes de q.id (UUID garanti)
-  const [historyResult, userForecastResult] = await Promise.all([
+  // Étape 2 : forecast IA courant, historique, vote utilisateur
+  const [{ data: aiData }, historyResult, userForecastResult] = await Promise.all([
+    db
+      .from('forecast_ai_forecasts')
+      .select('probability, confidence, reasoning, model, created_at')
+      .eq('question_id', q.id)
+      .eq('is_current', true)
+      .maybeSingle(),
     db
       .from('forecast_probability_history')
       .select('snapshot_at, crowd_probability, ai_probability, blended_probability')
@@ -62,13 +77,13 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
 
   const history = historyResult.data ?? []
   const userForecast = userForecastResult.data
-    ? Math.round((userForecastResult.data as any).probability * 100)
+    ? Math.round((userForecastResult.data as { probability: number }).probability * 100)
     : null
 
   const locale = getLocale()
-  const ch = (q as any).forecast_channels
-  const aiData = (q as any).forecast_ai_forecasts?.[0] ?? null
-  const aiReason = aiData?.reasoning as Record<string, any> | null
+  const ch = q.forecast_channels
+  const aiReason = (aiData?.reasoning ?? null) as Record<string, unknown> | null
+  const situationSummary = typeof aiReason?.summary === 'string' ? (aiReason.summary as string) : ''
   const statusColor = STATUS_COLORS[q.status] ?? STATUS_COLORS.closed
   const statusLabel = tr(locale, `status.${q.status}` as any) ?? q.status
   const crowdPct   = q.crowd_probability   !== null ? Math.round(q.crowd_probability   * 100) : null
@@ -91,7 +106,18 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
           </span>
         </div>
         <h1 className="text-2xl md:text-3xl font-bold text-white leading-tight">{q.title}</h1>
-        {q.description && <p className="text-sm text-neutral-400 leading-relaxed">{q.description}</p>}
+        {(q.description || situationSummary) && (
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/50 p-5 space-y-3">
+            <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">{tr(locale, 'q.situation')}</h2>
+            {q.description && <p className="text-sm text-neutral-300 leading-relaxed">{q.description}</p>}
+            {situationSummary && (
+              <p className={`text-sm text-neutral-400 leading-relaxed ${q.description ? 'border-t border-neutral-800/80 pt-3' : ''}`}>
+                <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide mr-2">{tr(locale, 'q.situation_ai')}</span>
+                {situationSummary}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -108,38 +134,46 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
 
       <div className="grid md:grid-cols-[1fr_320px] gap-6">
         <div className="space-y-6">
-          {history.length > 0 && (
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-neutral-200">{tr(locale, 'q.history')}</h2>
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-neutral-200">{tr(locale, 'q.history')}</h2>
+              {history.length > 0 && (
                 <div className="flex items-center gap-3 text-[10px] text-neutral-600">
                   <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-emerald-400 inline-block" />{tr(locale, 'q.legend.crowd')}</span>
                   <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-blue-400 inline-block" />{tr(locale, 'q.legend.ai')}</span>
                   <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-indigo-400 inline-block" />{tr(locale, 'q.legend.blended')}</span>
                 </div>
-              </div>
-              <HistorySparkline data={history} />
+              )}
             </div>
-          )}
+            <HistorySparkline data={history} locale={locale} emptyLabel={tr(locale, 'q.history_empty')} />
+          </div>
 
-          {aiReason && (
+          {aiReason && (() => {
+            const R = aiReason as Record<string, any>
+            const bulls = Array.isArray(R.bullish_factors) ? R.bullish_factors as string[] : []
+            const bears = Array.isArray(R.bearish_factors) ? R.bearish_factors as string[] : []
+            const unc = Array.isArray(R.key_uncertainties) ? R.key_uncertainties as string[] : []
+            const sources = Array.isArray(R.sources) ? R.sources as { title?: string; url: string }[] : []
+            const hasBlocks = bulls.length || bears.length || unc.length || R.next_catalyst || R.base_rate_note || sources.length
+            if (!hasBlocks) return null
+            return (
             <div className="rounded-2xl border border-blue-900/30 bg-blue-950/10 p-5 space-y-4">
               <div className="flex items-center gap-2">
                 <Bot size={14} className="text-blue-400" />
                 <h2 className="text-sm font-semibold text-blue-300">{tr(locale, 'q.analysis')}</h2>
                 <span className="text-[10px] text-neutral-600 ml-auto">{aiData?.model} · {tr(locale, 'q.confidence')} {aiData?.confidence}</span>
               </div>
-              {aiReason.summary && <p className="text-sm text-neutral-300 leading-relaxed">{aiReason.summary}</p>}
               <div className="grid sm:grid-cols-2 gap-4">
-                {aiReason.bullish_factors?.length > 0 && <div><div className="text-xs font-semibold text-emerald-500 mb-2">{tr(locale, 'q.bullish')}</div><ul className="space-y-1">{aiReason.bullish_factors.map((f: string, i: number) => <li key={i} className="text-xs text-neutral-400 flex gap-1.5"><span className="text-emerald-600 flex-shrink-0">+</span>{f}</li>)}</ul></div>}
-                {aiReason.bearish_factors?.length > 0 && <div><div className="text-xs font-semibold text-red-500 mb-2">{tr(locale, 'q.bearish')}</div><ul className="space-y-1">{aiReason.bearish_factors.map((f: string, i: number) => <li key={i} className="text-xs text-neutral-400 flex gap-1.5"><span className="text-red-600 flex-shrink-0">−</span>{f}</li>)}</ul></div>}
+                {bulls.length > 0 && <div><div className="text-xs font-semibold text-emerald-500 mb-2">{tr(locale, 'q.bullish')}</div><ul className="space-y-1">{bulls.map((f: string, i: number) => <li key={i} className="text-xs text-neutral-400 flex gap-1.5"><span className="text-emerald-600 flex-shrink-0">+</span>{f}</li>)}</ul></div>}
+                {bears.length > 0 && <div><div className="text-xs font-semibold text-red-500 mb-2">{tr(locale, 'q.bearish')}</div><ul className="space-y-1">{bears.map((f: string, i: number) => <li key={i} className="text-xs text-neutral-400 flex gap-1.5"><span className="text-red-600 flex-shrink-0">−</span>{f}</li>)}</ul></div>}
               </div>
-              {aiReason.key_uncertainties?.length > 0 && <div><div className="text-xs font-semibold text-amber-500 mb-2">{tr(locale, 'q.uncertainties')}</div><ul className="space-y-1">{aiReason.key_uncertainties.map((u: string, i: number) => <li key={i} className="text-xs text-neutral-400 flex gap-1.5"><span className="text-amber-600 flex-shrink-0">?</span>{u}</li>)}</ul></div>}
-              {aiReason.next_catalyst && <div className="bg-neutral-900 rounded-xl px-4 py-3 border border-neutral-800"><span className="text-[10px] text-neutral-500 uppercase tracking-wider">{tr(locale, 'q.next_catalyst')}</span><p className="text-xs text-neutral-300 mt-1">{aiReason.next_catalyst}</p></div>}
-              {aiReason.base_rate_note && <div className="text-xs text-neutral-500 italic border-t border-neutral-800 pt-3">{tr(locale, 'q.base_rate')} : {aiReason.base_rate_note}</div>}
-              {aiReason.sources?.length > 0 && <div><div className="text-[10px] text-neutral-600 mb-2 uppercase tracking-wider">{tr(locale, 'q.sources')}</div><div className="space-y-1">{aiReason.sources.slice(0, 5).map((s: { title: string; url: string }, i: number) => <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[11px] text-neutral-500 hover:text-neutral-300 transition-colors"><ExternalLink size={9} className="flex-shrink-0" /><span className="truncate">{s.title || s.url}</span></a>)}</div></div>}
+              {unc.length > 0 && <div><div className="text-xs font-semibold text-amber-500 mb-2">{tr(locale, 'q.uncertainties')}</div><ul className="space-y-1">{unc.map((u: string, i: number) => <li key={i} className="text-xs text-neutral-400 flex gap-1.5"><span className="text-amber-600 flex-shrink-0">?</span>{u}</li>)}</ul></div>}
+              {R.next_catalyst && <div className="bg-neutral-900 rounded-xl px-4 py-3 border border-neutral-800"><span className="text-[10px] text-neutral-500 uppercase tracking-wider">{tr(locale, 'q.next_catalyst')}</span><p className="text-xs text-neutral-300 mt-1">{R.next_catalyst}</p></div>}
+              {R.base_rate_note && <div className="text-xs text-neutral-500 italic border-t border-neutral-800 pt-3">{tr(locale, 'q.base_rate')} : {R.base_rate_note}</div>}
+              {sources.length > 0 && <div><div className="text-[10px] text-neutral-600 mb-2 uppercase tracking-wider">{tr(locale, 'q.sources')}</div><div className="space-y-1">{sources.slice(0, 5).map((s, i: number) => <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[11px] text-neutral-500 hover:text-neutral-300 transition-colors"><ExternalLink size={9} className="flex-shrink-0" /><span className="truncate">{s.title || s.url}</span></a>)}</div></div>}
             </div>
-          )}
+            )
+          })()}
 
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-5 space-y-3">
             <div className="flex items-center gap-2"><BookOpen size={13} className="text-neutral-500" /><h2 className="text-sm font-semibold text-neutral-300">{tr(locale, 'q.resolution')}</h2></div>
@@ -165,7 +199,10 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
           )}
 
           {q.status === 'open' && (
-            <SubmitForecastForm questionId={q.id} currentUserProbability={userForecast} isAuthenticated={!!user} locale={locale} />
+            <div className="space-y-2">
+              <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider px-1">{tr(locale, 'q.estimate_section')}</h2>
+              <SubmitForecastForm questionId={q.id} currentUserProbability={userForecast} isAuthenticated={!!user} locale={locale} />
+            </div>
           )}
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
             <div className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">{tr(locale, 'q.stats')}</div>
@@ -179,6 +216,8 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
           {q.tags?.length > 0 && <div className="flex flex-wrap gap-1.5">{q.tags.map((tag: string) => <span key={tag} className="text-[10px] text-neutral-500 bg-neutral-800 px-2 py-0.5 rounded-full">#{tag}</span>)}</div>}
         </div>
       </div>
+
+      <QuestionComments questionParam={raw} locale={locale} isAuthenticated={!!user} />
     </div>
   )
 }

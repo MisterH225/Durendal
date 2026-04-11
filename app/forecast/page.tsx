@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
+import { BlendedMicroSpark } from '@/components/forecast/BlendedMicroSpark'
 import { SignalCarousel } from '@/components/forecast/SignalCarousel'
 import { Calendar, Users, TrendingUp, ChevronRight, Radio } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
@@ -37,7 +38,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
       ? db.from('forecast_channels').select('id').eq('slug', searchParams.channel).single()
       : Promise.resolve({ data: null }),
     db.from('forecast_questions')
-      .select('id, slug, title, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name, name_fr, name_en)')
+      .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name, name_fr, name_en)')
       .eq('featured', true).eq('status', 'open').order('close_date', { ascending: true }).limit(3),
     db.from('forecast_signal_feed')
       .select('id, signal_type, title, summary, severity, data, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
@@ -48,11 +49,43 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
 
   const channelId = (channelResult as any)?.data?.id ?? null
   let questionQuery = db.from('forecast_questions')
-    .select('id, slug, title, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name, name_fr, name_en)')
+    .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name, name_fr, name_en)')
     .eq('status', 'open').order('close_date', { ascending: true }).limit(24)
   if (channelId) questionQuery = questionQuery.eq('channel_id', channelId)
 
   const { data: questions } = await questionQuery
+  const qList = questions ?? []
+  const qIds = qList.map(q => q.id)
+
+  type AiCard = { aiPct: number | null; summary: string | null }
+  const aiByQuestion = new Map<string, AiCard>()
+  const histByQuestion = new Map<string, (number | null)[]>()
+
+  if (qIds.length) {
+    const [aiRes, histRes] = await Promise.all([
+      db.from('forecast_ai_forecasts').select('question_id, probability, reasoning').eq('is_current', true).in('question_id', qIds),
+      db.from('forecast_probability_history').select('question_id, snapshot_at, blended_probability').in('question_id', qIds).order('snapshot_at', { ascending: true }).limit(900),
+    ])
+    for (const row of aiRes.data ?? []) {
+      const reasoning = row.reasoning as Record<string, unknown> | null
+      const summary = typeof reasoning?.summary === 'string' ? (reasoning.summary as string) : null
+      aiByQuestion.set(row.question_id, {
+        aiPct: row.probability != null ? Math.round(Number(row.probability) * 100) : null,
+        summary,
+      })
+    }
+    const buckets = new Map<string, { blended_probability: number | null }[]>()
+    for (const row of histRes.data ?? []) {
+      const arr = buckets.get(row.question_id) ?? []
+      arr.push({ blended_probability: row.blended_probability })
+      buckets.set(row.question_id, arr)
+    }
+    for (const id of qIds) {
+      const full = buckets.get(id) ?? []
+      histByQuestion.set(id, full.slice(-18).map(h => h.blended_probability))
+    }
+  }
+
   const featured = featuredResult.data ?? []
   const liveSignals = signalsResult.data ?? []
 
@@ -79,7 +112,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
               const ch = (q as any).forecast_channels
               const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
               return (
-                <Link key={q.id} href={`/forecast/q/${q.slug ?? q.id}`}
+                <Link key={q.id} href={`/forecast/q/${encodeURIComponent(q.slug ?? q.id)}`}
                   className="group rounded-2xl border border-neutral-800 bg-neutral-900/60 hover:border-neutral-700 hover:bg-neutral-900 transition-all p-5 space-y-4">
                   <div className="flex items-start justify-between gap-2">
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
@@ -146,39 +179,67 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
         ))}
       </div>
 
-      {/* Questions list */}
-      <section className="space-y-3">
-        {!questions?.length && (
+      {/* Questions — cartes */}
+      <section className="space-y-4">
+        {!qList.length && (
           <div className="text-center py-20 text-neutral-600">
             {searchParams.channel ? tr(locale, 'page.no_questions_ch') : tr(locale, 'page.no_questions')}
           </div>
         )}
-        {questions?.map(q => {
-          const ch = (q as any).forecast_channels
-          const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
-          const prob = q.blended_probability !== null ? Math.round(q.blended_probability * 100) : null
-          return (
-            <Link key={q.id} href={`/forecast/q/${q.slug ?? q.id}`}
-              className="group flex items-center gap-4 rounded-xl border border-neutral-800 bg-neutral-900/40 hover:border-neutral-700 hover:bg-neutral-900/70 transition-all px-5 py-4">
-              <div className="flex-shrink-0"><ProbabilityGauge value={prob} size={56} strokeWidth={6} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
-                    {ch ? localizeChannel(ch, locale) : ''}
-                  </span>
-                  <span className="text-[10px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
+        <div className="grid sm:grid-cols-2 gap-4">
+          {qList.map(q => {
+            const ch = (q as { forecast_channels?: { slug?: string; name?: string; name_fr?: string; name_en?: string } }).forecast_channels
+            const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
+            const blended = q.blended_probability !== null ? Math.round(q.blended_probability * 100) : null
+            const aiCard = aiByQuestion.get(q.id)
+            const aiPct = aiCard?.aiPct ?? (q.ai_probability != null ? Math.round(q.ai_probability * 100) : null)
+            const snippet = (aiCard?.summary ?? (q as { description?: string | null }).description ?? '').replace(/\s+/g, ' ').trim().slice(0, 260)
+            const histVals = histByQuestion.get(q.id) ?? []
+            const href = `/forecast/q/${encodeURIComponent(q.slug ?? q.id)}`
+            return (
+              <Link key={q.id} href={href}
+                className="group flex flex-col rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-600 hover:bg-neutral-900/80 transition-all p-5 min-h-[200px]">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
+                      {ch ? localizeChannel(ch, locale) : ''}
+                    </span>
+                    <span className="text-[10px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
+                  </div>
+                  <ChevronRight size={16} className="text-neutral-600 group-hover:text-neutral-400 flex-shrink-0 transition-colors" />
                 </div>
-                <h3 className="text-sm font-semibold text-neutral-200 group-hover:text-white transition-colors line-clamp-2 leading-snug">{q.title}</h3>
-              </div>
-              <div className="flex-shrink-0 hidden sm:flex flex-col items-end gap-1.5 text-[10px]">
-                {q.crowd_probability !== null && <span className="text-emerald-500 font-mono">{tr(locale, 'q.crowd')} {Math.round(q.crowd_probability * 100)}%</span>}
-                {q.ai_probability    !== null && <span className="text-blue-400 font-mono">{tr(locale, 'q.ai')} {Math.round(q.ai_probability * 100)}%</span>}
-                <span className="text-neutral-600 flex items-center gap-1"><Users size={9} />{q.forecast_count ?? 0}</span>
-              </div>
-              <ChevronRight size={14} className="text-neutral-700 group-hover:text-neutral-500 flex-shrink-0 transition-colors" />
-            </Link>
-          )
-        })}
+                <h3 className="text-sm font-semibold text-neutral-100 group-hover:text-white transition-colors line-clamp-3 leading-snug mb-3">{q.title}</h3>
+                {snippet && (
+                  <p className="text-xs text-neutral-500 line-clamp-3 leading-relaxed mb-4 flex-1">{snippet}</p>
+                )}
+                <div className="mt-auto pt-3 border-t border-neutral-800/80 space-y-3">
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="flex items-center gap-4">
+                      <div className="text-center">
+                        <ProbabilityGauge value={blended} size={64} strokeWidth={6} colorOverride="#818cf8" />
+                        <div className="text-[9px] text-neutral-600 mt-1 uppercase tracking-wide">{tr(locale, 'q.blended')}</div>
+                      </div>
+                      <div className="text-center">
+                        <ProbabilityGauge value={aiPct} size={64} strokeWidth={6} colorOverride="#60a5fa" />
+                        <div className="text-[9px] text-blue-500/80 mt-1 uppercase tracking-wide">{tr(locale, 'q.ai')}</div>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 text-[10px] text-neutral-500">
+                      <span className="flex items-center gap-1"><Users size={10} />{q.forecast_count ?? 0}</span>
+                      <span className="text-neutral-600">{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</span>
+                    </div>
+                  </div>
+                  {histVals.length >= 2 && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[9px] text-neutral-600 uppercase tracking-wide">{tr(locale, 'page.trend')}</span>
+                      <BlendedMicroSpark values={histVals} className="opacity-90" />
+                    </div>
+                  )}
+                </div>
+              </Link>
+            )
+          })}
+        </div>
       </section>
     </div>
   )

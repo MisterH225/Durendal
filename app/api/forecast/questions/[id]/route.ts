@@ -9,16 +9,26 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     .select(`
       *,
       forecast_channels ( id, slug, name ),
-      forecast_events   ( id, slug, title ),
-      forecast_ai_forecasts ( probability, confidence, model, reasoning, created_at )
+      forecast_events   ( id, slug, title )
     `)
     .or(`id.eq.${params.id},slug.eq.${params.id}`)
-    .eq('forecast_ai_forecasts.is_current', true)
     .neq('status', 'draft')
     .neq('status', 'paused')
     .maybeSingle()
 
   if (!question || error) return NextResponse.json({ error: 'Question introuvable' }, { status: 404 })
+
+  const { data: aiForecast } = await db
+    .from('forecast_ai_forecasts')
+    .select('probability, confidence, model, reasoning, created_at')
+    .eq('question_id', question.id)
+    .eq('is_current', true)
+    .maybeSingle()
+
+  const questionOut = {
+    ...question,
+    forecast_ai_forecasts: aiForecast ? [aiForecast] : [],
+  }
 
   const { data: history } = await db
     .from('forecast_probability_history')
@@ -27,5 +37,5 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     .order('snapshot_at', { ascending: true })
     .limit(60)
 
-  return NextResponse.json({ question, history: history ?? [] })
+  return NextResponse.json({ question: questionOut, history: history ?? [] })
 }

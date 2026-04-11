@@ -158,13 +158,14 @@ async function handleMultiChoiceVote(
     }
 
     // Increment forecast_count (best-effort)
-    await db.rpc('increment_forecast_count', { qid: questionId }).catch(() => {
-      db.from('forecast_questions')
-        .update({ forecast_count: revision })
-        .eq('id', questionId)
-        .then(() => {})
-        .catch(() => {})
-    })
+    try {
+      const { error: rpcErr } = await db.rpc('increment_forecast_count', { qid: questionId })
+      if (rpcErr) {
+        await db.from('forecast_questions')
+          .update({ forecast_count: revision })
+          .eq('id', questionId)
+      }
+    } catch { /* ignore */ }
 
     // Events (best-effort)
     try {

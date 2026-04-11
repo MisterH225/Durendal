@@ -12,23 +12,12 @@ import type { SourceArticle, ArticleImplicationAnalysis } from '@/lib/forecast/m
 
 export const dynamic = 'force-dynamic'
 
-/**
- * Route: /forecast/signals/[id]
- *
- * Resolves the signal by:
- * 1. Checking mock articles first (prototype data)
- * 2. Then checking the forecast_signal_feed DB table
- *
- * For DB signals, constructs a SourceArticle from signal data and
- * builds a minimal analysis placeholder (real AI analysis to come later).
- */
 export default async function SignalDetailPage({ params }: { params: { id: string } }) {
   const locale = getLocale()
 
-  // 1. Check mock articles
+  // 1. Check mock articles (prototype demos)
   const mockArticle = getArticle(params.id)
   const mockAnalysis = getAnalysis(params.id)
-
   if (mockArticle && mockAnalysis) {
     return renderPage(mockArticle, mockAnalysis, locale)
   }
@@ -61,10 +50,32 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
     regionTags: data.region ? [data.region as string] : undefined,
   }
 
-  // If a cached AI analysis already exists, use it directly
-  const cachedAnalysis = data.ai_analysis as Record<string, unknown> | undefined
-  const hasCachedAnalysis = cachedAnalysis && typeof cachedAnalysis === 'object' && cachedAnalysis.executiveTakeaway
+  // 3. Try to use pre-generated AI analysis (from worker)
+  const cached = data.ai_analysis as Record<string, unknown> | undefined
+  if (cached && typeof cached === 'object' && cached.executiveTakeaway) {
+    const analysis: ArticleImplicationAnalysis = {
+      articleId: signal.id,
+      executiveTakeaway: (cached.executiveTakeaway as string) ?? '',
+      whyThisMatters: (cached.whyThisMatters as string[]) ?? [],
+      immediateImplications: (cached.immediateImplications as string[]) ?? [],
+      secondOrderEffects: (cached.secondOrderEffects as string[]) ?? [],
+      regionalImplications: ((cached.regionalImplications as any[]) ?? []).map((r: any) => ({
+        region: r.region ?? '',
+        implications: r.implications ?? [],
+      })),
+      sectorExposure: ((cached.sectorExposure as any[]) ?? []).map((s: any) => ({
+        sector: s.sector ?? '',
+        riskLevel: s.riskLevel ?? 'medium',
+        notes: s.notes ?? [],
+      })),
+      whatToWatch: (cached.whatToWatch as string[]) ?? [],
+      confidenceNote: (cached.confidenceNote as string) ?? undefined,
+      relatedForecasts: [],
+    }
+    return renderPage(article, analysis, locale)
+  }
 
+  // 4. No cached analysis — use LiveAnalysisLoader as fallback
   const fallbackAnalysis: ArticleImplicationAnalysis = {
     articleId: signal.id,
     executiveTakeaway: signal.summary ?? '',
@@ -79,13 +90,12 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
     sectorExposure: [],
     whatToWatch: [],
     confidenceNote: locale === 'fr'
-      ? 'Analyse IA en cours de génération...'
-      : 'AI analysis being generated...',
+      ? 'L\'analyse détaillée sera disponible prochainement.'
+      : 'Detailed analysis will be available soon.',
     relatedForecasts: [],
   }
 
-  // Use LiveAnalysisLoader for real-time AI analysis generation
-  return renderPageWithLiveAnalysis(article, signal.id, fallbackAnalysis, locale)
+  return renderPageWithFallback(article, signal.id, fallbackAnalysis, locale)
 }
 
 function renderPage(article: SourceArticle, analysis: ArticleImplicationAnalysis, locale: string) {
@@ -101,7 +111,7 @@ function renderPage(article: SourceArticle, analysis: ArticleImplicationAnalysis
   )
 }
 
-function renderPageWithLiveAnalysis(
+function renderPageWithFallback(
   article: SourceArticle,
   signalId: string,
   fallbackAnalysis: ArticleImplicationAnalysis,

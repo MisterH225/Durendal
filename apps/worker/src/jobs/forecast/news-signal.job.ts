@@ -17,7 +17,7 @@
  */
 
 import { createWorkerSupabase } from '../../supabase'
-import { callGeminiWithSearch, parseGeminiJson } from '../../../../../lib/ai/gemini'
+import { callGemini, callGeminiWithSearch, parseGeminiJson } from '../../../../../lib/ai/gemini'
 
 // ─── Channel-specific prompt adapters ────────────────────────────────────────
 
@@ -145,6 +145,83 @@ async function fetchOgImage(url: string): Promise<string | null> {
     return null
   } catch {
     return null
+  }
+}
+
+// ─── AI Analysis generation ────────────────────────────────────────────────────
+
+function buildAnalysisPrompt(title: string, body: string | null, summary: string, channelName: string): string {
+  const content = body
+    ? `TITRE : ${title}\n\nCONTENU COMPLET DE L'ARTICLE :\n${body.slice(0, 12000)}`
+    : `TITRE : ${title}\n\nRÉSUMÉ : ${summary}`
+
+  const depth = body
+    ? 'Tu as accès au contenu COMPLET de l\'article. Fournis une analyse détaillée.'
+    : 'Tu n\'as que le résumé. Utilise tes connaissances pour enrichir l\'analyse.'
+
+  return [
+    `Tu es un analyste géopolitique et économique senior. ${depth}`,
+    `Canal : ${channelName}`,
+    ``,
+    `--- CONTENU ---`,
+    content,
+    `--- FIN ---`,
+    ``,
+    `Génère une analyse structurée en français. Chaque section doit être SUBSTANTIELLE.`,
+    `NE LAISSE AUCUNE SECTION VIDE. Minimum 2-3 éléments détaillés par tableau.`,
+    `Retourne UNIQUEMENT un objet JSON valide (pas de markdown, pas de \`\`\`) :`,
+    `{`,
+    `  "executiveTakeaway": "Synthèse 2-3 phrases pour un décideur",`,
+    `  "whyThisMatters": ["Point 1 (3 phrases)", "Point 2 (3 phrases)", "Point 3 (3 phrases)"],`,
+    `  "immediateImplications": ["Impact 1 (2-3 phrases)", "Impact 2 (2-3 phrases)"],`,
+    `  "secondOrderEffects": ["Effet 1 (2-3 phrases)", "Effet 2 (2-3 phrases)"],`,
+    `  "regionalImplications": [{"region":"Nom","implications":["Impl 1","Impl 2"]}],`,
+    `  "sectorExposure": [{"sector":"Nom","riskLevel":"high|medium|low","notes":["Note 1","Note 2"]}],`,
+    `  "whatToWatch": ["Indicateur 1 (2 phrases)", "Indicateur 2 (2 phrases)"],`,
+    `  "confidenceNote": "Niveau de confiance et biais (2 phrases)"`,
+    `}`,
+  ].join('\n')
+}
+
+async function generateAnalysis(
+  signalId: string,
+  title: string,
+  summary: string,
+  articleBody: string | null,
+  channelName: string,
+  supabase: ReturnType<typeof createWorkerSupabase>,
+): Promise<void> {
+  try {
+    const prompt = buildAnalysisPrompt(title, articleBody, summary, channelName)
+
+    const { text } = await callGemini(prompt, {
+      maxOutputTokens: 3000,
+      temperature: 0.2,
+    })
+
+    const analysis = parseGeminiJson<Record<string, unknown>>(text)
+
+    if (!analysis || !analysis.executiveTakeaway) {
+      console.log(`[news-signal] Analyse vide pour signal ${signalId}, skip cache.`)
+      return
+    }
+
+    const { data: current } = await supabase
+      .from('forecast_signal_feed')
+      .select('data')
+      .eq('id', signalId)
+      .single()
+
+    const existingData = (current?.data ?? {}) as Record<string, unknown>
+
+    await supabase
+      .from('forecast_signal_feed')
+      .update({ data: { ...existingData, ai_analysis: analysis } })
+      .eq('id', signalId)
+
+    console.log(`[news-signal] ✓ Analyse AI pré-générée pour signal ${signalId}`)
+  } catch (err) {
+    console.error(`[news-signal] ✗ Échec analyse AI pour signal ${signalId}:`, err)
   }
 }
 
@@ -308,15 +385,31 @@ export async function runNewsSignalJob(): Promise<void> {
         continue
       }
 
-      const { error: insertErr } = await supabase
+      const { data: inserted, error: insertErr } = await supabase
         .from('forecast_signal_feed')
         .insert(toInsert)
+        .select('id, title, summary, data')
 
       if (insertErr) {
         console.error(`[news-signal] Erreur insert canal ${channel.slug} :`, insertErr.message)
       } else {
-        totalInserted += toInsert.length
-        console.log(`[news-signal] Canal ${channel.slug} — ${toInsert.length} signal(s) insérés.`)
+        totalInserted += (inserted?.length ?? toInsert.length)
+        console.log(`[news-signal] Canal ${channel.slug} — ${inserted?.length ?? toInsert.length} signal(s) insérés. Génération analyses AI...`)
+
+        // Pre-generate AI analysis for each inserted signal
+        for (const sig of (inserted ?? [])) {
+          const sigData = (sig.data ?? {}) as Record<string, unknown>
+          await generateAnalysis(
+            sig.id,
+            sig.title,
+            sig.summary,
+            (sigData.article_body as string) ?? null,
+            channel.name,
+            supabase,
+          )
+          // Small pause between Gemini calls
+          await new Promise(r => setTimeout(r, 1500))
+        }
       }
 
     } catch (err) {

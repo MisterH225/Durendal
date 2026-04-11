@@ -21,12 +21,18 @@ export function ForecastAdminActions({ questionId, status }: Props) {
   }
 
   async function deleteQuestion() {
-    if (!confirm('Supprimer cette question ? Irréversible.')) return
+    if (!confirm('Supprimer cette question ? Irréversible. Toutes les prévisions associées seront aussi supprimées.')) return
     setBusy(true)
     try {
       const res = await fetch(`/api/admin/forecast/questions/${questionId}`, { method: 'DELETE' })
-      if (res.ok) router.refresh()
-      else { const j = await res.json(); alert(`Erreur : ${j.error}`) }
+      const j = await res.json()
+      if (res.ok && j.ok) {
+        window.location.reload()
+      } else {
+        alert(`Erreur suppression : ${j.error ?? 'Erreur inconnue'}`)
+      }
+    } catch (err) {
+      alert(`Erreur réseau : ${err}`)
     } finally { setBusy(false) }
   }
 

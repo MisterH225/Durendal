@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import Link from 'next/link'
 import { Plus, Bot, CheckCircle, Clock, XCircle, TrendingUp, Radio, Zap, Pause } from 'lucide-react'
 import { ForecastAdminActions } from './ForecastAdminActions'
+import { EventActions } from './EventActions'
 
 export const dynamic = 'force-dynamic'
 
@@ -275,7 +276,10 @@ export default async function ForecastAdminPage({ searchParams }: { searchParams
             return (
               <div key={ev.id} className="px-5 py-3 flex items-center justify-between hover:bg-neutral-50">
                 <div><div className="text-sm font-medium text-neutral-800">{ev.title}</div><div className="text-xs text-neutral-400">{ch?.name ?? '—'} · /{ev.slug}</div></div>
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${evMeta.color}`}>{evMeta.label}</span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${evMeta.color}`}>{evMeta.label}</span>
+                  <EventActions eventId={ev.id} title={ev.title} />
+                </div>
               </div>
             )
           })}

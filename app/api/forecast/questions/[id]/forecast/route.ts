@@ -2,9 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { publishForecastEvent } from '@/lib/forecast/queue/publisher'
-import { ensureRewardProfile, awardPoints } from '@/lib/rewards/scoring'
-import { updateStreak } from '@/lib/rewards/streaks'
-import { checkAndAwardBadges } from '@/lib/rewards/badges'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient()
@@ -80,22 +77,30 @@ async function processSubmissionRewards(
   revision: number,
   hasReasoning: boolean,
 ) {
-  await ensureRewardProfile(db, userId)
+  try {
+    const { ensureRewardProfile, awardPoints } = await import('@/lib/rewards/scoring')
+    const { updateStreak } = await import('@/lib/rewards/streaks')
+    const { checkAndAwardBadges } = await import('@/lib/rewards/badges')
 
-  const isNewForecast = revision === 1
-  if (isNewForecast) {
-    await awardPoints(db, userId, 'forecast_submitted')
-    await updateStreak(db, userId, 'daily_forecast')
-  } else {
-    await awardPoints(db, userId, 'forecast_updated')
-    await updateStreak(db, userId, 'update_streak')
+    await ensureRewardProfile(db, userId)
+
+    const isNewForecast = revision === 1
+    if (isNewForecast) {
+      await awardPoints(db, userId, 'forecast_submitted')
+      await updateStreak(db, userId, 'daily_forecast')
+    } else {
+      await awardPoints(db, userId, 'forecast_updated')
+      await updateStreak(db, userId, 'update_streak')
+    }
+
+    if (hasReasoning) {
+      await awardPoints(db, userId, 'reasoning_submitted')
+    }
+
+    await checkAndAwardBadges(db, userId, { action: 'forecast_submit' })
+  } catch (e) {
+    console.error('[forecast/route] Reward processing failed (non-blocking):', e instanceof Error ? e.message : e)
   }
-
-  if (hasReasoning) {
-    await awardPoints(db, userId, 'reasoning_submitted')
-  }
-
-  await checkAndAwardBadges(db, userId, { action: 'forecast_submit' })
 }
 
 async function handleMultiChoiceVote(

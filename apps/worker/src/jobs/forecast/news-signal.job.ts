@@ -71,6 +71,24 @@ const DEFAULT_NEWS_ADAPTER: NewsAdapter = {
   sourcesHint: 'Reuters, Bloomberg, BBC World News, Financial Times',
 }
 
+interface RegionWeight {
+  region_code: string
+  label_fr: string
+  weight: number
+}
+
+function pickWeightedRegion(regions: RegionWeight[]): RegionWeight | null {
+  const active = regions.filter(r => r.weight > 0)
+  if (!active.length) return null
+  const total = active.reduce((s, r) => s + r.weight, 0)
+  let rand = Math.random() * total
+  for (const r of active) {
+    rand -= r.weight
+    if (rand <= 0) return r
+  }
+  return active[active.length - 1]
+}
+
 // ─── Gemini response type ─────────────────────────────────────────────────────
 
 interface NewsSignalItem {
@@ -243,6 +261,14 @@ export async function runNewsSignalJob(): Promise<void> {
     return
   }
 
+  // 1b. Charger les poids régionaux
+  const { data: regionWeightsRaw } = await supabase
+    .from('forecast_region_weights')
+    .select('region_code, label_fr, weight')
+    .eq('is_active', true)
+    .order('weight', { ascending: false })
+  const regionWeights: RegionWeight[] = (regionWeightsRaw ?? []) as RegionWeight[]
+
   // 2. Charger les titres des signaux récents pour déduplication
   const { data: recentSignals } = await supabase
     .from('forecast_signal_feed')
@@ -260,26 +286,34 @@ export async function runNewsSignalJob(): Promise<void> {
   for (const channel of channels) {
     const adapter = CHANNEL_NEWS_ADAPTERS[channel.slug] ?? DEFAULT_NEWS_ADAPTER
 
-    // Bug 2 fix: systemInstruction is passed via the options object (named property),
-    // NOT as a raw string second argument. callGeminiWithSearch now supports it.
+    // Weighted region pick for this channel cycle
+    const pickedRegion = regionWeights.length > 0 ? pickWeightedRegion(regionWeights) : null
+    const regionCode = pickedRegion?.region_code ?? null
+    if (pickedRegion) {
+      console.log(`[news-signal] Canal ${channel.slug} → région : ${pickedRegion.label_fr} (${pickedRegion.region_code})`)
+    }
+
+    const regionFocus = pickedRegion
+      ? `\nRÉGION PRIORITAIRE pour cette génération : ${pickedRegion.label_fr}.\nAu moins 2 des 3 signaux DOIVENT concerner cette région ou avoir un impact direct sur cette région. Utilise des sources locales/régionales en priorité.\n`
+      : ''
+
     const systemInstruction = [
       `Tu es un analyste senior en intelligence économique et géopolitique couvrant l'actualité MONDIALE pour le canal "${channel.name}".`,
       `Ta mission : identifier les événements mondiaux les plus significatifs des dernières 24-48h qui affectent les marchés, les entreprises et les décideurs économiques.`,
-      `IMPORTANT : ne te limite PAS à l'Afrique. Couvre les événements MONDIAUX (USA, Europe, Chine, Moyen-Orient, Asie) et explique leur impact potentiel sur les marchés émergents et l'Afrique quand c'est pertinent.`,
+      regionFocus || `IMPORTANT : couvre les événements MONDIAUX (USA, Europe, Chine, Moyen-Orient, Asie, Afrique) et explique leur impact potentiel.`,
       `Contexte : ${adapter.regionContext}.`,
       `Focus thématique : ${adapter.topicFocus}.`,
       `Sources de référence : ${adapter.sourcesHint}.`,
       `IMPORTANT : retourne UNIQUEMENT un objet JSON valide avec une clé "signals", sans markdown ni texte autour.`,
     ].join('\n')
 
-    // Bug 1 fix: prompt asks for {"signals":[...]} wrapper object so parseGeminiJson
-    // (which uses the regex \{[\s\S]*\}) can extract it — bare arrays [..] are not matched.
     const prompt = [
-      `Identifie les 3 développements MONDIAUX les plus importants et actionnables des dernières 24-48h pour le canal "${channel.name}".`,
+      `Identifie les 3 développements les plus importants et actionnables des dernières 24-48h pour le canal "${channel.name}".`,
+      pickedRegion ? `PRIORITÉ : événements concernant ${pickedRegion.label_fr} ou ayant un impact direct sur cette région.` : '',
       ``,
       `Critères de sélection :`,
-      `- Événements d'envergure MONDIALE ou régionale ayant un impact économique concret`,
-      `- Inclure au minimum 1 événement hors Afrique (USA, Europe, Moyen-Orient, Asie, LATAM)`,
+      `- Événements d'envergure ayant un impact économique concret`,
+      pickedRegion ? `- Au moins 2 événements doivent concerner ${pickedRegion.label_fr}` : `- Diversité géographique`,
       `- Basé sur des faits vérifiables récents (pas de rumeurs)`,
       `- Expliquer l'impact potentiel sur les marchés, les investisseurs et les entreprises`,
       ``,
@@ -363,6 +397,7 @@ export async function runNewsSignalJob(): Promise<void> {
             title:       s.title.slice(0, 120),
             summary:     s.summary.slice(0, 280),
             severity:    (['high', 'medium', 'low'] as const).includes(s.severity) ? s.severity : 'medium',
+            region:      regionCode ?? s.region ?? null,
             data: {
               region:            s.region      ?? null,
               source_hint:       s.source_hint ?? null,

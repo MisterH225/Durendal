@@ -70,6 +70,25 @@ function shuffle<T>(arr: T[]): T[] {
 
 const OUTCOME_COLORS = ['#818cf8', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4']
 
+interface RegionWeight {
+  region_code: string
+  label_fr: string
+  label_en: string
+  weight: number
+}
+
+function pickWeightedRegion(regions: RegionWeight[]): RegionWeight | null {
+  const active = regions.filter(r => r.weight > 0)
+  if (!active.length) return null
+  const total = active.reduce((s, r) => s + r.weight, 0)
+  let rand = Math.random() * total
+  for (const r of active) {
+    rand -= r.weight
+    if (rand <= 0) return r
+  }
+  return active[active.length - 1]
+}
+
 const DEDUP_DAYS = 7
 const MAX_EVENTS_PER_CHANNEL = 2
 const MAX_QUESTIONS_PER_EVENT = 2
@@ -130,6 +149,16 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
   const hasImageCol = await columnExists(supabase, 'forecast_questions', 'image_url')
   const hasQuestionType = await columnExists(supabase, 'forecast_questions', 'question_type')
   const hasOutcomesTable = await columnExists(supabase, 'forecast_question_outcomes', 'id')
+  const hasRegionCol = await columnExists(supabase, 'forecast_questions', 'region')
+
+  // Load region weights for geographic content distribution
+  const { data: regionWeightsRaw } = await supabase
+    .from('forecast_region_weights')
+    .select('region_code, label_fr, label_en, weight')
+    .eq('is_active', true)
+    .order('weight', { ascending: false })
+  const regionWeights: RegionWeight[] = (regionWeightsRaw ?? []) as RegionWeight[]
+  const hasRegionWeights = regionWeights.length > 0
 
   const since = new Date(Date.now() - DEDUP_DAYS * 86_400_000).toISOString()
 
@@ -148,10 +177,22 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       (recentQs ?? []).map((q: { title: string }) => titleFingerprint(q.title)),
     )
 
+    // Weighted region pick for this channel
+    const pickedRegion = hasRegionWeights ? pickWeightedRegion(regionWeights) : null
+    const regionLabel = pickedRegion?.label_fr ?? null
+    const regionCode = pickedRegion?.region_code ?? null
+    if (pickedRegion) {
+      console.log(`[question-generator] Canal ${channel.slug} → région : ${pickedRegion.label_fr} (${pickedRegion.region_code})`)
+    }
+
+    const regionInstruction = regionLabel
+      ? `\nRÉGION GÉOGRAPHIQUE PRINCIPALE pour cette génération : ${regionLabel}.\nLes événements et questions DOIVENT concerner cette région ou avoir un IMPACT DIRECT sur cette région.\nUtilise des sources et exemples de cette région en priorité.\n`
+      : ''
+
     const systemInstruction = [
       `Tu es rédacteur senior pour une plateforme de prévision collective (sans paris).`,
       `Canal : "${channel.name}" (slug: ${channel.slug}).`,
-      ``,
+      regionInstruction,
       `RÈGLE ABSOLUE : ta réponse doit être EXCLUSIVEMENT du JSON valide.`,
       `PAS de texte avant, PAS de texte après, PAS d'explication, PAS de raisonnement.`,
       `Commence directement par { et termine par }.`,
@@ -304,6 +345,9 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
           }
           if (hasQuestionType) {
             insertRow.question_type = isMulti ? 'multi_choice' : 'binary'
+          }
+          if (hasRegionCol && regionCode) {
+            insertRow.region = regionCode
           }
 
           const { data: qRow, error: qErr } = await supabase

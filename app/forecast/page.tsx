@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
 import { OutcomeBars } from '@/components/forecast/OutcomeBars'
@@ -6,10 +7,12 @@ import { SignalFeedVertical } from '@/components/forecast/SignalFeedVertical'
 import { TrendingCard } from '@/components/forecast/TrendingCard'
 import { QuickVoteSlider } from '@/components/forecast/QuickVoteSlider'
 import { QuickVoteMulti } from '@/components/forecast/QuickVoteMulti'
-import { Calendar, Users, TrendingUp, Radio, ChevronRight } from 'lucide-react'
+import { RegionSelector } from '@/components/forecast/RegionSelector'
+import { Calendar, Users, TrendingUp, Radio, ChevronRight, MapPin } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
 import { tr } from '@/lib/i18n/translations'
 import { localizeChannel } from '@/lib/forecast/locale'
+import { detectRegionFromHeaders, REGION_LABELS, type RegionCode } from '@/lib/geo/detect-region'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,13 +38,38 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
   const db = createAdminClient()
   const locale = getLocale()
 
+  // Detect user region (IP-based or saved profile preference)
+  const detectedRegion = detectRegionFromHeaders()
+  let userRegion: RegionCode = detectedRegion
+  try {
+    const sbUser = createClient()
+    const { data: { user } } = await sbUser.auth.getUser()
+    if (user) {
+      const { data: profile } = await db.from('profiles').select('region').eq('id', user.id).single()
+      if (profile?.region && profile.region in REGION_LABELS) {
+        userRegion = profile.region as RegionCode
+      }
+    }
+  } catch { /* not logged in — use detected */ }
+
+  // Load available regions for the selector
+  const { data: regionWeights } = await db
+    .from('forecast_region_weights')
+    .select('region_code, label_fr, label_en')
+    .eq('is_active', true)
+    .order('sort_order')
+  const regionOptions = (regionWeights ?? []).map(r => ({
+    code: r.region_code,
+    label: locale === 'fr' ? r.label_fr : r.label_en,
+  }))
+
   const [{ data: channels }, channelResult, signalsResult] = await Promise.all([
     db.from('forecast_channels').select('id, slug, name, name_fr, name_en').eq('is_active', true).order('sort_order'),
     searchParams.channel
       ? db.from('forecast_channels').select('id').eq('slug', searchParams.channel).single()
       : Promise.resolve({ data: null }),
     db.from('forecast_signal_feed')
-      .select('id, signal_type, title, summary, severity, data, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
+      .select('id, signal_type, title, summary, severity, data, region, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
       .gte('created_at', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
       .limit(15),
@@ -49,7 +77,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
 
   const channelId = (channelResult as any)?.data?.id ?? null
   let questionQuery = db.from('forecast_questions')
-    .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, image_url, question_type, forecast_channels(slug, name, name_fr, name_en)')
+    .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, image_url, question_type, region, forecast_channels(slug, name, name_fr, name_en)')
     .eq('status', 'open').order('close_date', { ascending: true }).limit(30)
   if (channelId) questionQuery = questionQuery.eq('channel_id', channelId)
 
@@ -91,7 +119,14 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
     }
   }
 
-  const liveSignals = signalsResult.data ?? []
+  // Sort signals: user's region first, then by date
+  const rawSignals = signalsResult.data ?? []
+  const liveSignals = [...rawSignals].sort((a, b) => {
+    const aMatch = (a as any).region === userRegion ? 1 : 0
+    const bMatch = (b as any).region === userRegion ? 1 : 0
+    if (aMatch !== bMatch) return bMatch - aMatch
+    return 0 // preserve original date order otherwise
+  })
 
   const trendingQ = [...qList].sort((a, b) => {
     const aScore = (a.forecast_count ?? 0) * 10 + (a.blended_probability != null ? Math.abs(a.blended_probability - 0.5) * 100 : 0)
@@ -121,7 +156,15 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
     outcomes: trendingOutcomes,
   } : null
 
-  const restQuestions = qList.filter(q => q.id !== trendingQ?.id)
+  // Sort remaining questions: user's region first, then by close_date
+  const restQuestions = qList
+    .filter(q => q.id !== trendingQ?.id)
+    .sort((a, b) => {
+      const aMatch = (a as any).region === userRegion ? 1 : 0
+      const bMatch = (b as any).region === userRegion ? 1 : 0
+      if (aMatch !== bMatch) return bMatch - aMatch
+      return new Date(a.close_date).getTime() - new Date(b.close_date).getTime()
+    })
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -135,8 +178,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
         <p className="text-neutral-400 text-sm max-w-xl mx-auto">{tr(locale, 'hero.subtitle')}</p>
       </div>
 
-      {/* Channel chips */}
-      <div className="flex flex-wrap justify-center gap-2 pb-6">
+      {/* Channel chips + Region selector */}
+      <div className="flex flex-wrap items-center justify-center gap-2 pb-6">
         <Link href="/forecast"
           className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${!searchParams.channel ? 'bg-white text-neutral-900 border-white' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}`}>
           {tr(locale, 'page.all')}
@@ -147,6 +190,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
             {localizeChannel(ch, locale)}
           </Link>
         ))}
+        <div className="w-px h-4 bg-neutral-700 mx-1 hidden sm:block" />
+        <RegionSelector regions={regionOptions} currentRegion={userRegion} locale={locale} />
       </div>
 
       {/* Two-panel layout */}
@@ -209,15 +254,25 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
               const href = `/forecast/q/${encodeURIComponent(q.slug ?? q.id)}`
               const isMulti = (q as any).question_type === 'multi_choice'
               const outcomes = outcomesByQuestion.get(q.id) ?? []
+              const qRegion = (q as any).region as string | null
+              const isUserRegion = qRegion === userRegion && userRegion !== 'global'
 
               return (
                 <div key={q.id}
-                  className="group flex flex-col rounded-xl border border-neutral-800/60 bg-neutral-900/40 hover:border-neutral-700 hover:bg-neutral-900/70 transition-all p-3.5 gap-2.5">
+                  className={`group flex flex-col rounded-xl border ${isUserRegion ? 'border-blue-800/40 bg-blue-950/10' : 'border-neutral-800/60 bg-neutral-900/40'} hover:border-neutral-700 hover:bg-neutral-900/70 transition-all p-3.5 gap-2.5`}>
 
                   <div className="flex items-center justify-between gap-2">
-                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
-                      {ch ? localizeChannel(ch, locale) : ''}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
+                        {ch ? localizeChannel(ch, locale) : ''}
+                      </span>
+                      {isUserRegion && (
+                        <span className="text-[8px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                          <MapPin size={7} />
+                          {REGION_LABELS[userRegion]?.[locale === 'fr' ? 'fr' : 'en'] ?? ''}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[9px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
                   </div>
 

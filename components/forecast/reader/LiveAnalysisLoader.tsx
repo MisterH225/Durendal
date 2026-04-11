@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { ImplicationPanel } from './ImplicationPanel'
 import { AnalysisSkeleton } from './ReaderSkeleton'
+import { AlertTriangle, RefreshCw, Zap } from 'lucide-react'
 import type { ArticleImplicationAnalysis } from '@/lib/forecast/mock-articles'
 
 interface Props {
@@ -11,63 +12,79 @@ interface Props {
   fallbackAnalysis: ArticleImplicationAnalysis
 }
 
-/**
- * Client component that fetches AI analysis on mount.
- * Shows the ImplicationPanel skeleton while loading, then the real analysis.
- * Falls back to the server-provided placeholder if the API fails.
- */
 export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props) {
   const [analysis, setAnalysis] = useState<ArticleImplicationAnalysis | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+
+  const t = (fr: string, en: string) => locale === 'fr' ? fr : en
+
+  const fetchAnalysis = useCallback(async () => {
+    setLoading(true)
+    setErrorMsg(null)
+
+    try {
+      const res = await fetch('/api/forecast/analyze-signal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signalId, locale }),
+      })
+
+      const json = await res.json()
+
+      if (!res.ok) {
+        throw new Error(json.error ?? json.details ?? `HTTP ${res.status}`)
+      }
+
+      const raw = json.analysis
+      if (!raw || typeof raw !== 'object') {
+        throw new Error(t('L\'IA n\'a pas retourné d\'analyse valide', 'AI did not return a valid analysis'))
+      }
+
+      const mapped: ArticleImplicationAnalysis = {
+        articleId: signalId,
+        executiveTakeaway: raw.executiveTakeaway ?? '',
+        whyThisMatters: raw.whyThisMatters ?? [],
+        immediateImplications: raw.immediateImplications ?? [],
+        secondOrderEffects: raw.secondOrderEffects ?? [],
+        regionalImplications: (raw.regionalImplications ?? []).map((r: any) => ({
+          region: r.region ?? '',
+          implications: r.implications ?? [],
+        })),
+        sectorExposure: (raw.sectorExposure ?? []).map((s: any) => ({
+          sector: s.sector ?? '',
+          riskLevel: s.riskLevel ?? 'medium',
+          notes: s.notes ?? [],
+        })),
+        whatToWatch: raw.whatToWatch ?? [],
+        confidenceNote: raw.confidenceNote ?? undefined,
+        relatedForecasts: [],
+      }
+
+      const hasAnyContent = mapped.executiveTakeaway
+        || mapped.whyThisMatters.length > 0
+        || mapped.immediateImplications.length > 0
+        || mapped.secondOrderEffects.length > 0
+
+      if (!hasAnyContent) {
+        throw new Error(t(
+          'L\'analyse générée est vide. L\'article source n\'a peut-être pas pu être extrait.',
+          'Generated analysis is empty. The source article may not have been extractable.'
+        ))
+      }
+
+      setAnalysis(mapped)
+    } catch (err: any) {
+      setErrorMsg(err?.message ?? t('Erreur inconnue', 'Unknown error'))
+    } finally {
+      setLoading(false)
+    }
+  }, [signalId, locale, t])
 
   useEffect(() => {
-    let cancelled = false
-
-    async function fetchAnalysis() {
-      try {
-        const res = await fetch('/api/forecast/analyze-signal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ signalId, locale }),
-        })
-
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-
-        const { analysis: raw } = await res.json()
-        if (cancelled) return
-
-        const mapped: ArticleImplicationAnalysis = {
-          articleId: signalId,
-          executiveTakeaway: raw.executiveTakeaway ?? '',
-          whyThisMatters: raw.whyThisMatters ?? [],
-          immediateImplications: raw.immediateImplications ?? [],
-          secondOrderEffects: raw.secondOrderEffects ?? [],
-          regionalImplications: (raw.regionalImplications ?? []).map((r: any) => ({
-            region: r.region ?? '',
-            implications: r.implications ?? [],
-          })),
-          sectorExposure: (raw.sectorExposure ?? []).map((s: any) => ({
-            sector: s.sector ?? '',
-            riskLevel: s.riskLevel ?? 'medium',
-            notes: s.notes ?? [],
-          })),
-          whatToWatch: raw.whatToWatch ?? [],
-          confidenceNote: raw.confidenceNote ?? undefined,
-          relatedForecasts: [],
-        }
-
-        setAnalysis(mapped)
-      } catch {
-        if (!cancelled) setError(true)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
     fetchAnalysis()
-    return () => { cancelled = true }
-  }, [signalId, locale])
+  }, [fetchAnalysis, attempt])
 
   if (loading) {
     return (
@@ -78,12 +95,13 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
           </div>
           <div>
             <p className="text-xs font-medium text-neutral-300">
-              {locale === 'fr' ? 'Analyse en cours...' : 'Analyzing...'}
+              {t('Analyse IA en cours...', 'AI analysis in progress...')}
             </p>
             <p className="text-[10px] text-neutral-600">
-              {locale === 'fr'
-                ? 'L\'IA analyse le contenu complet de l\'article pour générer des implications détaillées'
-                : 'AI is analyzing the full article content to generate detailed implications'}
+              {t(
+                'L\'IA récupère et analyse le contenu complet de l\'article. Cela peut prendre 15-30 secondes.',
+                'AI is fetching and analyzing the full article content. This may take 15-30 seconds.'
+              )}
             </p>
           </div>
         </div>
@@ -92,7 +110,58 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
     )
   }
 
-  if (error || !analysis) {
+  if (errorMsg) {
+    return (
+      <div className="space-y-6">
+        {/* Error header */}
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-md bg-blue-500/10 flex items-center justify-center">
+            <Zap size={12} className="text-blue-400" />
+          </div>
+          <h2 className="text-sm font-bold text-white">
+            {t('Analyse des implications', 'Implications Analysis')}
+          </h2>
+          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+            IA
+          </span>
+        </div>
+
+        {/* Error message */}
+        <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-5 space-y-4">
+          <div className="flex gap-3">
+            <AlertTriangle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-red-300">
+                {t('L\'analyse n\'a pas pu être générée', 'Analysis could not be generated')}
+              </p>
+              <p className="text-xs text-neutral-500">{errorMsg}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setAttempt(a => a + 1)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-medium hover:bg-blue-500/20 transition-colors"
+          >
+            <RefreshCw size={12} />
+            {t('Réessayer l\'analyse', 'Retry analysis')}
+          </button>
+        </div>
+
+        {/* Show executive takeaway from fallback if available */}
+        {fallbackAnalysis.executiveTakeaway && (
+          <div className="rounded-lg bg-neutral-800/30 border border-neutral-800 p-4 space-y-2">
+            <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider">
+              {t('Résumé disponible', 'Available summary')}
+            </p>
+            <p className="text-sm text-neutral-300 leading-relaxed">
+              {fallbackAnalysis.executiveTakeaway}
+            </p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (!analysis) {
     return <ImplicationPanel analysis={fallbackAnalysis} locale={locale} />
   }
 

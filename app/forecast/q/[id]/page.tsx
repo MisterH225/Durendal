@@ -22,9 +22,10 @@ const STATUS_COLORS: Record<string, string> = {
   annulled:     'text-neutral-400 bg-neutral-800 border-neutral-700',
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function isSafeQuestionParam(s: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
-    || /^[a-z0-9-]{1,220}$/i.test(s)
+  return UUID_RE.test(s) || /^[a-z0-9-]{1,220}$/i.test(s)
 }
 
 export default async function ForecastQuestionPage({ params }: { params: { id: string } }) {
@@ -34,16 +35,18 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
   const db = createAdminClient()
   const sbUser = createClient()
 
-  // Étape 1 : question sans jointure IA (sinon INNER implicite → 404 si pas encore de forecast IA)
+  const isUuid = UUID_RE.test(raw)
+  let qQuery = db
+    .from('forecast_questions')
+    .select('*, forecast_channels ( id, slug, name, name_fr, name_en ), forecast_events ( id, slug, title )')
+    .neq('status', 'draft')
+    .neq('status', 'paused')
+
+  qQuery = isUuid ? qQuery.or(`id.eq.${raw},slug.eq.${raw}`) : qQuery.eq('slug', raw)
+
   const [{ data: { user } }, questionResult] = await Promise.all([
     sbUser.auth.getUser(),
-    db
-      .from('forecast_questions')
-      .select('*, forecast_channels ( id, slug, name, name_fr, name_en ), forecast_events ( id, slug, title )')
-      .or(`id.eq.${raw},slug.eq.${raw}`)
-      .neq('status', 'draft')
-      .neq('status', 'paused')
-      .maybeSingle(),
+    qQuery.maybeSingle(),
   ])
 
   if (!questionResult.data) notFound()
@@ -91,11 +94,21 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
   const blendedPct = q.blended_probability !== null ? Math.round(q.blended_probability * 100) : null
   const dateFmt    = locale === 'fr' ? 'fr-FR' : 'en-GB'
 
+  const imgUrl = typeof q.image_url === 'string' ? q.image_url : null
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
       <Link href="/forecast" className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors">
         <ArrowLeft size={12} />{tr(locale, 'q.back')}
       </Link>
+
+      {imgUrl && (
+        <div className="relative w-full h-48 md:h-64 rounded-2xl overflow-hidden bg-neutral-800">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={imgUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+          <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/70 via-transparent to-neutral-950/20" />
+        </div>
+      )}
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">

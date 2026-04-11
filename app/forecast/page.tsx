@@ -49,7 +49,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
 
   const channelId = (channelResult as any)?.data?.id ?? null
   let questionQuery = db.from('forecast_questions')
-    .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, forecast_channels(slug, name, name_fr, name_en)')
+    .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, image_url, forecast_channels(slug, name, name_fr, name_en)')
     .eq('status', 'open').order('close_date', { ascending: true }).limit(24)
   if (channelId) questionQuery = questionQuery.eq('channel_id', channelId)
 
@@ -193,26 +193,43 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
             const blended = q.blended_probability !== null ? Math.round(q.blended_probability * 100) : null
             const aiCard = aiByQuestion.get(q.id)
             const aiPct = aiCard?.aiPct ?? (q.ai_probability != null ? Math.round(q.ai_probability * 100) : null)
-            const snippet = (aiCard?.summary ?? (q as { description?: string | null }).description ?? '').replace(/\s+/g, ' ').trim().slice(0, 260)
+            const snippet = (aiCard?.summary ?? (q as any).description ?? '').replace(/\s+/g, ' ').trim().slice(0, 340)
             const histVals = histByQuestion.get(q.id) ?? []
             const href = `/forecast/q/${encodeURIComponent(q.slug ?? q.id)}`
+            const imgUrl = (q as any).image_url as string | null
             return (
               <Link key={q.id} href={href}
-                className="group flex flex-col rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-600 hover:bg-neutral-900/80 transition-all p-5 min-h-[200px]">
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div className="flex flex-wrap items-center gap-2 min-w-0">
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
-                      {ch ? localizeChannel(ch, locale) : ''}
-                    </span>
-                    <span className="text-[10px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
+                className="group flex flex-col rounded-2xl border border-neutral-800 bg-neutral-900/50 hover:border-neutral-600 hover:bg-neutral-900/80 transition-all overflow-hidden min-h-[200px]">
+                {imgUrl && (
+                  <div className="relative h-36 w-full overflow-hidden bg-neutral-800 flex-shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={imgUrl} alt="" className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/80 via-transparent to-transparent" />
+                    <div className="absolute top-2 left-2 flex items-center gap-2">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border backdrop-blur-sm ${chColor}`}>
+                        {ch ? localizeChannel(ch, locale) : ''}
+                      </span>
+                      <span className="text-[10px] text-neutral-300/80 backdrop-blur-sm bg-neutral-950/40 px-1.5 py-0.5 rounded">{daysLeft(q.close_date, locale)}</span>
+                    </div>
                   </div>
-                  <ChevronRight size={16} className="text-neutral-600 group-hover:text-neutral-400 flex-shrink-0 transition-colors" />
-                </div>
-                <h3 className="text-sm font-semibold text-neutral-100 group-hover:text-white transition-colors line-clamp-3 leading-snug mb-3">{q.title}</h3>
-                {snippet && (
-                  <p className="text-xs text-neutral-500 line-clamp-3 leading-relaxed mb-4 flex-1">{snippet}</p>
                 )}
-                <div className="mt-auto pt-3 border-t border-neutral-800/80 space-y-3">
+                <div className="p-5 flex flex-col flex-1">
+                  {!imgUrl && (
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
+                          {ch ? localizeChannel(ch, locale) : ''}
+                        </span>
+                        <span className="text-[10px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
+                      </div>
+                      <ChevronRight size={16} className="text-neutral-600 group-hover:text-neutral-400 flex-shrink-0 transition-colors" />
+                    </div>
+                  )}
+                  <h3 className="text-sm font-semibold text-neutral-100 group-hover:text-white transition-colors line-clamp-3 leading-snug mb-3">{q.title}</h3>
+                  {snippet && (
+                    <p className="text-xs text-neutral-500 line-clamp-4 leading-relaxed mb-4 flex-1">{snippet}</p>
+                  )}
+                  <div className="mt-auto pt-3 border-t border-neutral-800/80 space-y-3">
                   <div className="flex items-end justify-between gap-3">
                     <div className="flex items-center gap-4">
                       <div className="text-center">
@@ -235,6 +252,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
                       <BlendedMicroSpark values={histVals} className="opacity-90" />
                     </div>
                   )}
+                  </div>
                 </div>
               </Link>
             )

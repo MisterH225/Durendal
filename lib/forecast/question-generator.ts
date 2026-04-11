@@ -18,6 +18,8 @@ interface GeneratedQuestion {
   resolution_criteria: string
   resolution_url?: string
   slug_hint?: string
+  image_url?: string
+  ai_initial_probability?: number
 }
 
 interface GeneratedEvent {
@@ -98,11 +100,15 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
     )
 
     const systemInstruction = [
-      `Tu es rédacteur pour une plateforme de prévision collective (sans paris).`,
+      `Tu es rédacteur senior pour une plateforme de prévision collective (sans paris).`,
       `Canal : "${channel.name}" (slug: ${channel.slug}).`,
-      `Identifie 2 à 3 sujets d'actualité brûlante (24–72h) : guerre, épidémie, tech, macro, climat, etc.`,
-      `Pour chaque sujet, un événement + 2 à 3 questions OUI/NON très lisibles (style : « Le cessez-le-feu … sera-t-il respecté dans les 2 prochaines semaines ? »).`,
-      `JSON uniquement, clé racine "events", sans markdown.`,
+      `Identifie 2 à 3 sujets d'actualité brûlante (24–72h). Pour chaque sujet :`,
+      `  - un événement avec une description DÉTAILLÉE (4-6 phrases : contexte factuel, chiffres clés, enjeux, parties prenantes, timeline)`,
+      `  - 2 à 3 questions OUI/NON très lisibles (style : « Le cessez-le-feu … sera-t-il respecté dans les 2 prochaines semaines ? »)`,
+      `  - chaque question doit avoir une "description" riche (3-5 phrases) expliquant le contexte spécifique, les données factuelles vérifiables, et pourquoi la question est pertinente`,
+      `  - chaque question doit inclure "ai_initial_probability" (float 0.01-0.99) : ta meilleure estimation initiale basée sur les données factuelles disponibles`,
+      `  - si possible, inclure "image_url" : URL d'une image réelle publiée par une agence de presse ou un média de référence en rapport avec le sujet (pas d'image générée par IA)`,
+      `JSON uniquement, clé racine "events", sans markdown ni commentaires.`,
     ].join('\n')
 
     const prompt = [
@@ -110,25 +116,34 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       `{`,
       `  "events": [`,
       `    {`,
-      `      "title": "Guerre Iran-USA / Israël (exemple court)",`,
-      `      "slug": "guerre-iran-usa-israel-2026",`,
-      `      "description": "Contexte en 1-2 phrases.",`,
+      `      "title": "Titre court de l'événement",`,
+      `      "slug": "evenement-slug-2026",`,
+      `      "description": "Description DÉTAILLÉE de l'événement (4-6 phrases). Inclure : contexte géopolitique/économique, chiffres clés récents, acteurs principaux, enjeux concrets. Être factuel, citer des sources quand possible.",`,
       `      "questions": [`,
       `        {`,
       `          "title": "Le cessez-le-feu USA-Iran sera-t-il respecté dans les 2 prochaines semaines ?",`,
-      `          "description": "Contexte optionnel",`,
+      `          "description": "Description enrichie (3-5 phrases). Contexte factuel : quand le cessez-le-feu a été annoncé, par qui, quelles sont les conditions, quels incidents récents menacent l'accord. Citer des chiffres ou dates précises.",`,
       `          "close_date_days": 14,`,
-      `          "resolution_source": "Reuters, BBC, Al Jazeera, déclarations officielles",`,
-      `          "resolution_criteria": "OUI si … NON si …",`,
-      `          "resolution_url": "https://...",`,
-      `          "slug_hint": "usa-iran-ceasefire-2w"`,
+      `          "resolution_source": "Reuters, BBC, Al Jazeera, déclarations officielles des ministères des Affaires étrangères",`,
+      `          "resolution_criteria": "OUI si aucune opération militaire majeure (frappe aérienne, offensive terrestre) n'est rapportée par au moins 2 agences de presse internationales durant la période. NON si une telle opération est confirmée.",`,
+      `          "resolution_url": "https://www.reuters.com/...",`,
+      `          "slug_hint": "usa-iran-ceasefire-2w",`,
+      `          "image_url": "https://example.com/photo-from-reuters.jpg",`,
+      `          "ai_initial_probability": 0.62`,
       `        }`,
       `      ]`,
       `    }`,
       `  ]`,
       `}`,
       ``,
-      `Contraintes : 2 ou 3 entrées dans "events" ; chaque événement : 2 ou 3 questions ; close_date_days entre 7 et 45 ; slugs ASCII courts et uniques sémantiquement.`,
+      `IMPORTANT :`,
+      `- 2 ou 3 entrées dans "events" ; chaque événement : 2 ou 3 questions`,
+      `- close_date_days entre 7 et 45 ; slugs ASCII courts et uniques sémantiquement`,
+      `- Les descriptions (événement ET questions) doivent être factuelles, détaillées et vérifiables`,
+      `- resolution_criteria doit être PRÉCIS et mesurable (pas vague)`,
+      `- resolution_source doit lister des sources concrètes (noms de médias, institutions)`,
+      `- ai_initial_probability : base ton estimation sur les données factuelles, pas sur l'intuition`,
+      `- image_url : uniquement des URLs d'images de médias réels (Reuters, AFP, BBC, etc.). Si tu n'en as pas, omets le champ`,
     ].join('\n')
 
     try {
@@ -185,7 +200,11 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
           const hint = q.slug_hint ? slugify(q.slug_hint) : slugify(q.title)
           const qSlug = slugify(`auto-${channel.slug}-${hint}-${crypto.randomUUID().slice(0, 5)}`)
 
-          const { error: qErr } = await supabase.from('forecast_questions').insert({
+          const aiInitProb = typeof q.ai_initial_probability === 'number'
+            ? Math.max(0.01, Math.min(0.99, q.ai_initial_probability))
+            : null
+
+          const insertRow: Record<string, unknown> = {
             event_id: evRow.id,
             channel_id: channel.id,
             slug: qSlug,
@@ -199,12 +218,49 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
             tags: ['auto', channel.slug],
             featured: false,
             created_by: null,
-          })
+            ai_probability: aiInitProb,
+            blended_probability: aiInitProb,
+          }
+          if (q.image_url && q.image_url.startsWith('https://')) {
+            insertRow.image_url = q.image_url.slice(0, 2000)
+          }
 
-          if (qErr) {
-            console.error(`[question-generator] Question ${channel.slug}:`, qErr.message)
+          const { data: qRow, error: qErr } = await supabase
+            .from('forecast_questions')
+            .insert(insertRow)
+            .select('id')
+            .single()
+
+          if (qErr || !qRow) {
+            console.error(`[question-generator] Question ${channel.slug}:`, qErr?.message)
           } else {
             createdQuestions += 1
+
+            // Enqueue an AI forecast so jauges fill up quickly
+            await supabase.from('forecast_event_queue').insert({
+              event_type: 'forecast.ai.forecast.requested',
+              correlation_id: qRow.id,
+              payload: {
+                id: crypto.randomUUID(),
+                type: 'forecast.ai.forecast.requested',
+                occurredAt: new Date().toISOString(),
+                correlationId: qRow.id,
+                producer: 'worker',
+                version: 1,
+                payload: {
+                  questionId: qRow.id,
+                  channelSlug: channel.slug,
+                  requestedBy: 'scheduler',
+                  force: false,
+                },
+              },
+              status: 'pending',
+              attempts: 0,
+              max_attempts: 3,
+              available_at: new Date(Date.now() + createdQuestions * 2 * 60_000).toISOString(),
+            }).then(({ error: eqErr }) => {
+              if (eqErr) console.error(`[question-generator] Queue AI forecast:`, eqErr.message)
+            })
           }
         }
       }

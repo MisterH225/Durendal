@@ -117,7 +117,7 @@ export async function runAIForecastJob(payload: AIForecastRequestedPayload): Pro
 
   const prompt = `
 Tu es un ${adapter.systemContext}.
-Ta mission : estimer la probabilité que la question de prévision suivante se réalise.
+Ta mission : estimer la probabilité que la question de prévision suivante se réalise, EN TE BASANT EXCLUSIVEMENT SUR DES FAITS VÉRIFIABLES.
 
 ## QUESTION
 ${question.title}
@@ -135,11 +135,13 @@ ${question.resolution_source}
 ${closeDate}
 
 ## INSTRUCTIONS DE RECHERCHE
-Effectue une recherche web approfondie en te concentrant sur :
+Effectue une recherche web approfondie. EXIGENCES STRICTES :
 - ${adapter.evidenceFocus}
 - ${adapter.recencyHint}
-- Toute donnée chiffrée pertinente (taux, prix, sondages, indices)
-- Les précédents historiques comparables (base rate)
+- CHAQUE facteur (bullish/bearish) DOIT être appuyé par un fait vérifiable : date, chiffre, source nommée, déclaration officielle
+- Inclure des données chiffrées : taux, prix, indices, statistiques, dates d'événements
+- Les précédents historiques comparables avec dates et résultats (base rate)
+- NE PAS inclure de facteurs spéculatifs ou d'opinions non sourcées
 
 ## FORMAT DE RÉPONSE REQUIS
 Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans texte autour.
@@ -147,12 +149,12 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans texte autour.
 {
   "probability": <float entre 0.01 et 0.99>,
   "confidence": <"low" | "medium" | "high">,
-  "summary": "<2-4 phrases résumant ton raisonnement principal>",
-  "bullish_factors": ["<facteur 1>", "<facteur 2>"],
-  "bearish_factors": ["<facteur 1>", "<facteur 2>"],
-  "key_uncertainties": ["<incertitude 1>", "<incertitude 2>"],
-  "base_rate_note": "<référence historique chiffrée ou 'Aucun précédent direct identifié'>",
-  "next_catalyst": "<prochain événement/donnée clé à surveiller>",
+  "summary": "<4-6 phrases résumant ton analyse. Citer des faits précis, des dates, des chiffres. Nommer les sources.>",
+  "bullish_factors": ["<fait vérifiable avec source/date/chiffre — ex: 'Le cours du Brent a atteint 87$/baril le 8 avril (Reuters)'> ", "..."],
+  "bearish_factors": ["<fait vérifiable avec source/date/chiffre>", "..."],
+  "key_uncertainties": ["<incertitude identifiée avec contexte factuel>", "..."],
+  "base_rate_note": "<référence historique CHIFFRÉE avec dates — ex: 'Sur les 5 derniers cessez-le-feu similaires (2020-2025), 3 ont tenu plus de 14 jours (60%)'> ou 'Aucun précédent direct identifié'",
+  "next_catalyst": "<prochain événement/donnée clé avec date attendue — ex: 'Réunion BCE du 17 avril 2026'>",
   "evidence_quality": <"weak" | "moderate" | "strong">
 }
 `.trim()

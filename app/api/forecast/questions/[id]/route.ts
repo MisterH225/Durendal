@@ -1,20 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const db = createAdminClient()
+  const raw = params.id
+  const isUuid = UUID_RE.test(raw)
 
-  const { data: question, error } = await db
+  let q = db
     .from('forecast_questions')
-    .select(`
-      *,
-      forecast_channels ( id, slug, name ),
-      forecast_events   ( id, slug, title )
-    `)
-    .or(`id.eq.${params.id},slug.eq.${params.id}`)
+    .select('*, forecast_channels ( id, slug, name ), forecast_events ( id, slug, title )')
     .neq('status', 'draft')
     .neq('status', 'paused')
-    .maybeSingle()
+
+  q = isUuid ? q.or(`id.eq.${raw},slug.eq.${raw}`) : q.eq('slug', raw)
+
+  const { data: question, error } = await q.maybeSingle()
 
   if (!question || error) return NextResponse.json({ error: 'Question introuvable' }, { status: 404 })
 

@@ -2,18 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function isSafeQuestionParam(s: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
-    || /^[a-z0-9-]{1,220}$/i.test(s)
+  return UUID_RE.test(s) || /^[a-z0-9-]{1,220}$/i.test(s)
 }
 
 async function resolveQuestionId(db: ReturnType<typeof createAdminClient>, raw: string): Promise<{ id: string; status: string } | null> {
   if (!isSafeQuestionParam(raw)) return null
-  const { data } = await db
-    .from('forecast_questions')
-    .select('id, status')
-    .or(`id.eq.${raw},slug.eq.${raw}`)
-    .maybeSingle()
+  const isUuid = UUID_RE.test(raw)
+  let q = db.from('forecast_questions').select('id, status')
+  q = isUuid ? q.or(`id.eq.${raw},slug.eq.${raw}`) : q.eq('slug', raw)
+  const { data } = await q.maybeSingle()
   if (!data) return null
   return { id: data.id, status: data.status }
 }

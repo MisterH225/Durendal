@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Bot, CheckCircle, Pencil, Trash2 } from 'lucide-react'
+import { Bot, CheckCircle, Pencil, Trash2, Pause, Play } from 'lucide-react'
 
 interface Props { questionId: string; status: string }
 
@@ -40,10 +40,32 @@ export function ForecastAdminActions({ questionId, status }: Props) {
     } finally { setBusy(false) }
   }
 
+  async function pauseQuestion() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/admin/forecast/questions/${questionId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'paused' }) })
+      if (res.ok) router.refresh()
+      else { const j = await res.json(); alert(`Erreur : ${j.error}`) }
+    } finally { setBusy(false) }
+  }
+
+  async function resumeQuestion() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/admin/forecast/questions/${questionId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'open' }) })
+      if (res.ok) router.refresh()
+      else { const j = await res.json(); alert(`Erreur : ${j.error}`) }
+    } finally { setBusy(false) }
+  }
+
   return (
     <div className="flex items-center gap-1 justify-end">
       <button onClick={triggerAI} disabled={busy} title="Lancer estimation IA" className="p-1.5 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors disabled:opacity-40"><Bot size={14} /></button>
       {status === 'draft' && <button onClick={publishQuestion} disabled={busy} title="Publier" className="p-1.5 rounded hover:bg-green-50 text-green-500 hover:text-green-700 transition-colors disabled:opacity-40"><CheckCircle size={14} /></button>}
+      {status === 'open' && <button onClick={pauseQuestion} disabled={busy} title="Mettre en pause" className="p-1.5 rounded hover:bg-amber-50 text-amber-600 hover:text-amber-800 transition-colors disabled:opacity-40"><Pause size={14} /></button>}
+      {status === 'paused' && <button onClick={resumeQuestion} disabled={busy} title="Reprendre (publier)" className="p-1.5 rounded hover:bg-green-50 text-emerald-600 hover:text-emerald-800 transition-colors disabled:opacity-40"><Play size={14} /></button>}
       <a href={`/admin/forecast/questions/${questionId}/edit`} title="Éditer" className="p-1.5 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700 transition-colors"><Pencil size={14} /></a>
       <button onClick={deleteQuestion} disabled={busy} title="Supprimer" className="p-1.5 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors disabled:opacity-40"><Trash2 size={14} /></button>
     </div>

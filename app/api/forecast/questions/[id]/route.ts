@@ -15,6 +15,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     .or(`id.eq.${params.id},slug.eq.${params.id}`)
     .eq('forecast_ai_forecasts.is_current', true)
     .neq('status', 'draft')
+    .neq('status', 'paused')
     .maybeSingle()
 
   if (!question || error) return NextResponse.json({ error: 'Question introuvable' }, { status: 404 })

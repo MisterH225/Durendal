@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
       forecast_events   ( id, slug, title )
     `)
     .neq('status', 'draft')
+    .neq('status', 'paused')
     .order('featured', { ascending: false })
     .order('close_date', { ascending: true })
     .limit(limit)

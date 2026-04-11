@@ -6,10 +6,12 @@
  *   - forecast:ai-trigger    → toutes les 6h  — déclenche les estimations IA
  *   - forecast:close-check   → toutes les 1h  — ferme les questions dont la close_date est passée
  *   - forecast:news-signal   → toutes les 2h  — génère des signaux d'actualité par canal (IA)
+ *   - forecast:hot-topics    → toutes les 12h — événements + questions brouillon par canal (IA)
  */
 
 import { createWorkerSupabase } from './supabase'
 import { runNewsSignalJob } from './jobs/forecast/news-signal.job'
+import { runHotTopicsQuestionsJob } from './jobs/forecast/hot-topics-questions.job'
 
 type Task = {
   name: string
@@ -128,6 +130,12 @@ const TASKS: Task[] = [
     intervalMs:  2 * 60 * 60 * 1000,   // every 2 hours
     lastRanAt:   0,
     fn:          runNewsSignalJob,
+  },
+  {
+    name:        'forecast:hot-topics',
+    intervalMs:  12 * 60 * 60 * 1000,  // every 12 hours
+    lastRanAt:   0,
+    fn:          runHotTopicsQuestionsJob,
   },
 ]
 

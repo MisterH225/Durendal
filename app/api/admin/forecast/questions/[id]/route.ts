@@ -18,9 +18,14 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   return NextResponse.json({ question: data })
 }
 
+const QUESTION_STATUSES = new Set(['draft', 'open', 'paused', 'closed', 'resolved_yes', 'resolved_no', 'annulled'])
+
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   if (!await assertSuperadmin()) return NextResponse.json({ error: 'Accès refusé' }, { status: 403 })
   const body = await req.json()
+  if (body.status != null && !QUESTION_STATUSES.has(String(body.status))) {
+    return NextResponse.json({ error: 'Statut invalide' }, { status: 400 })
+  }
   const db = createAdminClient()
   const { data, error } = await db.from('forecast_questions').update({ ...body, updated_at: new Date().toISOString() }).eq('id', params.id).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

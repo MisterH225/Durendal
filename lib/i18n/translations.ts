@@ -22,6 +22,7 @@ const dict = {
 
     // Status
     'status.open':         'Ouverte',
+    'status.paused':       'En pause',
     'status.closed':       'Fermée',
     'status.resolved_yes': 'Résolu OUI',
     'status.resolved_no':  'Résolu NON',
@@ -174,6 +175,7 @@ const dict = {
 
     // Status
     'status.open':         'Open',
+    'status.paused':       'Paused',
     'status.closed':       'Closed',
     'status.resolved_yes': 'Resolved YES',
     'status.resolved_no':  'Resolved NO',

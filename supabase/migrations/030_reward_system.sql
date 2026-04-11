@@ -29,6 +29,28 @@ create table if not exists badge_definitions (
   created_at    timestamptz not null default now()
 );
 
+-- ─── 1b. tier_definitions ────────────────────────────────────
+
+create table if not exists tier_definitions (
+  id              uuid        primary key default gen_random_uuid(),
+  slug            text        unique not null,
+  name_fr         text        not null,
+  name_en         text        not null,
+  sort_order      int         not null default 0,
+  min_xp          int         not null default 0,
+  min_questions   int         not null default 0,
+  pro_days_reward int         not null default 0,
+  benefits_fr     text,
+  benefits_en     text,
+  color           text        not null default '#a3a3a3',
+  icon            text        not null default 'shield',
+  is_active       boolean     not null default true,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+create index if not exists idx_tier_definitions_order on tier_definitions(sort_order asc);
+
 -- ─── 2. user_badges ──────────────────────────────────────────
 
 create table if not exists user_badges (
@@ -197,6 +219,7 @@ create index if not exists idx_reward_notifications_unseen on reward_notificatio
 
 -- ─── 10. RLS ─────────────────────────────────────────────────
 
+do $$ begin alter table tier_definitions      enable row level security; exception when others then null; end $$;
 do $$ begin alter table badge_definitions     enable row level security; exception when others then null; end $$;
 do $$ begin alter table user_badges           enable row level security; exception when others then null; end $$;
 do $$ begin alter table user_reward_profiles  enable row level security; exception when others then null; end $$;
@@ -207,7 +230,12 @@ do $$ begin alter table feature_unlocks       enable row level security; excepti
 do $$ begin alter table leaderboard_snapshots enable row level security; exception when others then null; end $$;
 do $$ begin alter table reward_notifications  enable row level security; exception when others then null; end $$;
 
--- Public read on badge definitions
+-- Public read on tier + badge definitions
+do $$ begin
+  drop policy if exists "tier_definitions_public_read" on tier_definitions;
+  create policy "tier_definitions_public_read" on tier_definitions for select using (is_active = true);
+exception when others then null; end $$;
+
 do $$ begin
   drop policy if exists "badge_definitions_public_read" on badge_definitions;
   create policy "badge_definitions_public_read" on badge_definitions for select using (is_active = true);
@@ -259,7 +287,27 @@ do $$ begin
   create policy "reward_notifications_update_own" on reward_notifications for update using (user_id = auth.uid());
 exception when others then null; end $$;
 
--- ─── 11. Seed badge definitions ──────────────────────────────
+-- ─── 11a. Seed tier definitions ──────────────────────────────
+
+insert into tier_definitions (slug, name_fr, name_en, sort_order, min_xp, min_questions, pro_days_reward, benefits_fr, benefits_en, color, icon) values
+  ('bronze',   'Bronze',   'Bronze',   1, 0,    0,   0,  'Acces de base',                          'Basic access',                  '#cd7f32', 'shield'),
+  ('silver',   'Argent',   'Silver',   2, 200,  10,  0,  'Badge visible sur le profil',             'Visible badge on profile',      '#c0c0c0', 'shield'),
+  ('gold',     'Or',       'Gold',     3, 800,  30,  7,  '+7 jours Pro Veille Concurrentielle',     '+7 days Pro Competitive Watch', '#ffd700', 'crown'),
+  ('platinum', 'Platine',  'Platinum', 4, 2500, 75,  14, '+14 jours Pro Veille Concurrentielle',    '+14 days Pro Competitive Watch','#e5e4e2', 'gem'),
+  ('elite',    'Elite',    'Elite',    5, 8000, 150, 30, '+30 jours Pro Veille Concurrentielle',    '+30 days Pro Competitive Watch','#9b59b6', 'star')
+on conflict (slug) do update set
+  name_fr = excluded.name_fr,
+  name_en = excluded.name_en,
+  sort_order = excluded.sort_order,
+  min_xp = excluded.min_xp,
+  min_questions = excluded.min_questions,
+  pro_days_reward = excluded.pro_days_reward,
+  benefits_fr = excluded.benefits_fr,
+  benefits_en = excluded.benefits_en,
+  color = excluded.color,
+  icon = excluded.icon;
+
+-- ─── 11b. Seed badge definitions ─────────────────────────────
 
 insert into badge_definitions (slug, name_fr, name_en, description_fr, description_en, icon, category, tier, points_value, sort_order, unlock_rule) values
   -- Onboarding

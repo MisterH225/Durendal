@@ -108,12 +108,19 @@ async function checkBadgeEligibility(
         .single()
       if (!channel) return false
 
+      const { data: questionIds } = await supabase
+        .from('forecast_questions')
+        .select('id')
+        .eq('channel_id', channel.id)
+
+      if (!questionIds?.length) return false
+
       const { count } = await supabase
         .from('forecast_user_forecasts')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId)
         .eq('is_current', true)
-      // Approximation: count all forecasts. Full category tracking would join with questions.
+        .in('question_id', questionIds.map(q => q.id))
       return (count ?? 0) >= (rule.threshold as number)
     }
 
@@ -156,6 +163,28 @@ async function checkBadgeEligibility(
         .eq('user_id', userId)
         .eq('action', 'early_forecast')
       return (count ?? 0) >= (rule.threshold as number)
+    }
+
+    case 'most_improved': {
+      // Compare current avg brier with the avg from 30 days ago
+      const { data: recentScores } = await supabase
+        .from('forecast_brier_scores')
+        .select('brier_score, scored_at')
+        .eq('user_id', userId)
+        .order('scored_at', { ascending: false })
+
+      if (!recentScores || recentScores.length < 10) return false
+
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString()
+      const oldScores = recentScores.filter(s => s.scored_at < thirtyDaysAgo)
+      const newScores = recentScores.filter(s => s.scored_at >= thirtyDaysAgo)
+
+      if (oldScores.length < 5 || newScores.length < 5) return false
+
+      const oldAvg = oldScores.reduce((s, r) => s + r.brier_score, 0) / oldScores.length
+      const newAvg = newScores.reduce((s, r) => s + r.brier_score, 0) / newScores.length
+      // Improvement: Brier dropped by at least 0.10 (lower is better)
+      return (oldAvg - newAvg) >= 0.10
     }
 
     case 'profile_complete': {

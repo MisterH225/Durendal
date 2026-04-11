@@ -1,9 +1,27 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  BASE_POINTS, MULTIPLIERS, TIER_THRESHOLDS, TIER_ORDER,
+  BASE_POINTS, MULTIPLIERS, TIER_THRESHOLDS_FALLBACK, TIER_ORDER,
   xpToLevel,
-  type Tier, type PointAction,
+  type Tier, type PointAction, type TierDefinition,
 } from './types'
+
+async function loadTierThresholds(
+  supabase: SupabaseClient,
+): Promise<Record<string, { minXP: number; minQuestions: number; proDaysReward: number }>> {
+  const { data } = await supabase
+    .from('tier_definitions')
+    .select('slug, min_xp, min_questions, pro_days_reward')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+
+  if (!data?.length) return TIER_THRESHOLDS_FALLBACK
+
+  const map: Record<string, { minXP: number; minQuestions: number; proDaysReward: number }> = {}
+  for (const t of data) {
+    map[t.slug] = { minXP: t.min_xp, minQuestions: t.min_questions, proDaysReward: t.pro_days_reward }
+  }
+  return map
+}
 
 export async function ensureRewardProfile(supabase: SupabaseClient, userId: string) {
   const { data } = await supabase
@@ -114,6 +132,14 @@ export async function awardResolutionPoints(
     details: { brier_score: brierScore, is_early: opts.isEarly, is_contrarian: opts.isContrarian },
   })
 
+  if (opts.isEarly && isAccurate) {
+    await awardPoints(supabase, userId, 'early_forecast', {
+      referenceId: questionId,
+      referenceType: 'forecast_question',
+      details: { brier_score: brierScore },
+    })
+  }
+
   if (opts.isContrarian && isAccurate) {
     await awardPoints(supabase, userId, 'contrarian_win', {
       referenceId: questionId,
@@ -139,10 +165,12 @@ async function checkTierPromotion(
   const currentTier = profile.tier as Tier
   const currentIdx = TIER_ORDER.indexOf(currentTier)
 
-  // Check for promotion
+  const thresholds = await loadTierThresholds(supabase)
+
   for (let i = TIER_ORDER.length - 1; i > currentIdx; i--) {
     const candidate = TIER_ORDER[i]
-    const req = TIER_THRESHOLDS[candidate]
+    const req = thresholds[candidate] ?? TIER_THRESHOLDS_FALLBACK[candidate]
+    if (!req) continue
     if (totalXP >= req.minXP && questionsResolved >= req.minQuestions) {
       await supabase.from('user_reward_profiles').update({
         tier: candidate,
@@ -155,11 +183,26 @@ async function checkTierPromotion(
         tier: candidate,
       })
 
+      // Grant Pro days from tier config
+      if (req.proDaysReward > 0) {
+        const { grantProDays } = await import('./pro-grants')
+        await grantProDays(supabase, userId, req.proDaysReward, `Promotion au tier ${candidate}`, `tier_${candidate}`)
+      }
+
+      // Fetch tier name for notification
+      const { data: tierDef } = await supabase
+        .from('tier_definitions')
+        .select('name_fr')
+        .eq('slug', candidate)
+        .single()
+
+      const label = tierDef?.name_fr ?? (candidate.charAt(0).toUpperCase() + candidate.slice(1))
+
       await supabase.from('reward_notifications').insert({
         user_id: userId,
         type: 'tier_promoted',
-        title: `Promotion au rang ${candidate.charAt(0).toUpperCase() + candidate.slice(1)}`,
-        body: `Felicitations ! Vous etes maintenant ${candidate}.`,
+        title: `Promotion au rang ${label}`,
+        body: `Felicitations ! Vous etes maintenant ${label}.`,
         data: { old_tier: currentTier, new_tier: candidate },
       })
 

@@ -40,15 +40,19 @@ interface Props {
   }
   badges: any[]
   users: any[]
+  tierDefs: any[]
 }
 
-export default function RewardsAdminClient({ stats, badges, users }: Props) {
-  const [tab, setTab] = useState<'overview' | 'users' | 'badges' | 'grant'>('overview')
+export default function RewardsAdminClient({ stats, badges, users, tierDefs: initialTierDefs }: Props) {
+  const [tab, setTab] = useState<'overview' | 'users' | 'badges' | 'tiers' | 'grant'>('overview')
   const [grantUserId, setGrantUserId] = useState('')
   const [grantDays, setGrantDays] = useState(7)
   const [grantReason, setGrantReason] = useState('')
   const [grantLoading, setGrantLoading] = useState(false)
   const [grantMsg, setGrantMsg] = useState('')
+  const [tierDefs, setTierDefs] = useState(initialTierDefs)
+  const [tierSaving, setTierSaving] = useState<string | null>(null)
+  const [tierMsg, setTierMsg] = useState('')
 
   async function handleGrant() {
     if (!grantUserId || !grantReason) return
@@ -67,10 +71,36 @@ export default function RewardsAdminClient({ stats, badges, users }: Props) {
     }
   }
 
+  async function handleTierSave(tier: any) {
+    setTierSaving(tier.id)
+    setTierMsg('')
+    try {
+      const res = await fetch('/api/admin/rewards/tiers', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tier),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setTierMsg('Sauvegarde reussie')
+        setTimeout(() => setTierMsg(''), 2000)
+      } else {
+        setTierMsg(data.error ?? 'Erreur')
+      }
+    } finally {
+      setTierSaving(null)
+    }
+  }
+
+  function updateTierField(id: string, field: string, value: unknown) {
+    setTierDefs(prev => prev.map(t => t.id === id ? { ...t, [field]: value } : t))
+  }
+
   const tabs = [
     { key: 'overview', label: 'Vue d\'ensemble' },
     { key: 'users', label: 'Utilisateurs' },
     { key: 'badges', label: 'Badges' },
+    { key: 'tiers', label: 'Tiers / Ligues' },
     { key: 'grant', label: 'Attribution manuelle' },
   ] as const
 
@@ -193,6 +223,108 @@ export default function RewardsAdminClient({ stats, badges, users }: Props) {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Tiers tab */}
+      {tab === 'tiers' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-neutral-500">Configurez les seuils, avantages et jours Pro pour chaque tier.</p>
+            {tierMsg && <span className="text-sm text-green-600 font-medium">{tierMsg}</span>}
+          </div>
+
+          <div className="space-y-3">
+            {tierDefs.map(tier => (
+              <div key={tier.id} className="bg-white rounded-xl border border-neutral-200 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: tier.color }} />
+                    <h3 className="font-bold text-neutral-900">{tier.name_fr}</h3>
+                    <span className="text-xs text-neutral-400 font-mono">{tier.slug}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+                      <input
+                        type="checkbox"
+                        checked={tier.is_active}
+                        onChange={e => updateTierField(tier.id, 'is_active', e.target.checked)}
+                        className="rounded border-neutral-300"
+                      />
+                      Actif
+                    </label>
+                    <button
+                      onClick={() => handleTierSave(tier)}
+                      disabled={tierSaving === tier.id}
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {tierSaving === tier.id ? 'Sauvegarde...' : 'Sauvegarder'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="block text-[11px] text-neutral-500 mb-1 font-medium">XP minimum</label>
+                    <input
+                      type="number"
+                      value={tier.min_xp}
+                      onChange={e => updateTierField(tier.id, 'min_xp', Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm"
+                      min={0}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-neutral-500 mb-1 font-medium">Questions minimum</label>
+                    <input
+                      type="number"
+                      value={tier.min_questions}
+                      onChange={e => updateTierField(tier.id, 'min_questions', Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm"
+                      min={0}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-neutral-500 mb-1 font-medium">Jours Pro offerts</label>
+                    <input
+                      type="number"
+                      value={tier.pro_days_reward}
+                      onChange={e => updateTierField(tier.id, 'pro_days_reward', Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm"
+                      min={0}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-neutral-500 mb-1 font-medium">Nom (FR)</label>
+                    <input
+                      type="text"
+                      value={tier.name_fr}
+                      onChange={e => updateTierField(tier.id, 'name_fr', e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-neutral-500 mb-1 font-medium">Avantages (FR)</label>
+                  <input
+                    type="text"
+                    value={tier.benefits_fr ?? ''}
+                    onChange={e => updateTierField(tier.id, 'benefits_fr', e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm"
+                    placeholder="Description des avantages du tier..."
+                  />
+                </div>
+
+                {/* Summary */}
+                <div className="flex items-center gap-4 text-xs text-neutral-400 border-t border-neutral-100 pt-3">
+                  <span>Utilisateurs : <strong className="text-neutral-600">{stats.tierDistribution[tier.slug] ?? 0}</strong></span>
+                  <span>Seuil : <strong className="text-neutral-600">{tier.min_xp} XP + {tier.min_questions} questions</strong></span>
+                  {tier.pro_days_reward > 0 && <span>Recompense : <strong className="text-green-600">+{tier.pro_days_reward}j Pro</strong></span>}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

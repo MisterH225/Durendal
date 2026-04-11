@@ -1,23 +1,22 @@
+import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { Trophy, TrendingDown, CheckCircle, Users } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
-import { tr } from '@/lib/i18n/translations'
+import LeaderboardRewardsClient from './LeaderboardRewardsClient'
 
 export const dynamic = 'force-dynamic'
-
-function brierColor(score: number | null) {
-  if (score === null) return 'text-neutral-600'
-  if (score < 0.10) return 'text-emerald-400'
-  if (score < 0.20) return 'text-green-400'
-  if (score < 0.30) return 'text-amber-400'
-  return 'text-red-400'
-}
-
-const MEDAL: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' }
 
 export default async function LeaderboardPage() {
   const db = createAdminClient()
   const locale = getLocale()
+
+  let userId: string | null = null
+  try {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    userId = user?.id ?? null
+  } catch { /* non-auth */ }
+
+  // ── Left panel data ──────────────────────────────────────────────────────
 
   const { data: leaderboard } = await db
     .from('forecast_leaderboard')
@@ -25,138 +24,122 @@ export default async function LeaderboardPage() {
     .not('avg_brier_score', 'is', null)
     .gte('questions_scored', 1)
     .order('avg_brier_score', { ascending: true })
-    .limit(100)
+    .limit(50)
 
   const { count: totalUsers } = await db
     .from('forecast_leaderboard')
     .select('user_id', { count: 'exact', head: true })
     .not('avg_brier_score', 'is', null)
 
-  function brierLabel(score: number | null) {
-    if (score === null) return '—'
-    if (score < 0.10) return tr(locale, 'lb.excellent')
-    if (score < 0.20) return tr(locale, 'lb.good')
-    if (score < 0.30) return tr(locale, 'lb.average')
-    return tr(locale, 'lb.weak')
+  // Most active users (by XP)
+  const { data: mostActive } = await db
+    .from('user_reward_profiles')
+    .select('user_id, total_xp, tier, current_streak, forecasts_submitted')
+    .order('total_xp', { ascending: false })
+    .limit(10)
+
+  const activeUserIds = (mostActive ?? []).map(u => u.user_id)
+  const { data: activeProfiles } = activeUserIds.length
+    ? await db.from('profiles').select('id, full_name, avatar_url').in('id', activeUserIds)
+    : { data: [] }
+  const activeProfileMap = new Map((activeProfiles ?? []).map(p => [p.id, p]))
+
+  const enrichedActive = (mostActive ?? []).map(u => ({
+    ...u,
+    display_name: activeProfileMap.get(u.user_id)?.full_name ?? 'Anonyme',
+    avatar_url: activeProfileMap.get(u.user_id)?.avatar_url ?? null,
+  }))
+
+  // Recent badge unlocks (global)
+  const { data: recentBadgeUnlocks } = await db
+    .from('user_badges')
+    .select('user_id, earned_at, badge_definitions(name_fr, icon, tier, slug)')
+    .order('earned_at', { ascending: false })
+    .limit(8)
+
+  const badgeUserIds = [...new Set((recentBadgeUnlocks ?? []).map(b => b.user_id))]
+  const { data: badgeProfiles } = badgeUserIds.length
+    ? await db.from('profiles').select('id, full_name').in('id', badgeUserIds)
+    : { data: [] }
+  const badgeProfileMap = new Map((badgeProfiles ?? []).map(p => [p.id, p]))
+
+  const enrichedRecentBadges = (recentBadgeUnlocks ?? []).map(b => ({
+    ...b,
+    display_name: badgeProfileMap.get(b.user_id)?.full_name ?? 'Anonyme',
+  }))
+
+  // ── Right panel data (user-specific) ─────────────────────────────────────
+
+  let rewardProfile = null
+  let userBadges: any[] = []
+  let streaks: any[] = []
+  let activeUnlocks: any[] = []
+  let notifications: any[] = []
+  let recentPoints: any[] = []
+
+  if (userId) {
+    const [profileRes, badgesRes, streaksRes, unlocksRes, notifRes, pointsRes] = await Promise.all([
+      db.from('user_reward_profiles').select('*').eq('user_id', userId).maybeSingle(),
+      db.from('user_badges')
+        .select('*, badge_definitions(*)')
+        .eq('user_id', userId)
+        .order('earned_at', { ascending: false }),
+      db.from('streak_states').select('*').eq('user_id', userId),
+      db.from('feature_unlocks')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('is_active', true),
+      db.from('reward_notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('seen', false)
+        .order('created_at', { ascending: false })
+        .limit(10),
+      db.from('reward_points_ledger')
+        .select('action, final_points, created_at, details')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(20),
+    ])
+
+    rewardProfile = profileRes.data
+    userBadges = badgesRes.data ?? []
+    streaks = streaksRes.data ?? []
+    activeUnlocks = unlocksRes.data ?? []
+    notifications = notifRes.data ?? []
+    recentPoints = pointsRes.data ?? []
   }
 
+  // Badge definitions for the badge grid
+  const { data: badgeDefs } = await db
+    .from('badge_definitions')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+
+  // Tier definitions for the tier display
+  const { data: tierDefs } = await db
+    .from('tier_definitions')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+
   return (
-    <div className="max-w-3xl mx-auto px-4 py-10 space-y-8">
-
-      {/* Header */}
-      <div className="text-center space-y-2">
-        <div className="inline-flex items-center gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full">
-          <Trophy size={11} />
-          {tr(locale, 'lb.badge')}
-        </div>
-        <h1 className="text-3xl font-bold text-white">{tr(locale, 'lb.title')}</h1>
-        <p className="text-sm text-neutral-500">{tr(locale, 'lb.subtitle')}</p>
-      </div>
-
-      {/* Brier explanation */}
-      <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 px-5 py-4 text-xs text-neutral-500 space-y-1">
-        <div className="font-semibold text-neutral-400 mb-2 flex items-center gap-1.5">
-          <TrendingDown size={12} />
-          {tr(locale, 'lb.how_title')}
-        </div>
-        <p>
-          {tr(locale, 'lb.how_body')}{' '}
-          {locale === 'fr' ? 'Formule' : 'Formula'} :{' '}
-          <code className="bg-neutral-800 px-1 rounded text-neutral-300">{tr(locale, 'lb.formula')}</code>
-        </p>
-        <div className="flex gap-4 mt-2">
-          {([
-            ['< 0.10', 'lb.excellent', 'text-emerald-400'],
-            ['< 0.20', 'lb.good',      'text-green-400'],
-            ['< 0.30', 'lb.average',   'text-amber-400'],
-            ['≥ 0.30', 'lb.weak',      'text-red-400'],
-          ] as const).map(([range, key, color]) => (
-            <span key={key} className="flex items-center gap-1">
-              <span className={`font-mono text-[11px] ${color}`}>{range}</span>
-              <span className="text-neutral-600">{tr(locale, key)}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Stats banner */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-center">
-          <div className="text-2xl font-bold text-white">{totalUsers ?? 0}</div>
-          <div className="text-xs text-neutral-500 mt-0.5 flex items-center gap-1 justify-center">
-            <Users size={10} />{tr(locale, 'lb.stat_users')}
-          </div>
-        </div>
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-center">
-          <div className="text-2xl font-bold text-emerald-400">
-            {leaderboard?.[0]?.avg_brier_score?.toFixed(3) ?? '—'}
-          </div>
-          <div className="text-xs text-neutral-500 mt-0.5">{tr(locale, 'lb.stat_best')}</div>
-        </div>
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-center">
-          <div className="text-2xl font-bold text-blue-400">
-            {leaderboard?.length
-              ? Math.round(leaderboard.reduce((s, r) => s + (r.accuracy_pct ?? 0), 0) / leaderboard.length)
-              : 0}%
-          </div>
-          <div className="text-xs text-neutral-500 mt-0.5">{tr(locale, 'lb.stat_avg')}</div>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 overflow-hidden">
-        {!leaderboard?.length ? (
-          <div className="text-center py-16 text-neutral-600">
-            <Trophy size={32} className="mx-auto mb-3 opacity-20" />
-            <p className="text-sm">{tr(locale, 'lb.empty_title')}</p>
-            <p className="text-xs mt-1">{tr(locale, 'lb.empty_sub')}</p>
-          </div>
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-neutral-800 bg-neutral-900/60">
-                <th className="text-left px-4 py-3 text-xs font-semibold text-neutral-600 uppercase tracking-wider w-12">#</th>
-                <th className="text-left px-3 py-3 text-xs font-semibold text-neutral-600 uppercase tracking-wider">{tr(locale, 'lb.col_user')}</th>
-                <th className="text-right px-3 py-3 text-xs font-semibold text-neutral-600 uppercase tracking-wider">{tr(locale, 'lb.col_brier')}</th>
-                <th className="text-right px-3 py-3 text-xs font-semibold text-neutral-600 uppercase tracking-wider hidden sm:table-cell">{tr(locale, 'lb.col_accuracy')}</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-neutral-600 uppercase tracking-wider hidden sm:table-cell">{tr(locale, 'lb.col_questions')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-800/50">
-              {leaderboard.map((row, i) => {
-                const rank = row.rank ?? (i + 1)
-                const medal = MEDAL[rank]
-                const scoreColor = brierColor(row.avg_brier_score)
-                return (
-                  <tr key={row.user_id} className={`transition-colors hover:bg-neutral-800/30 ${rank <= 3 ? 'bg-neutral-900/60' : ''}`}>
-                    <td className="px-4 py-3.5">
-                      <span className="text-sm font-mono">{medal ?? <span className="text-neutral-600">{rank}</span>}</span>
-                    </td>
-                    <td className="px-3 py-3.5">
-                      <div className="text-sm font-semibold text-neutral-200">{row.display_name}</div>
-                      <div className={`text-[10px] mt-0.5 ${scoreColor}`}>{brierLabel(row.avg_brier_score)}</div>
-                    </td>
-                    <td className="px-3 py-3.5 text-right">
-                      <span className={`font-mono text-sm font-bold ${scoreColor}`}>{row.avg_brier_score?.toFixed(3) ?? '—'}</span>
-                    </td>
-                    <td className="px-3 py-3.5 text-right hidden sm:table-cell">
-                      <div className="flex items-center gap-1 justify-end">
-                        <CheckCircle size={10} className="text-emerald-600" />
-                        <span className="text-sm text-neutral-300 font-mono">{row.accuracy_pct ?? 0}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5 text-right hidden sm:table-cell">
-                      <span className="text-sm text-neutral-500 font-mono">{row.questions_scored}</span>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <p className="text-center text-xs text-neutral-700">{tr(locale, 'lb.footer')}</p>
-    </div>
+    <LeaderboardRewardsClient
+      locale={locale}
+      isAuthenticated={!!userId}
+      leaderboard={leaderboard ?? []}
+      totalUsers={totalUsers ?? 0}
+      mostActive={enrichedActive}
+      recentBadgeUnlocks={enrichedRecentBadges}
+      rewardProfile={rewardProfile}
+      userBadges={userBadges}
+      badgeDefs={badgeDefs ?? []}
+      streaks={streaks}
+      activeUnlocks={activeUnlocks}
+      notifications={notifications}
+      recentPoints={recentPoints}
+      tierDefs={tierDefs ?? []}
+    />
   )
 }

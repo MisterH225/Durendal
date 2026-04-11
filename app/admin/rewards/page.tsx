@@ -7,13 +7,14 @@ export default async function AdminRewardsPage() {
   const db = createAdminClient()
 
   // Overview stats
-  const [usersRes, badgesRes, unlocksRes, xpRes, tierRes, badgeDefsRes] = await Promise.all([
+  const [usersRes, badgesRes, unlocksRes, xpRes, tierRes, badgeDefsRes, tierDefsRes] = await Promise.all([
     db.from('user_reward_profiles').select('id', { count: 'exact', head: true }),
     db.from('user_badges').select('id', { count: 'exact', head: true }),
     db.from('feature_unlocks').select('id', { count: 'exact', head: true }).eq('is_active', true),
     db.from('user_reward_profiles').select('total_xp'),
     db.from('user_reward_profiles').select('tier'),
     db.from('badge_definitions').select('*').order('sort_order', { ascending: true }),
+    db.from('tier_definitions').select('*').order('sort_order', { ascending: true }),
   ])
 
   const xpSum = (xpRes.data ?? []).reduce((s, r) => s + (r.total_xp ?? 0), 0)
@@ -53,6 +54,7 @@ export default async function AdminRewardsPage() {
       }}
       badges={badgeDefsRes.data ?? []}
       users={enrichedUsers}
+      tierDefs={tierDefsRes.data ?? []}
     />
   )
 }

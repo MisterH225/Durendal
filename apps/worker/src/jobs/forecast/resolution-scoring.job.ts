@@ -102,9 +102,18 @@ export async function runResolutionScoringJob(payload: ResolutionPayload): Promi
   await publishResolutionSignal(supabase, question, outcome, forecasts.length)
 
   // 7. Queue reward processing for each scored user
-  const questionCreatedAt = await getQuestionCreatedAt(supabase, questionId)
+  const questionMeta = await getQuestionMeta(supabase, questionId)
+  const blendedProb = questionMeta?.blended_probability ?? 0.5
   for (const row of brierRows) {
     const forecastMeta = forecasts.find(f => f.user_id === row.user_id)
+    const userProb = forecastMeta?.probability ?? 0.5
+    // Contrarian: user bet strongly against consensus (>0.7) and was right
+    const consensusSaysYes = blendedProb >= 0.7
+    const consensusSaysNo = blendedProb <= 0.3
+    const isContrarian = row.brier_score < 0.25 && (
+      (consensusSaysYes && userProb < 0.3) ||
+      (consensusSaysNo && userProb > 0.7)
+    )
     await supabase.from('forecast_event_queue').insert({
       event_type: FORECAST_TOPICS.REWARD_PROCESS,
       correlation_id: questionId,
@@ -119,8 +128,8 @@ export async function runResolutionScoringJob(payload: ResolutionPayload): Promi
           questionId,
           userId: row.user_id,
           brierScore: row.brier_score,
-          isEarly: isEarlyForecast(forecastMeta, questionCreatedAt),
-          isContrarian: false,
+          isEarly: isEarlyForecast(forecastMeta, questionMeta?.created_at ?? null),
+          isContrarian,
           participantCount: forecasts.length,
         },
       },
@@ -150,16 +159,16 @@ async function publishResolutionSignal(
   })
 }
 
-async function getQuestionCreatedAt(
+async function getQuestionMeta(
   supabase: ReturnType<typeof createWorkerSupabase>,
   questionId: string,
-): Promise<string | null> {
+): Promise<{ created_at: string; blended_probability: number | null } | null> {
   const { data } = await supabase
     .from('forecast_questions')
-    .select('created_at')
+    .select('created_at, blended_probability')
     .eq('id', questionId)
     .single()
-  return data?.created_at ?? null
+  return data ?? null
 }
 
 function isEarlyForecast(
@@ -167,7 +176,6 @@ function isEarlyForecast(
   questionCreatedAt: string | null,
 ): boolean {
   if (!forecast || !questionCreatedAt) return false
-  // First revision only counts as early
   return forecast.revision === 1
 }
 

@@ -112,28 +112,45 @@ export const MULTIPLIERS = {
   HIGH_PARTICIPATION_Q: 1.3, // question with 10+ forecasters
 }
 
-// ─── Tier thresholds ────────────────────────────────────────────────────────
+// ─── Tier thresholds (fallback — DB is authoritative) ────────────────────────
 
-export const TIER_THRESHOLDS: Record<Tier, { minXP: number; minQuestions: number }> = {
-  bronze:   { minXP: 0,     minQuestions: 0 },
-  silver:   { minXP: 200,   minQuestions: 10 },
-  gold:     { minXP: 800,   minQuestions: 30 },
-  platinum: { minXP: 2500,  minQuestions: 75 },
-  elite:    { minXP: 8000,  minQuestions: 150 },
+export const TIER_THRESHOLDS_FALLBACK: Record<Tier, { minXP: number; minQuestions: number; proDaysReward: number }> = {
+  bronze:   { minXP: 0,     minQuestions: 0,   proDaysReward: 0 },
+  silver:   { minXP: 200,   minQuestions: 10,  proDaysReward: 0 },
+  gold:     { minXP: 800,   minQuestions: 30,  proDaysReward: 7 },
+  platinum: { minXP: 2500,  minQuestions: 75,  proDaysReward: 14 },
+  elite:    { minXP: 8000,  minQuestions: 150, proDaysReward: 30 },
 }
 
-// ─── Pro reward thresholds ──────────────────────────────────────────────────
+// ─── Pro reward thresholds (leaderboard / streak — not tier-related) ─────────
 
 export const PRO_REWARD_RULES = {
   MONTHLY_TOP_10: { days: 7 },
   MONTHLY_TOP_3: { days: 14 },
   MONTHLY_CHAMPION: { days: 30 },
   QUARTERLY_TOP_10: { days: 30 },
-  TIER_GOLD: { days: 7 },
-  TIER_PLATINUM: { days: 14 },
-  TIER_ELITE: { days: 30 },
   STREAK_30: { days: 7 },
   STREAK_90: { days: 30 },
+}
+
+// ─── Tier definition row type ───────────────────────────────────────────────
+
+export interface TierDefinition {
+  id: string
+  slug: string
+  name_fr: string
+  name_en: string
+  sort_order: number
+  min_xp: number
+  min_questions: number
+  pro_days_reward: number
+  benefits_fr: string | null
+  benefits_en: string | null
+  color: string
+  icon: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
 }
 
 // ─── Row types ──────────────────────────────────────────────────────────────

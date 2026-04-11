@@ -118,13 +118,18 @@ export async function grantTierReward(
   userId: string,
   tier: string,
 ) {
-  let days = 0
-  if (tier === 'gold') days = PRO_REWARD_RULES.TIER_GOLD.days
-  else if (tier === 'platinum') days = PRO_REWARD_RULES.TIER_PLATINUM.days
-  else if (tier === 'elite') days = PRO_REWARD_RULES.TIER_ELITE.days
+  // Load pro_days_reward from DB
+  const { data: tierDef } = await supabase
+    .from('tier_definitions')
+    .select('pro_days_reward, name_fr')
+    .eq('slug', tier)
+    .eq('is_active', true)
+    .single()
 
+  const days = tierDef?.pro_days_reward ?? 0
   if (days > 0) {
-    await grantProDays(supabase, userId, days, `Promotion au tier ${tier}`, `tier_${tier}`)
+    const label = tierDef?.name_fr ?? tier
+    await grantProDays(supabase, userId, days, `Promotion au tier ${label}`, `tier_${tier}`)
   }
 }
 

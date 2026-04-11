@@ -6,7 +6,7 @@
  *   - forecast:ai-trigger    → toutes les 6h  — déclenche les estimations IA
  *   - forecast:close-check   → toutes les 1h  — ferme les questions dont la close_date est passée
  *   - forecast:news-signal   → toutes les 2h  — génère des signaux d'actualité par canal (IA)
- *   - forecast:question-generator → toutes les 6h — événements + questions brouillon (IA)
+ *   - forecast:question-generator → toutes les 6h — événements + questions ouvertes (IA)
  */
 
 import { createWorkerSupabase } from './supabase'

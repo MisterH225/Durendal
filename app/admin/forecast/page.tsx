@@ -49,20 +49,27 @@ export default async function ForecastAdminPage({ searchParams }: { searchParams
   if (sourceFilter === 'ia') questionsQuery = questionsQuery.is('created_by', null)
   if (sourceFilter === 'admin') questionsQuery = questionsQuery.not('created_by', 'is', null)
 
-  const [{ data: questions }, { data: channels }, { data: events }, { data: recentSignals }] = await Promise.all([
+  const [
+    { data: questions, error: questionsError },
+    { data: channels, error: channelsError },
+    { data: events, error: eventsError },
+    { data: recentSignals, error: signalsError },
+  ] = await Promise.all([
     questionsQuery,
     db.from('forecast_channels').select('id, slug, name').eq('is_active', true).order('sort_order'),
     db.from('forecast_events').select('id, slug, title, channel_id, status').order('created_at', { ascending: false }).limit(50),
     db.from('forecast_signal_feed').select('id, signal_type, title, severity, created_at').order('created_at', { ascending: false }).limit(5),
   ])
 
+  const qList = questions ?? []
   const stats = {
-    total: questions?.length ?? 0,
-    open: questions?.filter(q => q.status === 'open').length ?? 0,
-    paused: questions?.filter(q => q.status === 'paused').length ?? 0,
-    closed: questions?.filter(q => q.status === 'closed').length ?? 0,
-    draft: questions?.filter(q => q.status === 'draft').length ?? 0,
+    total: qList.length,
+    open: qList.filter(q => q.status === 'open').length,
+    paused: qList.filter(q => q.status === 'paused').length,
+    closed: qList.filter(q => q.status === 'closed').length,
+    draft: qList.filter(q => q.status === 'draft').length,
   }
+  const hasServiceRole = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
   const signalCount = recentSignals?.length ?? 0
   const SIGNAL_TYPE_META: Record<string, { label: string; color: string }> = {
     news:              { label: 'Actualité', color: 'bg-violet-100 text-violet-700' },
@@ -93,6 +100,46 @@ export default async function ForecastAdminPage({ searchParams }: { searchParams
         </div>
         <Link href="/admin/forecast/questions/new" className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors font-medium"><Plus size={14} />Nouvelle question</Link>
       </div>
+
+      {!hasServiceRole && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950 space-y-1">
+          <p className="font-semibold">Clé service Supabase absente (Next.js)</p>
+          <p>
+            Sans <code className="bg-amber-100 px-1 rounded">SUPABASE_SERVICE_ROLE_KEY</code>, ce serveur utilise la clé anon : le RLS peut masquer les brouillons, les pauses et d’autres lignes — les compteurs et listes peuvent rester vides alors que des données existent.
+          </p>
+        </div>
+      )}
+
+      {(questionsError || eventsError || channelsError || signalsError) && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-900 space-y-1">
+          <p className="font-semibold">Erreur lecture Supabase</p>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {questionsError && <li>Questions : {questionsError.message}</li>}
+            {eventsError && <li>Événements : {eventsError.message}</li>}
+            {channelsError && <li>Canaux : {channelsError.message}</li>}
+            {signalsError && <li>Signaux : {signalsError.message}</li>}
+          </ul>
+        </div>
+      )}
+
+      {(qList.length === 0 && !questionsError && hasServiceRole && (channels?.length ?? 0) === 0) && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-950 space-y-1">
+          <p className="font-semibold">Aucun canal actif en base</p>
+          <p>
+            Appliquez la migration forecast (016) sur Supabase ou insérez des lignes dans <code className="bg-blue-100 px-1 rounded">forecast_channels</code>. Sans canaux, le générateur de questions s’arrête tout de suite.
+          </p>
+        </div>
+      )}
+
+      {(qList.length === 0 && !questionsError && hasServiceRole && (channels?.length ?? 0) > 0) && (
+        <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-800 space-y-1">
+          <p className="font-semibold">Base vide mais canaux présents</p>
+          <p>
+            Vérifiez que le processus <strong>forecast-worker</strong> tourne (PM2) avec <code className="bg-neutral-200 px-1 rounded">GEMINI_API_KEY</code> et la clé service, ou déclenchez une fois le cron HTTP{' '}
+            <code className="bg-neutral-200 px-1 rounded">GET /api/cron/forecast-questions?secret=…</code> (même secret que <code className="bg-neutral-200 px-1 rounded">CRON_SECRET</code> si défini).
+          </p>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-neutral-200 p-5 space-y-4">
         <div className="flex items-center justify-between">
@@ -155,7 +202,7 @@ export default async function ForecastAdminPage({ searchParams }: { searchParams
 
       <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden">
         <div className="px-5 py-3 border-b border-neutral-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-sm font-semibold text-neutral-800">Questions ({questions?.length ?? 0} affichées)</span>
+          <span className="text-sm font-semibold text-neutral-800">Questions ({qList.length} affichées)</span>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] font-semibold text-neutral-400 uppercase">Statut</span>
             {chip('Tous', filterHref(base, { status: 'all', source: sourceFilter === 'all' ? undefined : sourceFilter }), statusFilter === 'all')}
@@ -184,8 +231,8 @@ export default async function ForecastAdminPage({ searchParams }: { searchParams
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-50">
-              {!questions?.length && <tr><td colSpan={9} className="text-center text-sm text-neutral-400 py-12">Aucune question.</td></tr>}
-              {questions?.map(q => {
+              {!qList.length && <tr><td colSpan={9} className="text-center text-sm text-neutral-400 py-12">Aucune question.</td></tr>}
+              {qList.map(q => {
                 const meta = STATUS_META[q.status] ?? STATUS_META.draft
                 const channel = (q as { forecast_channels?: { name?: string } }).forecast_channels
                 const createdBy = (q as { created_by?: string | null }).created_by

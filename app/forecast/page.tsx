@@ -38,9 +38,11 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
   const db = createAdminClient()
   const locale = getLocale()
 
-  // Detect user region (IP-based or saved profile preference)
-  const detectedRegion = detectRegionFromHeaders()
-  let userRegion: RegionCode = detectedRegion
+  let userRegion: RegionCode = 'global'
+  try {
+    userRegion = detectRegionFromHeaders()
+  } catch (e) { console.error('[forecast] detectRegion failed:', e) }
+
   try {
     const sbUser = createClient()
     const { data: { user } } = await sbUser.auth.getUser()
@@ -52,38 +54,57 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
     }
   } catch { /* not logged in — use detected */ }
 
-  // Load available regions for the selector
-  const { data: regionWeights } = await db
-    .from('forecast_region_weights')
-    .select('region_code, label_fr, label_en')
-    .eq('is_active', true)
-    .order('sort_order')
-  const regionOptions = (regionWeights ?? []).map(r => ({
-    code: r.region_code,
-    label: locale === 'fr' ? r.label_fr : r.label_en,
-  }))
+  let regionOptions: { code: string; label: string }[] = []
+  try {
+    const { data: regionWeights } = await db
+      .from('forecast_region_weights')
+      .select('region_code, label_fr, label_en')
+      .eq('is_active', true)
+      .order('sort_order')
+    regionOptions = (regionWeights ?? []).map(r => ({
+      code: r.region_code,
+      label: locale === 'fr' ? r.label_fr : r.label_en,
+    }))
+  } catch (e) { console.error('[forecast] regionWeights failed:', e) }
 
-  const [{ data: channels }, channelResult, signalsResult] = await Promise.all([
-    db.from('forecast_channels').select('id, slug, name, name_fr, name_en').eq('is_active', true).order('sort_order'),
-    searchParams.channel
-      ? db.from('forecast_channels').select('id').eq('slug', searchParams.channel).single()
-      : Promise.resolve({ data: null }),
-    db.from('forecast_signal_feed')
-      .select('id, signal_type, title, summary, severity, data, region, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
-      .gte('created_at', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString())
-      .order('created_at', { ascending: false })
-      .limit(15),
-  ])
+  let channels: any[] = []
+  let channelId: string | null = null
+  let liveSignals: any[] = []
 
-  const channelId = (channelResult as any)?.data?.id ?? null
-  let questionQuery = db.from('forecast_questions')
-    .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, image_url, question_type, region, forecast_channels(slug, name, name_fr, name_en)')
-    .eq('status', 'open').order('close_date', { ascending: true }).limit(30)
-  if (channelId) questionQuery = questionQuery.eq('channel_id', channelId)
+  try {
+    const [chRes, channelResult, signalsResult] = await Promise.all([
+      db.from('forecast_channels').select('id, slug, name, name_fr, name_en').eq('is_active', true).order('sort_order'),
+      searchParams.channel
+        ? db.from('forecast_channels').select('id').eq('slug', searchParams.channel).single()
+        : Promise.resolve({ data: null }),
+      db.from('forecast_signal_feed')
+        .select('id, signal_type, title, summary, severity, data, region, created_at, forecast_questions(id, slug, title, blended_probability), forecast_channels(id, slug, name, name_fr, name_en)')
+        .gte('created_at', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString())
+        .order('created_at', { ascending: false })
+        .limit(15),
+    ])
+    channels = chRes.data ?? []
+    channelId = (channelResult as any)?.data?.id ?? null
+    const rawSignals = signalsResult.data ?? []
+    liveSignals = [...rawSignals].sort((a, b) => {
+      const aMatch = (a as any).region === userRegion ? 1 : 0
+      const bMatch = (b as any).region === userRegion ? 1 : 0
+      if (aMatch !== bMatch) return bMatch - aMatch
+      return 0
+    })
+  } catch (e) { console.error('[forecast] channels/signals query failed:', e) }
 
-  const { data: questions } = await questionQuery
-  const qList = questions ?? []
-  const qIds = qList.map(q => q.id)
+  let qList: any[] = []
+  try {
+    let questionQuery = db.from('forecast_questions')
+      .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, image_url, question_type, region, forecast_channels(slug, name, name_fr, name_en)')
+      .eq('status', 'open').order('close_date', { ascending: true }).limit(30)
+    if (channelId) questionQuery = questionQuery.eq('channel_id', channelId)
+    const { data: questions } = await questionQuery
+    qList = questions ?? []
+  } catch (e) { console.error('[forecast] questions query failed:', e) }
+
+  const qIds = qList.map((q: any) => q.id)
 
   type AiCard = { aiPct: number | null; summary: string | null }
   const aiByQuestion = new Map<string, AiCard>()
@@ -94,39 +115,32 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
   const outcomesByQuestion = new Map<string, OutcomeRow[]>()
 
   if (qIds.length) {
-    const [aiRes, histRes, outcomesRes] = await Promise.all([
-      db.from('forecast_ai_forecasts').select('question_id, probability, reasoning').eq('is_current', true).in('question_id', qIds),
-      db.from('forecast_probability_history').select('question_id, snapshot_at, blended_probability, crowd_probability, ai_probability').in('question_id', qIds).order('snapshot_at', { ascending: true }).limit(1500),
-      db.from('forecast_question_outcomes').select('id, question_id, label, sort_order, color, ai_probability, blended_probability').in('question_id', qIds).order('sort_order'),
-    ])
-    for (const row of aiRes.data ?? []) {
-      const reasoning = row.reasoning as Record<string, unknown> | null
-      const summary = typeof reasoning?.summary === 'string' ? (reasoning.summary as string) : null
-      aiByQuestion.set(row.question_id, {
-        aiPct: row.probability != null ? Math.round(Number(row.probability) * 100) : null,
-        summary,
-      })
-    }
-    for (const row of histRes.data ?? []) {
-      const arr = histByQuestion.get(row.question_id) ?? []
-      arr.push(row as HistPoint)
-      histByQuestion.set(row.question_id, arr)
-    }
-    for (const row of (outcomesRes.data ?? []) as OutcomeRow[]) {
-      const arr = outcomesByQuestion.get(row.question_id) ?? []
-      arr.push(row)
-      outcomesByQuestion.set(row.question_id, arr)
-    }
+    try {
+      const [aiRes, histRes, outcomesRes] = await Promise.all([
+        db.from('forecast_ai_forecasts').select('question_id, probability, reasoning').eq('is_current', true).in('question_id', qIds),
+        db.from('forecast_probability_history').select('question_id, snapshot_at, blended_probability, crowd_probability, ai_probability').in('question_id', qIds).order('snapshot_at', { ascending: true }).limit(1500),
+        db.from('forecast_question_outcomes').select('id, question_id, label, sort_order, color, ai_probability, blended_probability').in('question_id', qIds).order('sort_order'),
+      ])
+      for (const row of aiRes.data ?? []) {
+        const reasoning = row.reasoning as Record<string, unknown> | null
+        const summary = typeof reasoning?.summary === 'string' ? (reasoning.summary as string) : null
+        aiByQuestion.set(row.question_id, {
+          aiPct: row.probability != null ? Math.round(Number(row.probability) * 100) : null,
+          summary,
+        })
+      }
+      for (const row of histRes.data ?? []) {
+        const arr = histByQuestion.get(row.question_id) ?? []
+        arr.push(row as HistPoint)
+        histByQuestion.set(row.question_id, arr)
+      }
+      for (const row of (outcomesRes.data ?? []) as OutcomeRow[]) {
+        const arr = outcomesByQuestion.get(row.question_id) ?? []
+        arr.push(row)
+        outcomesByQuestion.set(row.question_id, arr)
+      }
+    } catch (e) { console.error('[forecast] enrichment queries failed:', e) }
   }
-
-  // Sort signals: user's region first, then by date
-  const rawSignals = signalsResult.data ?? []
-  const liveSignals = [...rawSignals].sort((a, b) => {
-    const aMatch = (a as any).region === userRegion ? 1 : 0
-    const bMatch = (b as any).region === userRegion ? 1 : 0
-    if (aMatch !== bMatch) return bMatch - aMatch
-    return 0 // preserve original date order otherwise
-  })
 
   const trendingQ = [...qList].sort((a, b) => {
     const aScore = (a.forecast_count ?? 0) * 10 + (a.blended_probability != null ? Math.abs(a.blended_probability - 0.5) * 100 : 0)

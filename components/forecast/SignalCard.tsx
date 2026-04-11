@@ -151,7 +151,6 @@ export function SignalCard({ signal: s, locale, compact = false, bookmarkedIds }
               href={sourceUrl}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
               className="flex items-center gap-1 text-[10px] font-medium text-blue-400 hover:text-blue-300 transition-colors"
             >
               <ExternalLink size={10} />

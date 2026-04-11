@@ -193,6 +193,7 @@ export function EditQuestionForm({ question, channels, events }: Props) {
             <select value={form.status} onChange={e => set('status', e.target.value)} className="border border-neutral-200 rounded px-2 py-1 text-xs text-neutral-800" disabled={isResolved}>
               <option value="draft">Brouillon</option>
               <option value="open">Ouvert</option>
+              <option value="paused">En pause</option>
               <option value="closed">Fermé</option>
               {isResolved && <option value={question.status}>{question.status}</option>}
             </select>

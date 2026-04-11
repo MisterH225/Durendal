@@ -26,8 +26,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (body.status != null && !QUESTION_STATUSES.has(String(body.status))) {
     return NextResponse.json({ error: 'Statut invalide' }, { status: 400 })
   }
+  const { created_by: _ignoreCreatedBy, id: _ignoreId, ...patch } = body
   const db = createAdminClient()
-  const { data, error } = await db.from('forecast_questions').update({ ...body, updated_at: new Date().toISOString() }).eq('id', params.id).select().single()
+  const { data, error } = await db.from('forecast_questions').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', params.id).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ question: data })
 }

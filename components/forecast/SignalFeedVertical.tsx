@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { ExternalLink, Newspaper, TrendingUp, CheckCircle2, Zap } from 'lucide-react'
 
 interface SignalItem {
@@ -52,7 +53,69 @@ function channelLabel(ch: SignalItem['forecast_channels'], locale: string): stri
   return ch.name
 }
 
+function SignalCard({ s, locale }: { s: SignalItem; locale: string }) {
+  const ch        = s.forecast_channels
+  const chColor   = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400'
+  const sourceUrl = s.data?.source_url as string | undefined
+  const imageUrl  = s.data?.image_url  as string | undefined
+
+  return (
+    <a
+      href={`/forecast/signals/${s.id}`}
+      className="block rounded-xl border border-neutral-800/60 bg-neutral-900/40 hover:border-neutral-700 hover:bg-neutral-900/70 transition-all overflow-hidden group flex-shrink-0"
+    >
+      {imageUrl && (
+        <div className="relative w-full h-20 bg-neutral-800 overflow-hidden">
+          <img src={imageUrl} alt="" className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" loading="lazy" />
+          <div className="absolute inset-0 bg-gradient-to-t from-neutral-900 via-neutral-900/40 to-transparent" />
+        </div>
+      )}
+      <div className="p-3 space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <SignalIcon type={s.signal_type} />
+          {ch && (
+            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${chColor}`}>
+              {channelLabel(ch, locale)}
+            </span>
+          )}
+          <span className="text-[9px] text-neutral-600 ml-auto">{timeAgo(s.created_at, locale)}</span>
+        </div>
+        <h4 className="text-[11px] font-semibold text-neutral-200 leading-snug line-clamp-2">{s.title}</h4>
+        {s.summary && <p className="text-[10px] text-neutral-500 leading-relaxed line-clamp-2">{s.summary}</p>}
+        {sourceUrl && (
+          <span className="flex items-center gap-1 text-[9px] font-medium text-blue-400/70 pt-0.5">
+            <ExternalLink size={8} />
+            {locale === 'fr' ? 'Lire' : 'Read'}
+          </span>
+        )}
+      </div>
+    </a>
+  )
+}
+
 export function SignalFeedVertical({ signals, locale }: { signals: SignalItem[]; locale: string }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [paused, setPaused] = useState(false)
+  const animRef = useRef<number | null>(null)
+  const speedRef = useRef(0.4)
+
+  const step = useCallback(() => {
+    const el = scrollRef.current
+    if (el && !paused) {
+      el.scrollTop += speedRef.current
+      const halfHeight = el.scrollHeight / 2
+      if (el.scrollTop >= halfHeight) {
+        el.scrollTop -= halfHeight
+      }
+    }
+    animRef.current = requestAnimationFrame(step)
+  }, [paused])
+
+  useEffect(() => {
+    animRef.current = requestAnimationFrame(step)
+    return () => { if (animRef.current) cancelAnimationFrame(animRef.current) }
+  }, [step])
+
   if (!signals.length) {
     return (
       <div className="text-center text-neutral-600 text-xs py-8">
@@ -61,61 +124,27 @@ export function SignalFeedVertical({ signals, locale }: { signals: SignalItem[];
     )
   }
 
+  const items = [...signals, ...signals]
+
   return (
-    <div className="space-y-2.5">
-      {signals.map(s => {
-        const ch        = s.forecast_channels
-        const chColor   = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400'
-        const sourceUrl = s.data?.source_url as string | undefined
-        const imageUrl  = s.data?.image_url  as string | undefined
+    <div
+      className="relative"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      {/* Fade top/bottom */}
+      <div className="pointer-events-none absolute left-0 right-0 top-0 h-6 z-10 bg-gradient-to-b from-neutral-950 to-transparent" />
+      <div className="pointer-events-none absolute left-0 right-0 bottom-0 h-6 z-10 bg-gradient-to-t from-neutral-950 to-transparent" />
 
-        return (
-          <a
-            key={s.id}
-            href={`/forecast/signals/${s.id}`}
-            className="block rounded-xl border border-neutral-800/60 bg-neutral-900/40 hover:border-neutral-700 hover:bg-neutral-900/70 transition-all overflow-hidden group"
-          >
-            {imageUrl && (
-              <div className="relative w-full h-20 bg-neutral-800 overflow-hidden">
-                <img
-                  src={imageUrl}
-                  alt=""
-                  className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity"
-                  loading="lazy"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-neutral-900 via-neutral-900/40 to-transparent" />
-              </div>
-            )}
-
-            <div className="p-3 space-y-1.5">
-              <div className="flex items-center gap-1.5">
-                <SignalIcon type={s.signal_type} />
-                {ch && (
-                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${chColor}`}>
-                    {channelLabel(ch, locale)}
-                  </span>
-                )}
-                <span className="text-[9px] text-neutral-600 ml-auto">{timeAgo(s.created_at, locale)}</span>
-              </div>
-
-              <h4 className="text-[11px] font-semibold text-neutral-200 leading-snug line-clamp-2">
-                {s.title}
-              </h4>
-
-              {s.summary && (
-                <p className="text-[10px] text-neutral-500 leading-relaxed line-clamp-2">{s.summary}</p>
-              )}
-
-              {sourceUrl && (
-                <span className="flex items-center gap-1 text-[9px] font-medium text-blue-400/70 pt-0.5">
-                  <ExternalLink size={8} />
-                  {locale === 'fr' ? 'Lire' : 'Read'}
-                </span>
-              )}
-            </div>
-          </a>
-        )
-      })}
+      <div
+        ref={scrollRef}
+        className="flex flex-col gap-2.5 overflow-y-hidden max-h-[calc(100vh-12rem)]"
+        style={{ scrollbarWidth: 'none' }}
+      >
+        {items.map((s, i) => (
+          <SignalCard key={`${s.id}-${i}`} s={s} locale={locale} />
+        ))}
+      </div>
     </div>
   )
 }

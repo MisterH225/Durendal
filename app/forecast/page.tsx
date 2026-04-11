@@ -1,9 +1,11 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
+import { OutcomeBars } from '@/components/forecast/OutcomeBars'
 import { SignalFeedVertical } from '@/components/forecast/SignalFeedVertical'
 import { TrendingCard } from '@/components/forecast/TrendingCard'
 import { QuickVoteSlider } from '@/components/forecast/QuickVoteSlider'
+import { QuickVoteMulti } from '@/components/forecast/QuickVoteMulti'
 import { Calendar, Users, TrendingUp, Radio, ChevronRight } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
 import { tr } from '@/lib/i18n/translations'
@@ -47,7 +49,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
 
   const channelId = (channelResult as any)?.data?.id ?? null
   let questionQuery = db.from('forecast_questions')
-    .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, image_url, forecast_channels(slug, name, name_fr, name_en)')
+    .select('id, slug, title, description, close_date, forecast_count, blended_probability, crowd_probability, ai_probability, channel_id, image_url, question_type, forecast_channels(slug, name, name_fr, name_en)')
     .eq('status', 'open').order('close_date', { ascending: true }).limit(30)
   if (channelId) questionQuery = questionQuery.eq('channel_id', channelId)
 
@@ -60,10 +62,14 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
   type HistPoint = { snapshot_at: string; blended_probability: number | null; crowd_probability: number | null; ai_probability: number | null }
   const histByQuestion = new Map<string, HistPoint[]>()
 
+  type OutcomeRow = { id: string; question_id: string; label: string; sort_order: number; color: string | null; ai_probability: number | null; blended_probability: number | null }
+  const outcomesByQuestion = new Map<string, OutcomeRow[]>()
+
   if (qIds.length) {
-    const [aiRes, histRes] = await Promise.all([
+    const [aiRes, histRes, outcomesRes] = await Promise.all([
       db.from('forecast_ai_forecasts').select('question_id, probability, reasoning').eq('is_current', true).in('question_id', qIds),
       db.from('forecast_probability_history').select('question_id, snapshot_at, blended_probability, crowd_probability, ai_probability').in('question_id', qIds).order('snapshot_at', { ascending: true }).limit(1500),
+      db.from('forecast_question_outcomes').select('id, question_id, label, sort_order, color, ai_probability, blended_probability').in('question_id', qIds).order('sort_order'),
     ])
     for (const row of aiRes.data ?? []) {
       const reasoning = row.reasoning as Record<string, unknown> | null
@@ -78,16 +84,22 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
       arr.push(row as HistPoint)
       histByQuestion.set(row.question_id, arr)
     }
+    for (const row of (outcomesRes.data ?? []) as OutcomeRow[]) {
+      const arr = outcomesByQuestion.get(row.question_id) ?? []
+      arr.push(row)
+      outcomesByQuestion.set(row.question_id, arr)
+    }
   }
 
   const liveSignals = signalsResult.data ?? []
 
-  // Pick the "trending" question: most votes, or highest blended, or first featured
   const trendingQ = [...qList].sort((a, b) => {
     const aScore = (a.forecast_count ?? 0) * 10 + (a.blended_probability != null ? Math.abs(a.blended_probability - 0.5) * 100 : 0)
     const bScore = (b.forecast_count ?? 0) * 10 + (b.blended_probability != null ? Math.abs(b.blended_probability - 0.5) * 100 : 0)
     return bScore - aScore
   })[0] ?? null
+
+  const trendingOutcomes = trendingQ ? outcomesByQuestion.get(trendingQ.id) ?? [] : []
 
   const trendingData = trendingQ ? {
     id: trendingQ.id,
@@ -105,6 +117,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
     history: histByQuestion.get(trendingQ.id) ?? [],
     aiSummary: aiByQuestion.get(trendingQ.id)?.summary ?? null,
     commentCount: 0,
+    question_type: ((trendingQ as any).question_type as string) ?? 'binary',
+    outcomes: trendingOutcomes,
   } : null
 
   const restQuestions = qList.filter(q => q.id !== trendingQ?.id)
@@ -121,7 +135,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
         <p className="text-neutral-400 text-sm max-w-xl mx-auto">{tr(locale, 'hero.subtitle')}</p>
       </div>
 
-      {/* Channel chips — right below subtitle */}
+      {/* Channel chips */}
       <div className="flex flex-wrap justify-center gap-2 pb-6">
         <Link href="/forecast"
           className={`text-xs px-3 py-1.5 rounded-full border transition-colors font-medium ${!searchParams.channel ? 'bg-white text-neutral-900 border-white' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}`}>
@@ -138,7 +152,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
       {/* Two-panel layout */}
       <div className="flex gap-5">
 
-        {/* Left panel: live signals feed (vertical scroll) */}
+        {/* Left panel: live signals */}
         <aside className="hidden lg:block w-72 flex-shrink-0">
           <div className="sticky top-20">
             <div className="flex items-center gap-2 mb-3">
@@ -151,44 +165,36 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
             <div className="max-h-[calc(100vh-10rem)] overflow-y-auto pr-1 space-y-0" style={{ scrollbarWidth: 'thin', scrollbarColor: '#262626 transparent' }}>
               <SignalFeedVertical signals={liveSignals as any} locale={locale} />
             </div>
-            <Link
-              href="/forecast/signals"
-              className="flex items-center gap-1 mt-3 text-[10px] font-semibold text-blue-400 hover:text-blue-300 transition-colors"
-            >
+            <Link href="/forecast/signals" className="flex items-center gap-1 mt-3 text-[10px] font-semibold text-blue-400 hover:text-blue-300 transition-colors">
               {tr(locale, 'signals.view_all')}
             </Link>
           </div>
         </aside>
 
-        {/* Right panel: trending card + question grid */}
+        {/* Right panel */}
         <div className="flex-1 min-w-0 space-y-6">
 
-          {/* Trending card */}
           {trendingData && (
             <TrendingCard q={trendingData} locale={locale} />
           )}
 
-          {/* Mobile signals (visible on small screens) */}
+          {/* Mobile signals */}
           <div className="lg:hidden">
             <div className="flex items-center gap-2 mb-3">
               <Radio size={12} className="text-red-400 animate-pulse" />
               <h2 className="text-xs font-bold text-white uppercase tracking-wider">{tr(locale, 'page.signals_feed')}</h2>
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
-                {tr(locale, 'signals.live_badge')}
-              </span>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">{tr(locale, 'signals.live_badge')}</span>
             </div>
             <div className="max-h-80 overflow-y-auto">
               <SignalFeedVertical signals={(liveSignals as any).slice(0, 6)} locale={locale} />
             </div>
           </div>
 
-          {/* Open questions header */}
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider">{tr(locale, 'page.open_questions')}</h2>
-            <span className="text-[10px] text-neutral-600">{restQuestions.length} {locale === 'fr' ? 'questions' : 'questions'}</span>
+            <span className="text-[10px] text-neutral-600">{restQuestions.length} questions</span>
           </div>
 
-          {/* Compact question cards */}
           {!restQuestions.length && (
             <div className="text-center py-12 text-neutral-600 text-sm">
               {searchParams.channel ? tr(locale, 'page.no_questions_ch') : tr(locale, 'page.no_questions')}
@@ -197,16 +203,17 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {restQuestions.map(q => {
-              const ch = (q as { forecast_channels?: { slug?: string; name?: string; name_fr?: string; name_en?: string } }).forecast_channels
+              const ch = (q as any).forecast_channels as { slug?: string; name?: string; name_fr?: string; name_en?: string } | undefined
               const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
               const blended = q.blended_probability !== null ? Math.round(q.blended_probability * 100) : null
               const href = `/forecast/q/${encodeURIComponent(q.slug ?? q.id)}`
+              const isMulti = (q as any).question_type === 'multi_choice'
+              const outcomes = outcomesByQuestion.get(q.id) ?? []
 
               return (
                 <div key={q.id}
                   className="group flex flex-col rounded-xl border border-neutral-800/60 bg-neutral-900/40 hover:border-neutral-700 hover:bg-neutral-900/70 transition-all p-3.5 gap-2.5">
 
-                  {/* Top: channel + days left */}
                   <div className="flex items-center justify-between gap-2">
                     <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
                       {ch ? localizeChannel(ch, locale) : ''}
@@ -214,29 +221,43 @@ export default async function ForecastPage({ searchParams }: { searchParams: { c
                     <span className="text-[9px] text-neutral-600">{daysLeft(q.close_date, locale)}</span>
                   </div>
 
-                  {/* Title (clickable → detail page) */}
                   <Link href={href} className="flex-1 min-h-0">
                     <h3 className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors line-clamp-2 leading-snug">
                       {q.title}
                     </h3>
                   </Link>
 
-                  {/* Gauge + participants */}
-                  <div className="flex items-end justify-between pt-2 border-t border-neutral-800/50">
-                    <div className="text-center">
-                      <ProbabilityGauge value={blended} size={56} strokeWidth={5} />
-                      <div className="text-[8px] text-neutral-500 mt-0.5">{locale === 'fr' ? 'Probabilité' : 'Probability'}</div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1 text-[9px] text-neutral-500 pb-1">
-                      <span className="flex items-center gap-1 font-medium"><Users size={10} />{q.forecast_count ?? 0} {locale === 'fr' ? 'avis' : 'votes'}</span>
-                      <span className="text-neutral-600">{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</span>
-                    </div>
-                  </div>
-
-                  {/* Quick vote slider */}
-                  <div className="pt-2 border-t border-neutral-800/50">
-                    <QuickVoteSlider questionId={q.id} locale={locale} />
-                  </div>
+                  {/* Conditional display: binary gauge vs multi-choice bars */}
+                  {isMulti && outcomes.length >= 2 ? (
+                    <>
+                      <div className="pt-2 border-t border-neutral-800/50">
+                        <OutcomeBars outcomes={outcomes} compact />
+                      </div>
+                      <div className="flex items-center justify-between text-[9px] text-neutral-500">
+                        <span className="flex items-center gap-1 font-medium"><Users size={10} />{q.forecast_count ?? 0} {locale === 'fr' ? 'avis' : 'votes'}</span>
+                        <span className="text-neutral-600">{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</span>
+                      </div>
+                      <div className="pt-2 border-t border-neutral-800/50">
+                        <QuickVoteMulti questionId={q.id} outcomes={outcomes} locale={locale} />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-end justify-between pt-2 border-t border-neutral-800/50">
+                        <div className="text-center">
+                          <ProbabilityGauge value={blended} size={56} strokeWidth={5} />
+                          <div className="text-[8px] text-neutral-500 mt-0.5">{locale === 'fr' ? 'Probabilité' : 'Probability'}</div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 text-[9px] text-neutral-500 pb-1">
+                          <span className="flex items-center gap-1 font-medium"><Users size={10} />{q.forecast_count ?? 0} {locale === 'fr' ? 'avis' : 'votes'}</span>
+                          <span className="text-neutral-600">{new Date(q.close_date).toLocaleDateString(locale === 'fr' ? 'fr-FR' : 'en-GB', { day: '2-digit', month: 'short' })}</span>
+                        </div>
+                      </div>
+                      <div className="pt-2 border-t border-neutral-800/50">
+                        <QuickVoteSlider questionId={q.id} locale={locale} />
+                      </div>
+                    </>
+                  )}
                 </div>
               )
             })}

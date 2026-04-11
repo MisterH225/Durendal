@@ -9,24 +9,29 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   const body = await req.json()
-  const { probability, reasoning } = body
-
-  if (typeof probability !== 'number' || probability < 0 || probability > 1) {
-    return NextResponse.json({ error: 'probability doit être un float entre 0 et 1' }, { status: 400 })
-  }
-
   const db = createAdminClient()
 
   const { data: question } = await db
     .from('forecast_questions')
-    .select('id, status')
+    .select('id, status, question_type')
     .eq('id', params.id)
     .single()
 
   if (!question) return NextResponse.json({ error: 'Question introuvable' }, { status: 404 })
   if (question.status !== 'open') return NextResponse.json({ error: 'Question non ouverte' }, { status: 409 })
 
-  // Get current revision
+  // Multi-choice vote path
+  if (Array.isArray(body.outcomes)) {
+    return handleMultiChoiceVote(db, params.id, user.id, body.outcomes)
+  }
+
+  // Binary vote path
+  const { probability, reasoning } = body
+
+  if (typeof probability !== 'number' || probability < 0 || probability > 1) {
+    return NextResponse.json({ error: 'probability doit être un float entre 0 et 1' }, { status: 400 })
+  }
+
   const { data: prev } = await db
     .from('forecast_user_forecasts')
     .select('id, revision')
@@ -37,12 +42,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const revision = (prev?.revision ?? 0) + 1
 
-  // Archive previous
   if (prev) {
     await db.from('forecast_user_forecasts').update({ is_current: false }).eq('id', prev.id)
   }
 
-  // Insert new
   const { data: forecast, error } = await db
     .from('forecast_user_forecasts')
     .insert({ question_id: params.id, user_id: user.id, probability, reasoning: reasoning ?? null, revision, is_current: true })
@@ -51,7 +54,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Queue events
   await publishForecastEvent({
     type: 'forecast.user.forecast.submitted',
     correlationId: params.id,
@@ -64,4 +66,71 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   })
 
   return NextResponse.json({ forecast }, { status: 201 })
+}
+
+async function handleMultiChoiceVote(
+  db: ReturnType<typeof createAdminClient>,
+  questionId: string,
+  userId: string,
+  outcomes: { outcome_id: string; probability: number }[],
+) {
+  if (!outcomes.length) {
+    return NextResponse.json({ error: 'outcomes vide' }, { status: 400 })
+  }
+
+  const sum = outcomes.reduce((s, o) => s + (o.probability ?? 0), 0)
+  if (Math.abs(sum - 1) > 0.05) {
+    return NextResponse.json({ error: `La somme des probabilités doit être ~1.0 (reçu: ${sum.toFixed(3)})` }, { status: 400 })
+  }
+
+  for (const o of outcomes) {
+    if (typeof o.probability !== 'number' || o.probability < 0 || o.probability > 1) {
+      return NextResponse.json({ error: 'Chaque probability doit être entre 0 et 1' }, { status: 400 })
+    }
+  }
+
+  // Archive previous votes for this question
+  await db
+    .from('forecast_user_outcome_votes')
+    .update({ is_current: false })
+    .eq('question_id', questionId)
+    .eq('user_id', userId)
+    .eq('is_current', true)
+
+  // Get next revision
+  const { count } = await db
+    .from('forecast_user_outcome_votes')
+    .select('id', { count: 'exact', head: true })
+    .eq('question_id', questionId)
+    .eq('user_id', userId)
+
+  const revision = Math.floor(((count ?? 0) / Math.max(1, outcomes.length))) + 1
+
+  const rows = outcomes.map(o => ({
+    outcome_id: o.outcome_id,
+    question_id: questionId,
+    user_id: userId,
+    probability: o.probability,
+    revision,
+    is_current: true,
+  }))
+
+  const { error } = await db.from('forecast_user_outcome_votes').insert(rows)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Also increment forecast_count on the question
+  await db.rpc('increment_forecast_count', { qid: questionId }).catch(() => {
+    // Fallback if RPC doesn't exist
+    db.from('forecast_questions')
+      .update({ forecast_count: (db as any).sql`forecast_count + 1` })
+      .eq('id', questionId)
+  })
+
+  await publishForecastEvent({
+    type: 'forecast.blended.recompute.requested',
+    correlationId: questionId,
+    payload: { questionId, reason: 'user_forecast' as const },
+  })
+
+  return NextResponse.json({ ok: true, revision }, { status: 201 })
 }

@@ -3,8 +3,10 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ProbabilityGauge } from '@/components/forecast/ProbabilityGauge'
+import { OutcomeBars } from '@/components/forecast/OutcomeBars'
 import { HistorySparkline } from '@/components/forecast/HistorySparkline'
 import { SubmitForecastForm } from '@/components/forecast/SubmitForecastForm'
+import { SubmitMultiChoiceForm } from '@/components/forecast/SubmitMultiChoiceForm'
 import { QuestionComments } from '@/components/forecast/QuestionComments'
 import { ArrowLeft, Calendar, Users, Bot, ExternalLink, BookOpen, CheckCircle2 } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
@@ -83,6 +85,17 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
     ? Math.round((userForecastResult.data as { probability: number }).probability * 100)
     : null
 
+  const isMulti = q.question_type === 'multi_choice'
+
+  // Load outcomes for multi-choice questions
+  const { data: outcomesData } = isMulti
+    ? await db.from('forecast_question_outcomes')
+        .select('id, label, sort_order, color, ai_probability, crowd_probability, blended_probability')
+        .eq('question_id', q.id)
+        .order('sort_order')
+    : { data: null }
+  const outcomes = (outcomesData ?? []) as { id: string; label: string; sort_order: number; color: string | null; ai_probability: number | null; crowd_probability: number | null; blended_probability: number | null }[]
+
   const locale = getLocale()
   const ch = q.forecast_channels
   const aiReason = (aiData?.reasoning ?? null) as Record<string, unknown> | null
@@ -133,17 +146,28 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5 flex flex-col items-center gap-2">
-          <ProbabilityGauge value={crowdPct} size={100} label={tr(locale, 'q.crowd')} sublabel={`${q.forecast_count ?? 0} votes`} colorOverride="#34d399" />
+      {/* Probabilities: gauges for binary, outcome bars for multi-choice */}
+      {isMulti && outcomes.length >= 2 ? (
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-neutral-200">{locale === 'fr' ? 'Options' : 'Outcomes'}</h2>
+            <span className="text-[10px] text-neutral-600 flex items-center gap-1"><Users size={10} />{q.forecast_count ?? 0} {locale === 'fr' ? 'avis' : 'votes'}</span>
+          </div>
+          <OutcomeBars outcomes={outcomes} />
         </div>
-        <div className="rounded-2xl border border-blue-900/40 bg-blue-950/20 p-5 flex flex-col items-center gap-2">
-          <ProbabilityGauge value={aiPct} size={100} label={tr(locale, 'q.ai')} sublabel={aiData?.model ?? 'Gemini'} colorOverride="#60a5fa" />
+      ) : (
+        <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5 flex flex-col items-center gap-2">
+            <ProbabilityGauge value={crowdPct} size={100} label={tr(locale, 'q.crowd')} sublabel={`${q.forecast_count ?? 0} votes`} colorOverride="#34d399" />
+          </div>
+          <div className="rounded-2xl border border-blue-900/40 bg-blue-950/20 p-5 flex flex-col items-center gap-2">
+            <ProbabilityGauge value={aiPct} size={100} label={tr(locale, 'q.ai')} sublabel={aiData?.model ?? 'Gemini'} colorOverride="#60a5fa" />
+          </div>
+          <div className="rounded-2xl border border-indigo-800/40 bg-indigo-950/20 p-5 flex flex-col items-center gap-2">
+            <ProbabilityGauge value={blendedPct} size={100} label={tr(locale, 'q.blended')} sublabel={locale === 'fr' ? 'Agrégé' : 'Aggregated'} colorOverride="#818cf8" />
+          </div>
         </div>
-        <div className="rounded-2xl border border-indigo-800/40 bg-indigo-950/20 p-5 flex flex-col items-center gap-2">
-          <ProbabilityGauge value={blendedPct} size={100} label={tr(locale, 'q.blended')} sublabel={locale === 'fr' ? 'Agrégé' : 'Aggregated'} colorOverride="#818cf8" />
-        </div>
-      </div>
+      )}
 
       <div className="grid md:grid-cols-[1fr_320px] gap-6">
         <div className="space-y-6">
@@ -214,7 +238,11 @@ export default async function ForecastQuestionPage({ params }: { params: { id: s
           {q.status === 'open' && (
             <div className="space-y-2">
               <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider px-1">{tr(locale, 'q.estimate_section')}</h2>
-              <SubmitForecastForm questionId={q.id} currentUserProbability={userForecast} isAuthenticated={!!user} locale={locale} />
+              {isMulti && outcomes.length >= 2 ? (
+                <SubmitMultiChoiceForm questionId={q.id} outcomes={outcomes} isAuthenticated={!!user} locale={locale} />
+              ) : (
+                <SubmitForecastForm questionId={q.id} currentUserProbability={userForecast} isAuthenticated={!!user} locale={locale} />
+              )}
             </div>
           )}
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">

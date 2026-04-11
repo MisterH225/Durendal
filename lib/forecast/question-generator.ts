@@ -2,17 +2,24 @@
  * Génère automatiquement des événements + questions « chaudes ».
  * Utilisé par le worker PM2 et par la route GET /api/cron/forecast-questions.
  *
- * Chaque cycle : sélectionne 2-3 canaux ALÉATOIRES parmi les actifs,
- * génère 1-2 événement(s) + 2 questions par canal sélectionné.
- * Résultat : diversité thématique naturelle d'un cycle à l'autre.
+ * Chaque cycle : sélectionne 2-3 canaux avec le moins de questions récentes,
+ * génère 1-2 événement(s) + 2 questions par canal.
+ * ~30% des questions sont multi-choice, le reste binaire (OUI/NON).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { callGeminiWithSearch, parseGeminiJson } from '../ai/gemini'
 
+interface GeneratedOutcome {
+  label: string
+  ai_initial_probability: number
+}
+
 interface GeneratedQuestion {
   title: string
   description?: string
+  question_type?: 'binary' | 'multi_choice'
+  outcomes?: GeneratedOutcome[]
   close_date_days: number
   resolution_source: string
   resolution_criteria: string
@@ -61,6 +68,8 @@ function shuffle<T>(arr: T[]): T[] {
   return a
 }
 
+const OUTCOME_COLORS = ['#818cf8', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4']
+
 const DEDUP_DAYS = 7
 const MAX_EVENTS_PER_CHANNEL = 2
 const MAX_QUESTIONS_PER_EVENT = 2
@@ -99,12 +108,28 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
     }
   }
 
-  // Sélectionner 2-3 canaux aléatoires pour ce cycle
-  const selected = shuffle(allChannels).slice(0, Math.min(CHANNELS_PER_CYCLE, allChannels.length))
-  console.log(`[question-generator] Canaux sélectionnés : ${selected.map(c => c.slug).join(', ')}`)
+  const recentCounts = new Map<string, number>()
+  for (const ch of allChannels) recentCounts.set(ch.id, 0)
 
-  // Vérifier si la colonne image_url existe (migration 026 peut ne pas être appliquée)
+  const { data: recentByChannel } = await supabase
+    .from('forecast_questions')
+    .select('channel_id')
+    .contains('tags', ['auto'])
+    .gt('created_at', new Date(Date.now() - 3 * 86_400_000).toISOString())
+
+  for (const row of recentByChannel ?? []) {
+    recentCounts.set(row.channel_id, (recentCounts.get(row.channel_id) ?? 0) + 1)
+  }
+
+  const ranked = shuffle(allChannels).sort((a, b) =>
+    (recentCounts.get(a.id) ?? 0) - (recentCounts.get(b.id) ?? 0)
+  )
+  const selected = ranked.slice(0, Math.min(CHANNELS_PER_CYCLE, allChannels.length))
+  console.log(`[question-generator] Canaux sélectionnés (rotation) : ${selected.map(c => `${c.slug}(${recentCounts.get(c.id) ?? 0})`).join(', ')}`)
+
   const hasImageCol = await columnExists(supabase, 'forecast_questions', 'image_url')
+  const hasQuestionType = await columnExists(supabase, 'forecast_questions', 'question_type')
+  const hasOutcomesTable = await columnExists(supabase, 'forecast_question_outcomes', 'id')
 
   const since = new Date(Date.now() - DEDUP_DAYS * 86_400_000).toISOString()
 
@@ -132,11 +157,12 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       `Commence directement par { et termine par }.`,
       ``,
       `Identifie 2 à 3 sujets d'actualité brûlante (24–72h). Pour chaque sujet :`,
-      `  - un événement avec une description DÉTAILLÉE (4-6 phrases : contexte factuel, chiffres clés, enjeux, parties prenantes, timeline)`,
-      `  - 2 à 3 questions OUI/NON très lisibles`,
-      `  - chaque question doit avoir une "description" riche (3-5 phrases) : contexte spécifique, données factuelles vérifiables, pourquoi c'est pertinent`,
-      `  - chaque question doit inclure "ai_initial_probability" (float 0.01-0.99) basée sur les données factuelles`,
-      `  - si possible, inclure "image_url" : URL d'une image réelle publiée par une agence de presse (Reuters, AFP, BBC, etc.) en rapport direct avec le sujet. Si tu n'as pas d'URL fiable, OMETS le champ.`,
+      `  - un événement avec une description DÉTAILLÉE (4-6 phrases)`,
+      `  - 2 à 3 questions : la MAJORITÉ en OUI/NON (question_type: "binary"), mais AU MOINS 1 question à CHOIX MULTIPLE (question_type: "multi_choice")`,
+      `  - Pour les questions BINARY : inclure "ai_initial_probability" (float 0.01-0.99)`,
+      `  - Pour les questions MULTI_CHOICE : inclure "outcomes" (tableau de 2-4 options), chacune avec "label" et "ai_initial_probability". La SOMME des probabilités doit faire ~1.0`,
+      `  - Chaque question : "description" riche (3-5 phrases), "resolution_criteria" précis`,
+      `  - Si possible, inclure "image_url" d'un média réel (Reuters, AFP, BBC)`,
     ].join('\n')
 
     const prompt = [
@@ -144,20 +170,33 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       `{`,
       `  "events": [`,
       `    {`,
-      `      "title": "Titre court de l'événement",`,
+      `      "title": "Titre court",`,
       `      "slug": "evenement-slug-2026",`,
-      `      "description": "Description DÉTAILLÉE (4-6 phrases). Contexte factuel, chiffres, acteurs principaux, enjeux. Citer des sources.",`,
+      `      "description": "Description DÉTAILLÉE (4-6 phrases).",`,
       `      "questions": [`,
       `        {`,
-      `          "title": "Question OUI/NON lisible et engageante ?",`,
-      `          "description": "3-5 phrases. Contexte factuel, dates, chiffres, parties prenantes.",`,
+      `          "title": "Question binaire OUI/NON ?",`,
+      `          "question_type": "binary",`,
+      `          "description": "Contexte factuel 3-5 phrases.",`,
       `          "close_date_days": 14,`,
-      `          "resolution_source": "Reuters, BBC, déclarations officielles",`,
-      `          "resolution_criteria": "OUI si [condition précise et mesurable]. NON si [condition opposée].",`,
-      `          "resolution_url": "https://www.reuters.com/...",`,
+      `          "resolution_source": "Reuters, BBC",`,
+      `          "resolution_criteria": "OUI si [...]. NON si [...].",`,
       `          "slug_hint": "slug-court",`,
-      `          "image_url": "https://...",`,
       `          "ai_initial_probability": 0.62`,
+      `        },`,
+      `        {`,
+      `          "title": "Un accord sera trouvé avant...",`,
+      `          "question_type": "multi_choice",`,
+      `          "description": "Contexte factuel 3-5 phrases.",`,
+      `          "close_date_days": 30,`,
+      `          "resolution_source": "Reuters, BBC",`,
+      `          "resolution_criteria": "Résolution selon la date de l'annonce officielle.",`,
+      `          "slug_hint": "accord-avant",`,
+      `          "outcomes": [`,
+      `            {"label": "Avant le 30 Avril", "ai_initial_probability": 0.22},`,
+      `            {"label": "Avant le 31 Mai", "ai_initial_probability": 0.39},`,
+      `            {"label": "Après Mai / Pas d'accord", "ai_initial_probability": 0.39}`,
+      `          ]`,
       `        }`,
       `      ]`,
       `    }`,
@@ -166,11 +205,12 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       ``,
       `Contraintes :`,
       `- 2 ou 3 événements ; chaque événement : 2 ou 3 questions`,
+      `- AU MOINS 1 question multi_choice par événement quand c'est pertinent`,
+      `- Pour multi_choice : 2 à 4 outcomes, somme des probabilités = 1.0`,
       `- close_date_days entre 7 et 45`,
       `- Descriptions factuelles, détaillées et vérifiables`,
       `- resolution_criteria PRÉCIS et mesurable`,
-      `- ai_initial_probability basée sur des faits, pas de l'intuition`,
-      `- image_url : uniquement des URLs HTTPS réelles de médias. Si indisponible, omets le champ`,
+      `- image_url : uniquement des URLs HTTPS réelles. Si indisponible, omets le champ`,
     ].join('\n')
 
     try {
@@ -231,12 +271,13 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
           }
           recentQFp.add(fp)
 
+          const isMulti = q.question_type === 'multi_choice' && Array.isArray(q.outcomes) && q.outcomes.length >= 2
           const days = Math.min(45, Math.max(7, Number(q.close_date_days) || 14))
           const closeDate = new Date(now + days * 86_400_000).toISOString()
           const hint = q.slug_hint ? slugify(q.slug_hint) : slugify(q.title)
           const qSlug = slugify(`auto-${channel.slug}-${hint}-${crypto.randomUUID().slice(0, 5)}`)
 
-          const aiInitProb = typeof q.ai_initial_probability === 'number'
+          const aiInitProb = !isMulti && typeof q.ai_initial_probability === 'number'
             ? Math.max(0.01, Math.min(0.99, q.ai_initial_probability))
             : null
 
@@ -258,9 +299,11 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
             blended_probability: aiInitProb,
           }
 
-          // Seulement si la colonne existe (migration 026)
           if (hasImageCol && q.image_url && q.image_url.startsWith('https://')) {
             insertRow.image_url = q.image_url.slice(0, 2000)
+          }
+          if (hasQuestionType) {
+            insertRow.question_type = isMulti ? 'multi_choice' : 'binary'
           }
 
           const { data: qRow, error: qErr } = await supabase
@@ -271,35 +314,56 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
 
           if (qErr || !qRow) {
             console.error(`[question-generator] Question ${channel.slug}:`, qErr?.message)
-          } else {
-            createdQuestions += 1
-
-            // Enqueue AI forecast pour remplir les jauges rapidement
-            await supabase.from('forecast_event_queue').insert({
-              event_type: 'forecast.ai.forecast.requested',
-              correlation_id: qRow.id,
-              payload: {
-                id: crypto.randomUUID(),
-                type: 'forecast.ai.forecast.requested',
-                occurredAt: new Date().toISOString(),
-                correlationId: qRow.id,
-                producer: 'worker',
-                version: 1,
-                payload: {
-                  questionId: qRow.id,
-                  channelSlug: channel.slug,
-                  requestedBy: 'scheduler',
-                  force: false,
-                },
-              },
-              status: 'pending',
-              attempts: 0,
-              max_attempts: 3,
-              available_at: new Date(Date.now() + createdQuestions * 2 * 60_000).toISOString(),
-            }).then(({ error: eqErr }) => {
-              if (eqErr) console.error(`[question-generator] Queue AI forecast:`, eqErr.message)
-            })
+            continue
           }
+
+          createdQuestions += 1
+
+          // Insert outcomes for multi-choice
+          if (isMulti && hasOutcomesTable && q.outcomes) {
+            const outcomeRows = q.outcomes.slice(0, 6).map((o, idx) => ({
+              question_id: qRow.id,
+              label: o.label.slice(0, 200),
+              sort_order: idx,
+              color: OUTCOME_COLORS[idx % OUTCOME_COLORS.length],
+              ai_probability: Math.max(0, Math.min(1, o.ai_initial_probability ?? 0)),
+              blended_probability: Math.max(0, Math.min(1, o.ai_initial_probability ?? 0)),
+            }))
+
+            const { error: oErr } = await supabase
+              .from('forecast_question_outcomes')
+              .insert(outcomeRows)
+
+            if (oErr) {
+              console.error(`[question-generator] Outcomes ${channel.slug}:`, oErr.message)
+            }
+          }
+
+          // Enqueue AI forecast
+          await supabase.from('forecast_event_queue').insert({
+            event_type: 'forecast.ai.forecast.requested',
+            correlation_id: qRow.id,
+            payload: {
+              id: crypto.randomUUID(),
+              type: 'forecast.ai.forecast.requested',
+              occurredAt: new Date().toISOString(),
+              correlationId: qRow.id,
+              producer: 'worker',
+              version: 1,
+              payload: {
+                questionId: qRow.id,
+                channelSlug: channel.slug,
+                requestedBy: 'scheduler',
+                force: false,
+              },
+            },
+            status: 'pending',
+            attempts: 0,
+            max_attempts: 3,
+            available_at: new Date(Date.now() + createdQuestions * 2 * 60_000).toISOString(),
+          }).then(({ error: eqErr }) => {
+            if (eqErr) console.error(`[question-generator] Queue AI forecast:`, eqErr.message)
+          })
         }
       }
 

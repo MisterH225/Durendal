@@ -5,7 +5,7 @@
  * Tâches planifiées :
  *   - forecast:ai-trigger    → toutes les 6h  — déclenche les estimations IA
  *   - forecast:close-check   → toutes les 1h  — ferme les questions dont la close_date est passée
- *   - forecast:news-signal   → toutes les 2h  — génère des signaux d'actualité par canal (IA)
+ *   - forecast:news-signal   → toutes les 1h  — génère des signaux d'actualité par canal (IA)
  *   - forecast:question-generator → toutes les 6h — événements + questions ouvertes (IA)
  */
 
@@ -114,6 +114,34 @@ async function closeExpiredQuestions() {
   }
 }
 
+// ─── Safe wrappers for reward tasks (tables may not exist in production yet) ──
+
+async function safeRunStreakUpdate() {
+  try {
+    await runStreakUpdateJob()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('relation') && msg.includes('does not exist')) {
+      console.log('[scheduler] rewards:streak-update — tables reward non trouvées, skip.')
+      return
+    }
+    throw e
+  }
+}
+
+async function safeRunLeaderboardSnapshot() {
+  try {
+    await runLeaderboardSnapshotJob()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('relation') && msg.includes('does not exist')) {
+      console.log('[scheduler] rewards:leaderboard-snapshot — tables reward non trouvées, skip.')
+      return
+    }
+    throw e
+  }
+}
+
 // ─── Scheduler engine ─────────────────────────────────────────────────────────
 
 const TASKS: Task[] = [
@@ -131,7 +159,7 @@ const TASKS: Task[] = [
   },
   {
     name:        'forecast:news-signal',
-    intervalMs:  2 * 60 * 60 * 1000,   // every 2 hours
+    intervalMs:  60 * 60 * 1000,        // every 1 hour
     lastRanAt:   0,
     fn:          runNewsSignalJob,
   },
@@ -157,17 +185,17 @@ const TASKS: Task[] = [
     name:        'rewards:streak-update',
     intervalMs:  30 * 60 * 1000,        // every 30 minutes
     lastRanAt:   0,
-    fn:          runStreakUpdateJob,
+    fn:          safeRunStreakUpdate,
   },
   {
     name:        'rewards:leaderboard-snapshot',
     intervalMs:  24 * 60 * 60 * 1000,   // once per day
     lastRanAt:   0,
-    fn:          runLeaderboardSnapshotJob,
+    fn:          safeRunLeaderboardSnapshot,
   },
 ]
 
-const RETRY_AFTER_FAILURE_MS = 15 * 60 * 1000 // réessai 15 min si une tâche lève (ex. Gemini)
+const RETRY_AFTER_FAILURE_MS = 15 * 60 * 1000
 
 export async function runSchedulerTick() {
   const now = Date.now()
@@ -175,11 +203,14 @@ export async function runSchedulerTick() {
   for (const task of TASKS) {
     if (now - task.lastRanAt >= task.intervalMs) {
       try {
+        console.log(`[scheduler] >> ${task.name}`)
+        const start = Date.now()
         await task.fn()
         task.lastRanAt = Date.now()
+        const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+        console.log(`[scheduler] OK ${task.name} (${elapsed}s)`)
       } catch (e) {
-        console.error(`[scheduler] Erreur tâche ${task.name} :`, e)
-        // Ne pas bloquer jusqu’à la fin de l’intervalle : réessayer bientôt
+        console.error(`[scheduler] FAIL ${task.name} :`, e instanceof Error ? e.message : e)
         task.lastRanAt = now - task.intervalMs + RETRY_AFTER_FAILURE_MS
       }
     }

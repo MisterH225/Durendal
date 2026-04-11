@@ -297,25 +297,36 @@ export async function runNewsSignalJob(): Promise<void> {
       ? `\nRÉGION PRIORITAIRE pour cette génération : ${pickedRegion.label_fr}.\nAu moins 2 des 3 signaux DOIVENT concerner cette région ou avoir un impact direct sur cette région. Utilise des sources locales/régionales en priorité.\n`
       : ''
 
+    const hasSpecificAdapter = channel.slug in CHANNEL_NEWS_ADAPTERS
+
     const systemInstruction = [
-      `Tu es un analyste senior en intelligence économique et géopolitique couvrant l'actualité MONDIALE pour le canal "${channel.name}".`,
-      `Ta mission : identifier les événements mondiaux les plus significatifs des dernières 24-48h qui affectent les marchés, les entreprises et les décideurs économiques.`,
-      regionFocus || `IMPORTANT : couvre les événements MONDIAUX (USA, Europe, Chine, Moyen-Orient, Asie, Afrique) et explique leur impact potentiel.`,
-      `Contexte : ${adapter.regionContext}.`,
-      `Focus thématique : ${adapter.topicFocus}.`,
+      `Tu es un analyste senior couvrant l'actualité pour le canal THÉMATIQUE "${channel.name}".`,
+      ``,
+      `RÈGLE CRITIQUE : TOUS les signaux que tu génères DOIVENT être DIRECTEMENT liés à la thématique "${channel.name}".`,
+      `Si le canal est "Macro & Commodities", ne parle que de macro-économie et matières premières.`,
+      `Si le canal est "Tech & IA", ne parle que de technologie et intelligence artificielle.`,
+      `Si le canal est "Art & Culture", ne parle que d'art, culture, industries créatives, musées, cinéma, musique, édition.`,
+      `NE GÉNÈRE JAMAIS un signal qui ne correspond pas au thème du canal "${channel.name}".`,
+      `Un article sur le pétrole ou la géopolitique N'A PAS SA PLACE dans un canal "Art & Culture".`,
+      ``,
+      regionFocus || `Couvre les événements MONDIAUX en lien avec "${channel.name}".`,
+      hasSpecificAdapter ? `Contexte : ${adapter.regionContext}.` : `Contexte : actualité mondiale dans le domaine "${channel.name}".`,
+      hasSpecificAdapter ? `Focus thématique : ${adapter.topicFocus}.` : `Focus thématique : développements majeurs dans le domaine "${channel.name}" — nouveautés, tendances, enjeux économiques liés à ce secteur.`,
       `Sources de référence : ${adapter.sourcesHint}.`,
       `IMPORTANT : retourne UNIQUEMENT un objet JSON valide avec une clé "signals", sans markdown ni texte autour.`,
     ].join('\n')
 
     const prompt = [
-      `Identifie les 3 développements les plus importants et actionnables des dernières 24-48h pour le canal "${channel.name}".`,
-      pickedRegion ? `PRIORITÉ : événements concernant ${pickedRegion.label_fr} ou ayant un impact direct sur cette région.` : '',
+      `Identifie les 3 développements les plus importants des dernières 24-48h qui sont DIRECTEMENT liés au canal "${channel.name}".`,
+      `RAPPEL : chaque signal DOIT correspondre à la thématique "${channel.name}". Aucun signal hors-sujet.`,
+      pickedRegion ? `PRIORITÉ RÉGIONALE : événements concernant ${pickedRegion.label_fr} dans le domaine "${channel.name}".` : '',
       ``,
       `Critères de sélection :`,
-      `- Événements d'envergure ayant un impact économique concret`,
-      pickedRegion ? `- Au moins 2 événements doivent concerner ${pickedRegion.label_fr}` : `- Diversité géographique`,
+      `- Événements DIRECTEMENT liés à la thématique "${channel.name}"`,
+      `- Impact économique concret dans ce domaine`,
+      pickedRegion ? `- Si possible, 2 événements concernant ${pickedRegion.label_fr}` : `- Diversité géographique`,
       `- Basé sur des faits vérifiables récents (pas de rumeurs)`,
-      `- Expliquer l'impact potentiel sur les marchés, les investisseurs et les entreprises`,
+      `- Expliquer l'impact potentiel sur les acteurs du secteur "${channel.name}"`,
       ``,
       `Pour chaque développement, crée un objet avec ces champs :`,
       `- "title" : titre court et percutant (max 90 caractères)`,

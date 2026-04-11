@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       ...result,
-      message: `${result.createdQuestions} question(s), ${result.createdEvents} événement(s).`,
+      message: `${result.createdQuestions} question(s), ${result.createdEvents} événement(s) — canaux: ${result.channelsSelected?.join(', ') ?? '?'}.`,
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)

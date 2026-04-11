@@ -1,10 +1,10 @@
 /**
- * Génère automatiquement des événements + questions « chaudes » par canal.
+ * Génère automatiquement des événements + questions « chaudes ».
  * Utilisé par le worker PM2 et par la route GET /api/cron/forecast-questions.
  *
- * - Déduplication : empreinte du titre de question sur 7 jours (par canal)
- * - created_by : null (source IA côté admin)
- * - status : open (visible public + admin avec clé anon si RLS le permet)
+ * Chaque cycle : sélectionne 2-3 canaux ALÉATOIRES parmi les actifs,
+ * génère 1-2 événement(s) + 2 questions par canal sélectionné.
+ * Résultat : diversité thématique naturelle d'un cycle à l'autre.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -52,42 +52,66 @@ function titleFingerprint(title: string): string {
     .slice(0, 64)
 }
 
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
 const DEDUP_DAYS = 7
 const MAX_EVENTS_PER_CHANNEL = 2
 const MAX_QUESTIONS_PER_EVENT = 2
+const CHANNELS_PER_CYCLE = 3
+
+async function columnExists(supabase: SupabaseClient, table: string, column: string): Promise<boolean> {
+  const { data } = await supabase.from(table).select(column).limit(0)
+  return data !== null
+}
 
 export type QuestionGeneratorRunResult = {
   createdEvents: number
   createdQuestions: number
   skippedNoChannels: boolean
   channelsConsidered: number
+  channelsSelected: string[]
   channelLoadError?: string
 }
 
 export async function runQuestionGenerator(supabase: SupabaseClient): Promise<QuestionGeneratorRunResult> {
-  const { data: channels, error: chErr } = await supabase
+  const { data: allChannels, error: chErr } = await supabase
     .from('forecast_channels')
     .select('id, slug, name')
     .eq('is_active', true)
     .order('sort_order')
 
-  if (chErr || !channels?.length) {
+  if (chErr || !allChannels?.length) {
     console.log('[question-generator] Aucun canal actif.')
     return {
       createdEvents: 0,
       createdQuestions: 0,
       skippedNoChannels: true,
       channelsConsidered: 0,
+      channelsSelected: [],
       channelLoadError: chErr?.message,
     }
   }
+
+  // Sélectionner 2-3 canaux aléatoires pour ce cycle
+  const selected = shuffle(allChannels).slice(0, Math.min(CHANNELS_PER_CYCLE, allChannels.length))
+  console.log(`[question-generator] Canaux sélectionnés : ${selected.map(c => c.slug).join(', ')}`)
+
+  // Vérifier si la colonne image_url existe (migration 026 peut ne pas être appliquée)
+  const hasImageCol = await columnExists(supabase, 'forecast_questions', 'image_url')
 
   const since = new Date(Date.now() - DEDUP_DAYS * 86_400_000).toISOString()
 
   let createdEvents = 0
   let createdQuestions = 0
 
-  for (const channel of channels) {
+  for (const channel of selected) {
     const { data: recentQs } = await supabase
       .from('forecast_questions')
       .select('title')
@@ -102,13 +126,17 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
     const systemInstruction = [
       `Tu es rédacteur senior pour une plateforme de prévision collective (sans paris).`,
       `Canal : "${channel.name}" (slug: ${channel.slug}).`,
+      ``,
+      `RÈGLE ABSOLUE : ta réponse doit être EXCLUSIVEMENT du JSON valide.`,
+      `PAS de texte avant, PAS de texte après, PAS d'explication, PAS de raisonnement.`,
+      `Commence directement par { et termine par }.`,
+      ``,
       `Identifie 2 à 3 sujets d'actualité brûlante (24–72h). Pour chaque sujet :`,
       `  - un événement avec une description DÉTAILLÉE (4-6 phrases : contexte factuel, chiffres clés, enjeux, parties prenantes, timeline)`,
-      `  - 2 à 3 questions OUI/NON très lisibles (style : « Le cessez-le-feu … sera-t-il respecté dans les 2 prochaines semaines ? »)`,
-      `  - chaque question doit avoir une "description" riche (3-5 phrases) expliquant le contexte spécifique, les données factuelles vérifiables, et pourquoi la question est pertinente`,
-      `  - chaque question doit inclure "ai_initial_probability" (float 0.01-0.99) : ta meilleure estimation initiale basée sur les données factuelles disponibles`,
-      `  - si possible, inclure "image_url" : URL d'une image réelle publiée par une agence de presse ou un média de référence en rapport avec le sujet (pas d'image générée par IA)`,
-      `JSON uniquement, clé racine "events", sans markdown ni commentaires.`,
+      `  - 2 à 3 questions OUI/NON très lisibles`,
+      `  - chaque question doit avoir une "description" riche (3-5 phrases) : contexte spécifique, données factuelles vérifiables, pourquoi c'est pertinent`,
+      `  - chaque question doit inclure "ai_initial_probability" (float 0.01-0.99) basée sur les données factuelles`,
+      `  - si possible, inclure "image_url" : URL d'une image réelle publiée par une agence de presse (Reuters, AFP, BBC, etc.) en rapport direct avec le sujet. Si tu n'as pas d'URL fiable, OMETS le champ.`,
     ].join('\n')
 
     const prompt = [
@@ -118,17 +146,17 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       `    {`,
       `      "title": "Titre court de l'événement",`,
       `      "slug": "evenement-slug-2026",`,
-      `      "description": "Description DÉTAILLÉE de l'événement (4-6 phrases). Inclure : contexte géopolitique/économique, chiffres clés récents, acteurs principaux, enjeux concrets. Être factuel, citer des sources quand possible.",`,
+      `      "description": "Description DÉTAILLÉE (4-6 phrases). Contexte factuel, chiffres, acteurs principaux, enjeux. Citer des sources.",`,
       `      "questions": [`,
       `        {`,
-      `          "title": "Le cessez-le-feu USA-Iran sera-t-il respecté dans les 2 prochaines semaines ?",`,
-      `          "description": "Description enrichie (3-5 phrases). Contexte factuel : quand le cessez-le-feu a été annoncé, par qui, quelles sont les conditions, quels incidents récents menacent l'accord. Citer des chiffres ou dates précises.",`,
+      `          "title": "Question OUI/NON lisible et engageante ?",`,
+      `          "description": "3-5 phrases. Contexte factuel, dates, chiffres, parties prenantes.",`,
       `          "close_date_days": 14,`,
-      `          "resolution_source": "Reuters, BBC, Al Jazeera, déclarations officielles des ministères des Affaires étrangères",`,
-      `          "resolution_criteria": "OUI si aucune opération militaire majeure (frappe aérienne, offensive terrestre) n'est rapportée par au moins 2 agences de presse internationales durant la période. NON si une telle opération est confirmée.",`,
+      `          "resolution_source": "Reuters, BBC, déclarations officielles",`,
+      `          "resolution_criteria": "OUI si [condition précise et mesurable]. NON si [condition opposée].",`,
       `          "resolution_url": "https://www.reuters.com/...",`,
-      `          "slug_hint": "usa-iran-ceasefire-2w",`,
-      `          "image_url": "https://example.com/photo-from-reuters.jpg",`,
+      `          "slug_hint": "slug-court",`,
+      `          "image_url": "https://...",`,
       `          "ai_initial_probability": 0.62`,
       `        }`,
       `      ]`,
@@ -136,23 +164,32 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       `  ]`,
       `}`,
       ``,
-      `IMPORTANT :`,
-      `- 2 ou 3 entrées dans "events" ; chaque événement : 2 ou 3 questions`,
-      `- close_date_days entre 7 et 45 ; slugs ASCII courts et uniques sémantiquement`,
-      `- Les descriptions (événement ET questions) doivent être factuelles, détaillées et vérifiables`,
-      `- resolution_criteria doit être PRÉCIS et mesurable (pas vague)`,
-      `- resolution_source doit lister des sources concrètes (noms de médias, institutions)`,
-      `- ai_initial_probability : base ton estimation sur les données factuelles, pas sur l'intuition`,
-      `- image_url : uniquement des URLs d'images de médias réels (Reuters, AFP, BBC, etc.). Si tu n'en as pas, omets le champ`,
+      `Contraintes :`,
+      `- 2 ou 3 événements ; chaque événement : 2 ou 3 questions`,
+      `- close_date_days entre 7 et 45`,
+      `- Descriptions factuelles, détaillées et vérifiables`,
+      `- resolution_criteria PRÉCIS et mesurable`,
+      `- ai_initial_probability basée sur des faits, pas de l'intuition`,
+      `- image_url : uniquement des URLs HTTPS réelles de médias. Si indisponible, omets le champ`,
     ].join('\n')
 
     try {
-      const { text } = await callGeminiWithSearch(prompt, { systemInstruction })
+      const { text } = await callGeminiWithSearch(prompt, {
+        systemInstruction,
+        maxOutputTokens: 8000,
+      })
+
+      if (!text || text.trim().length === 0) {
+        console.warn(`[question-generator] Canal ${channel.slug} — réponse Gemini vide.`)
+        continue
+      }
+      console.log(`[question-generator] Canal ${channel.slug} — réponse Gemini (${text.length} chars) : ${text.slice(0, 300)}…`)
+
       const parsed = parseGeminiJson<GeneratorResponse>(text)
       const rawEvents = parsed?.events ?? []
 
       if (!rawEvents.length) {
-        console.log(`[question-generator] Canal ${channel.slug} — aucun événement parsé.`)
+        console.warn(`[question-generator] Canal ${channel.slug} — aucun événement parsé. Début réponse brute : ${text.slice(0, 500)}`)
         continue
       }
 
@@ -162,7 +199,6 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
         if (!ev.title || !ev.slug || !ev.questions?.length) continue
 
         const eventSlug = slugify(`auto-${channel.slug}-${ev.slug}-${crypto.randomUUID().slice(0, 6)}`)
-        const eventTags = ['auto-hot-topic', channel.slug]
 
         const { data: evRow, error: evErr } = await supabase
           .from('forecast_events')
@@ -172,7 +208,7 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
             title: ev.title.slice(0, 200),
             description: ev.description?.slice(0, 2000) ?? null,
             status: 'active',
-            tags: eventTags,
+            tags: ['auto-hot-topic', channel.slug],
           })
           .select('id')
           .single()
@@ -190,7 +226,7 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
           if (!q.title || !q.resolution_source || !q.resolution_criteria) continue
           const fp = titleFingerprint(q.title)
           if (recentQFp.has(fp)) {
-            console.log(`[question-generator] Skip doublon question : ${fp.slice(0, 40)}…`)
+            console.log(`[question-generator] Skip doublon : ${fp.slice(0, 40)}…`)
             continue
           }
           recentQFp.add(fp)
@@ -221,7 +257,9 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
             ai_probability: aiInitProb,
             blended_probability: aiInitProb,
           }
-          if (q.image_url && q.image_url.startsWith('https://')) {
+
+          // Seulement si la colonne existe (migration 026)
+          if (hasImageCol && q.image_url && q.image_url.startsWith('https://')) {
             insertRow.image_url = q.image_url.slice(0, 2000)
           }
 
@@ -236,7 +274,7 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
           } else {
             createdQuestions += 1
 
-            // Enqueue an AI forecast so jauges fill up quickly
+            // Enqueue AI forecast pour remplir les jauges rapidement
             await supabase.from('forecast_event_queue').insert({
               event_type: 'forecast.ai.forecast.requested',
               correlation_id: qRow.id,
@@ -273,12 +311,13 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
     await new Promise((r) => setTimeout(r, 3000))
   }
 
-  console.log(`[question-generator] Terminé — ${createdEvents} événement(s), ${createdQuestions} question(s) ouvertes.`)
+  console.log(`[question-generator] Terminé — ${createdEvents} événement(s), ${createdQuestions} question(s) ouvertes. Canaux: ${selected.map(c => c.slug).join(', ')}`)
 
   return {
     createdEvents,
     createdQuestions,
     skippedNoChannels: false,
-    channelsConsidered: channels.length,
+    channelsConsidered: allChannels.length,
+    channelsSelected: selected.map(c => c.slug),
   }
 }

@@ -291,7 +291,11 @@ export function parseGeminiJson<T>(text: string): T | null {
     .trim()
 
   // 2. Extraire le bloc JSON principal (premier { … dernier })
-  const match = cleaned.match(/\{[\s\S]*\}/)
+  //    Gère le cas où Gemini inclut du "raisonnement" avant le JSON
+  const firstBrace = cleaned.indexOf('{')
+  if (firstBrace === -1) return null
+  const fromBrace = cleaned.slice(firstBrace)
+  const match = fromBrace.match(/\{[\s\S]*\}/)
   if (!match) return null
   let json = match[0]
 

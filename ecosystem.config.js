@@ -23,7 +23,8 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: '256M',
+      // Génération Gemini par canal : éviter des redémarrages PM2 au milieu d’un run
+      max_memory_restart: '512M',
       restart_delay: 5000,
       max_restarts: 50,
       env: {

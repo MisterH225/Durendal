@@ -139,16 +139,20 @@ const TASKS: Task[] = [
   },
 ]
 
+const RETRY_AFTER_FAILURE_MS = 15 * 60 * 1000 // réessai 15 min si une tâche lève (ex. Gemini)
+
 export async function runSchedulerTick() {
   const now = Date.now()
 
   for (const task of TASKS) {
     if (now - task.lastRanAt >= task.intervalMs) {
-      task.lastRanAt = now
       try {
         await task.fn()
+        task.lastRanAt = Date.now()
       } catch (e) {
         console.error(`[scheduler] Erreur tâche ${task.name} :`, e)
+        // Ne pas bloquer jusqu’à la fin de l’intervalle : réessayer bientôt
+        task.lastRanAt = now - task.intervalMs + RETRY_AFTER_FAILURE_MS
       }
     }
   }

@@ -8,13 +8,64 @@
  */
 
 // ── Chargement des env vars (doit être AVANT tout autre import) ───────────────
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { config as loadEnv } from 'dotenv'
-import { resolve } from 'path'
 
-// Tente .env.local d'abord, puis .env (ordre identique à Next.js en production)
-loadEnv({ path: resolve(process.cwd(), '.env.local') })
-loadEnv({ path: resolve(process.cwd(), '.env.production') })
-loadEnv({ path: resolve(process.cwd(), '.env') })
+/** Répertoire de ce fichier (apps/worker/src), fiable même si process.cwd() est faux sous PM2. */
+function bootstrapDir(): string | null {
+  try {
+    const u = import.meta?.url
+    if (!u) return null
+    return path.dirname(fileURLToPath(u))
+  } catch {
+    return null
+  }
+}
+
+/** Remonte les dossiers depuis `starts` pour trouver la racine du repo (package.json name = marketlens). */
+function findMarketlensRoot(starts: string[]): string | null {
+  for (const start of starts) {
+    let dir = path.resolve(start)
+    for (let depth = 0; depth < 24; depth++) {
+      const pkgPath = path.join(dir, 'package.json')
+      if (fs.existsSync(pkgPath)) {
+        try {
+          const name = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))?.name as string | undefined
+          if (name === 'marketlens') return dir
+        } catch {
+          /* ignore */
+        }
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  }
+  return null
+}
+
+const fromBootstrap = bootstrapDir()
+const repoCandidates = [
+  ...(fromBootstrap
+    ? [fromBootstrap, path.resolve(fromBootstrap, '..', '..', '..')]
+    : []),
+  process.cwd(),
+  path.join(process.cwd(), 'apps', 'worker'),
+]
+
+const repoRoot = findMarketlensRoot(repoCandidates) ?? process.cwd()
+
+console.log('[worker] Racine repo pour .env :', repoRoot, '| cwd :', process.cwd())
+
+// D’abord la racine du repo (PM2 cwd peut être un sous-dossier), puis cwd avec override
+for (const file of ['.env.local', '.env.production', '.env'] as const) {
+  loadEnv({ path: path.join(repoRoot, file) })
+}
+for (const file of ['.env.local', '.env.production', '.env'] as const) {
+  loadEnv({ path: path.join(process.cwd(), file), override: true })
+}
 
 // ── Imports métier ────────────────────────────────────────────────────────────
 import { consumeForecastQueueOnce } from './queue/consumer'
@@ -32,7 +83,7 @@ function checkEnv() {
   const missing = required.filter(k => !process.env[k])
   if (missing.length > 0) {
     console.error('[worker] ⚠️  Variables d\'environnement manquantes :', missing.join(', '))
-    console.error('[worker] Vérifiez que .env.local est présent dans /var/www/durendal/')
+    console.error('[worker] Vérifiez .env.local à la racine du repo (ou dans le cwd PM2), avec SUPABASE_SERVICE_ROLE_KEY et GEMINI_API_KEY.')
     process.exit(1)
   }
 }

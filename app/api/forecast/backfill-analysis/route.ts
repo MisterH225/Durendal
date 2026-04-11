@@ -5,21 +5,13 @@ import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-const CRON_SECRET = process.env.CRON_SECRET
-
 /**
- * GET /api/forecast/backfill-analysis?secret=xxx&limit=5
+ * GET /api/forecast/backfill-analysis?limit=5
  * 
  * One-shot backfill: generates AI analysis for signals that don't have one yet.
  * Processes `limit` signals (default 3) per call to stay within timeouts.
  */
 export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get('secret')
-    ?? req.headers.get('authorization')?.replace('Bearer ', '')
-
-  if (CRON_SECRET && secret !== CRON_SECRET) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
-  }
 
   const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') ?? '3'), 10)
   const db = createAdminClient()

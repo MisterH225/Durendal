@@ -251,15 +251,34 @@ export async function runNewsSignalJob(): Promise<void> {
         return true
       })
 
-      // 5. Enrichir avec image OG (en parallèle, max 3 signaux)
+      // 5. Enrichir avec image OG + extraction article complet (en parallèle)
       const toInsert = await Promise.all(
         filtered.map(async (s) => {
           const url = s.source_url
             || groundingSources.find(gs => gs.url && gs.title)?.url
             || null
 
-          const imageUrl = url ? await fetchOgImage(url) : null
-          if (url) console.log(`[news-signal] OG image ${imageUrl ? '✓' : '✗'} pour ${url.slice(0, 60)}…`)
+          let imageUrl: string | null = null
+          let articleBody: string | null = null
+          let articleAuthor: string | null = null
+          let articlePublishedAt: string | null = null
+          let articlePublisher: string | null = null
+
+          if (url) {
+            try {
+              const { extractArticle } = await import('../../../../../lib/article-extractor')
+              const extracted = await extractArticle(url)
+              imageUrl = extracted.imageUrl
+              articleBody = extracted.body
+              articleAuthor = extracted.author
+              articlePublishedAt = extracted.publishedAt
+              articlePublisher = extracted.publisher
+              console.log(`[news-signal] Article extrait ${articleBody ? `✓ (${articleBody.length} chars)` : '✗'} pour ${url.slice(0, 60)}…`)
+            } catch (err) {
+              console.log(`[news-signal] Extraction échouée pour ${url.slice(0, 60)}…: ${err}`)
+              imageUrl = await fetchOgImage(url)
+            }
+          }
 
           return {
             channel_id:  channel.id,
@@ -272,6 +291,10 @@ export async function runNewsSignalJob(): Promise<void> {
               source_hint:       s.source_hint ?? null,
               source_url:        url,
               image_url:         imageUrl,
+              article_body:      articleBody,
+              article_author:    articleAuthor,
+              article_published: articlePublishedAt,
+              article_publisher: articlePublisher ?? s.source_hint ?? null,
               grounding_sources: groundingSources.slice(0, 5).map(gs => ({ title: gs.title, url: gs.url })),
               channel_slug:      channel.slug,
               generated_by:      'gemini-news-signal',

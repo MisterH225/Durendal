@@ -46,16 +46,26 @@ export function ArticleReadingPane({ article, locale }: Props) {
         {article.title}
       </h1>
 
-      {/* Excerpt indicator */}
-      {!hasBody && article.excerpt && (
-        <div className="rounded-lg bg-amber-500/5 border border-amber-500/15 px-4 py-3">
-          <p className="text-[11px] font-medium text-amber-400/80">
+      {/* Content indicator */}
+      {hasBody ? (
+        <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/15 px-4 py-3 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />
+          <p className="text-[11px] font-medium text-emerald-400/80">
             {locale === 'fr'
-              ? 'Extrait de la source — consultez l\'article original pour le texte complet'
-              : 'Source excerpt — visit the original article for the full text'}
+              ? 'Article complet disponible — l\'analyse IA est basée sur le contenu intégral'
+              : 'Full article available — AI analysis is based on the complete content'}
           </p>
         </div>
-      )}
+      ) : article.excerpt ? (
+        <div className="rounded-lg bg-amber-500/5 border border-amber-500/15 px-4 py-3 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+          <p className="text-[11px] font-medium text-amber-400/80">
+            {locale === 'fr'
+              ? 'Extrait de la source — l\'analyse IA est limitée au résumé disponible'
+              : 'Source excerpt — AI analysis is limited to the available summary'}
+          </p>
+        </div>
+      ) : null}
 
       {/* Article body */}
       <div className="prose-custom">

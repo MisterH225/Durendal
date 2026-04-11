@@ -124,51 +124,65 @@ async function handleMultiChoiceVote(
     }
   }
 
-  // Archive previous votes for this question
-  await db
-    .from('forecast_user_outcome_votes')
-    .update({ is_current: false })
-    .eq('question_id', questionId)
-    .eq('user_id', userId)
-    .eq('is_current', true)
+  try {
+    // Archive previous votes for this question
+    await db
+      .from('forecast_user_outcome_votes')
+      .update({ is_current: false })
+      .eq('question_id', questionId)
+      .eq('user_id', userId)
+      .eq('is_current', true)
 
-  // Get next revision
-  const { count } = await db
-    .from('forecast_user_outcome_votes')
-    .select('id', { count: 'exact', head: true })
-    .eq('question_id', questionId)
-    .eq('user_id', userId)
+    // Get next revision
+    const { count } = await db
+      .from('forecast_user_outcome_votes')
+      .select('id', { count: 'exact', head: true })
+      .eq('question_id', questionId)
+      .eq('user_id', userId)
 
-  const revision = Math.floor(((count ?? 0) / Math.max(1, outcomes.length))) + 1
+    const revision = Math.floor(((count ?? 0) / Math.max(1, outcomes.length))) + 1
 
-  const rows = outcomes.map(o => ({
-    outcome_id: o.outcome_id,
-    question_id: questionId,
-    user_id: userId,
-    probability: o.probability,
-    revision,
-    is_current: true,
-  }))
+    const rows = outcomes.map(o => ({
+      outcome_id: o.outcome_id,
+      question_id: questionId,
+      user_id: userId,
+      probability: o.probability,
+      revision,
+      is_current: true,
+    }))
 
-  const { error } = await db.from('forecast_user_outcome_votes').insert(rows)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    const { error: insertErr } = await db.from('forecast_user_outcome_votes').insert(rows)
+    if (insertErr) {
+      console.error('[multi-vote] insert failed:', insertErr.message, insertErr.details, insertErr.hint)
+      return NextResponse.json({ error: insertErr.message }, { status: 500 })
+    }
 
-  // Also increment forecast_count on the question
-  await db.rpc('increment_forecast_count', { qid: questionId }).catch(() => {
-    // Fallback if RPC doesn't exist
-    db.from('forecast_questions')
-      .update({ forecast_count: (db as any).sql`forecast_count + 1` })
-      .eq('id', questionId)
-  })
+    // Increment forecast_count (best-effort)
+    await db.rpc('increment_forecast_count', { qid: questionId }).catch(() => {
+      db.from('forecast_questions')
+        .update({ forecast_count: revision })
+        .eq('id', questionId)
+        .then(() => {})
+        .catch(() => {})
+    })
 
-  await publishForecastEvent({
-    type: 'forecast.blended.recompute.requested',
-    correlationId: questionId,
-    payload: { questionId, reason: 'user_forecast' as const },
-  })
+    // Events (best-effort)
+    try {
+      await publishForecastEvent({
+        type: 'forecast.blended.recompute.requested',
+        correlationId: questionId,
+        payload: { questionId, reason: 'user_forecast' as const },
+      })
+    } catch (e) {
+      console.error('[multi-vote] publishForecastEvent failed (non-blocking):', e instanceof Error ? e.message : e)
+    }
 
-  // Reward engine for multi-choice votes
-  processSubmissionRewards(db, userId, revision, false).catch(() => {})
+    // Reward engine for multi-choice votes (fire-and-forget)
+    processSubmissionRewards(db, userId, revision, false).catch(() => {})
 
-  return NextResponse.json({ ok: true, revision }, { status: 201 })
+    return NextResponse.json({ ok: true, revision }, { status: 201 })
+  } catch (e) {
+    console.error('[multi-vote] unexpected error:', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: e instanceof Error ? e.message : 'Erreur interne' }, { status: 500 })
+  }
 }

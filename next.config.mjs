@@ -6,6 +6,9 @@ const nextConfig = {
   },
   experimental: {
     serverComponentsExternalPackages: ['@supabase/ssr'],
+    staleTimes: {
+      dynamic: 0,
+    },
   },
   eslint: {
     ignoreDuringBuilds: true,

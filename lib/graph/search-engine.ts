@@ -2,17 +2,18 @@ import type {
   IntelligenceGraphNode, IntelligenceGraphEdge,
   GraphSearchResult, GraphFilters, GraphNodeType,
 } from './types'
-import { MOCK_NODES, MOCK_EDGES } from './mock-data'
 
 // ============================================================================
-// Intelligence Graph Search Engine — v3
-// Stopwords + word-boundary matching + token coverage threshold
+// Intelligence Graph Search Engine — v4
+// Works with both mock and real Supabase data.
+// When real data is provided, the scoring thresholds are relaxed because
+// Supabase ilike already pre-filters relevance.
 // ============================================================================
 
-const MAX_ANCHOR_NODES = 5
+const MAX_ANCHOR_NODES = 8
 const MAX_NEIGHBORHOOD_DEPTH = 1
-const MAX_TOTAL_NODES = 30
-const MIN_EXPANSION_CONFIDENCE = 0.65
+const MAX_TOTAL_NODES = 50
+const MIN_EXPANSION_CONFIDENCE = 0.5
 
 const STOPWORDS = new Set([
   'de', 'du', 'des', 'le', 'la', 'les', 'l', 'un', 'une',
@@ -91,8 +92,8 @@ function scoreNodeAgainstQuery(
 
   const tokenHitRatio = tokens.length > 0 ? tokensHit / tokens.length : 0
 
-  const minTokenCoverage = tokens.length <= 2 ? 0.5 : 0.3
-  const minScore = tokens.length <= 2 ? 28 : 40
+  const minTokenCoverage = tokens.length <= 2 ? 0.3 : 0.2
+  const minScore = tokens.length <= 2 ? 8 : 15
 
   if (keywordScore < minScore || tokenHitRatio < minTokenCoverage) return null
 
@@ -193,8 +194,8 @@ function pruneWeakNodes(
 export function searchGraph(
   query: string,
   filters: GraphFilters,
-  allNodes: IntelligenceGraphNode[] = MOCK_NODES,
-  allEdges: IntelligenceGraphEdge[] = MOCK_EDGES,
+  allNodes: IntelligenceGraphNode[] = [],
+  allEdges: IntelligenceGraphEdge[] = [],
 ): GraphSearchResult {
   const normalizedQuery = normalizeText(query)
   const tokens = tokenize(query)
@@ -288,12 +289,15 @@ export function searchGraph(
   }
 }
 
-export function getSuggestions(partial: string): IntelligenceGraphNode[] {
+export function getSuggestions(
+  partial: string,
+  allNodes: IntelligenceGraphNode[] = [],
+): IntelligenceGraphNode[] {
   if (partial.length < 2) return []
   const norm = normalizeText(partial)
   const tokens = tokenize(partial)
 
-  return MOCK_NODES
+  return allNodes
     .filter(n => {
       const label = normalizeText(n.label)
       const subtitle = normalizeText(n.subtitle ?? '')

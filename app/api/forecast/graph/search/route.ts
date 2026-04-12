@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { searchGraph, getSuggestions } from '@/lib/graph/search-engine'
+import { searchGraph } from '@/lib/graph/search-engine'
+import { loadGraphFromSupabase, getSuggestionsFromSupabase } from '@/lib/graph/supabase-graph-loader'
 import { DEFAULT_FILTERS } from '@/lib/graph/types'
 import type { GraphFilters } from '@/lib/graph/types'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
@@ -9,8 +12,13 @@ export async function GET(req: NextRequest) {
   const mode = searchParams.get('mode') ?? 'search'
 
   if (mode === 'suggest') {
-    const suggestions = getSuggestions(query)
-    return NextResponse.json({ suggestions })
+    try {
+      const suggestions = await getSuggestionsFromSupabase(query)
+      return NextResponse.json({ suggestions })
+    } catch (err) {
+      console.error('[graph/suggest] error:', err)
+      return NextResponse.json({ suggestions: [] })
+    }
   }
 
   if (!query) {
@@ -27,6 +35,27 @@ export async function GET(req: NextRequest) {
   const minConf = searchParams.get('minConfidence')
   if (minConf) filters.minConfidence = parseFloat(minConf)
 
-  const result = searchGraph(query, filters)
-  return NextResponse.json(result)
+  try {
+    const { nodes, edges } = await loadGraphFromSupabase(query)
+
+    if (nodes.length === 0) {
+      return NextResponse.json({
+        query,
+        nodes: [],
+        edges: [],
+        anchorNodeIds: [],
+        groupedMatches: { articles: [], events: [], entities: [], questions: [], signals: [], documents: [] },
+        totals: { articles: 0, events: 0, entities: 0, questions: 0, signals: 0, documents: 0 },
+      })
+    }
+
+    const result = searchGraph(query, filters, nodes, edges)
+    return NextResponse.json(result)
+  } catch (err) {
+    console.error('[graph/search] error:', err)
+    return NextResponse.json(
+      { error: 'Erreur lors de la recherche dans le graphe' },
+      { status: 500 },
+    )
+  }
 }

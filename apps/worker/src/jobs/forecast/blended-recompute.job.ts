@@ -2,7 +2,7 @@ import { createWorkerSupabase } from '../../supabase'
 
 interface BlendedRecomputePayload {
   questionId: string
-  reason: 'user_forecast' | 'ai_forecast' | 'manual'
+  reason: 'user_forecast' | 'ai_forecast' | 'manual' | 'market_move'
 }
 
 function median(sorted: number[]): number {
@@ -41,35 +41,26 @@ async function recomputeBinary(
   previousBlended: number | null,
   reason: string,
 ) {
-  const { data: userForecasts } = await supabase
-    .from('forecast_user_forecasts')
-    .select('probability')
-    .eq('question_id', questionId)
-    .eq('is_current', true)
+  const [{ data: userForecasts }, { data: aiRow }, marketProbability] = await Promise.all([
+    supabase
+      .from('forecast_user_forecasts')
+      .select('probability')
+      .eq('question_id', questionId)
+      .eq('is_current', true),
+    supabase
+      .from('forecast_ai_forecasts')
+      .select('probability')
+      .eq('question_id', questionId)
+      .eq('is_current', true)
+      .maybeSingle(),
+    fetchMarketProbability(supabase, questionId),
+  ])
 
   const crowdProbs = (userForecasts ?? []).map(f => f.probability).sort((a, b) => a - b)
-  let crowdProbability: number | null = null
-  if (crowdProbs.length > 0) {
-    crowdProbability = median(crowdProbs)
-  }
-
-  const { data: aiRow } = await supabase
-    .from('forecast_ai_forecasts')
-    .select('probability')
-    .eq('question_id', questionId)
-    .eq('is_current', true)
-    .maybeSingle()
-
+  const crowdProbability = crowdProbs.length > 0 ? median(crowdProbs) : null
   const aiProbability = aiRow?.probability ?? null
 
-  let blended: number | null = null
-  if (crowdProbability !== null && aiProbability !== null) {
-    blended = (crowdProbability + aiProbability) / 2
-  } else if (crowdProbability !== null) {
-    blended = crowdProbability
-  } else if (aiProbability !== null) {
-    blended = aiProbability
-  }
+  const blended = computeThreeWayBlend(aiProbability, crowdProbability, marketProbability)
 
   const now = new Date().toISOString()
 
@@ -78,6 +69,7 @@ async function recomputeBinary(
     .update({
       crowd_probability: crowdProbability,
       ai_probability: aiProbability,
+      market_probability: marketProbability,
       blended_probability: blended,
       forecast_count: crowdProbs.length,
       updated_at: now,
@@ -107,7 +99,68 @@ async function recomputeBinary(
     }
   }
 
-  console.log(`[blended-recompute] Binary ${questionId} — crowd=${crowdProbability?.toFixed(3) ?? '—'} ai=${aiProbability?.toFixed(3) ?? '—'} blended=${blended?.toFixed(3) ?? '—'}`)
+  console.log(`[blended-recompute] Binary ${questionId} — crowd=${crowdProbability?.toFixed(3) ?? '—'} ai=${aiProbability?.toFixed(3) ?? '—'} market=${marketProbability?.toFixed(3) ?? '—'} blended=${blended?.toFixed(3) ?? '—'}`)
+}
+
+/**
+ * Fetches the latest market probability from linked external prediction markets.
+ * Returns null if no confirmed link exists.
+ */
+async function fetchMarketProbability(
+  supabase: ReturnType<typeof createWorkerSupabase>,
+  questionId: string,
+): Promise<number | null> {
+  const { data: links } = await supabase
+    .from('external_market_question_links')
+    .select('market_id')
+    .eq('question_id', questionId)
+    .eq('status', 'confirmed')
+    .limit(3)
+
+  if (!links?.length) return null
+
+  const marketIds = links.map(l => l.market_id)
+  const { data: snapshots } = await supabase
+    .from('external_market_snapshots')
+    .select('market_id, probability, captured_at')
+    .in('market_id', marketIds)
+    .order('captured_at', { ascending: false })
+    .limit(marketIds.length)
+
+  if (!snapshots?.length) return null
+
+  const seen = new Set<string>()
+  const latest: number[] = []
+  for (const s of snapshots) {
+    if (!seen.has(s.market_id)) {
+      seen.add(s.market_id)
+      if (s.probability != null) latest.push(s.probability)
+    }
+  }
+
+  return latest.length > 0
+    ? latest.reduce((a, b) => a + b, 0) / latest.length
+    : null
+}
+
+/**
+ * Three-way weighted blend: AI (40%), Crowd (35%), Market (25%).
+ * Falls back to available sources with proportional weight redistribution.
+ */
+function computeThreeWayBlend(
+  ai: number | null,
+  crowd: number | null,
+  market: number | null,
+): number | null {
+  const sources: Array<{ value: number; weight: number }> = []
+  if (ai !== null) sources.push({ value: ai, weight: 0.40 })
+  if (crowd !== null) sources.push({ value: crowd, weight: 0.35 })
+  if (market !== null) sources.push({ value: market, weight: 0.25 })
+
+  if (sources.length === 0) return null
+
+  const totalWeight = sources.reduce((sum, s) => sum + s.weight, 0)
+  return sources.reduce((sum, s) => sum + s.value * (s.weight / totalWeight), 0)
 }
 
 async function recomputeMultiChoice(

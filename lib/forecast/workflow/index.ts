@@ -8,4 +8,4 @@ export * from './outbox'
 export * from './feature-flag'
 export * from './observability'
 export * from './database-rows'
-export * from './flows'
+// flows.ts moved to docs/intel-workflow/sample-flows.ts (documentation only)

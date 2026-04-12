@@ -1,5 +1,8 @@
 /**
- * Noms d'événements intel (queue / outbox). Aligné sur lib/forecast/workflow/payloads.ts */
+ * Canonical event name unions for the unified queue and outbox.
+ * Single source of truth — imported by both lib/forecast/workflow and worker.
+ */
+
 export type IntelWorkflowEventName =
   | 'intel.signal.ingested'
   | 'intel.signal.enriched'
@@ -15,3 +18,14 @@ export type IntelWorkflowEventName =
   | 'intel.alert.triggered'
   | 'intel.veille_export.requested'
   | 'intel.analyst_review.created'
+
+export type IngestionEventType =
+  | 'ingestion.signal.ready_for_enrichment'
+  | 'ingestion.signal.linked_to_event'
+  | 'ingestion.signal.link_needs_review'
+  | 'ingestion.market.move.detected'
+
+export type UnifiedEventType =
+  | import('./events').ForecastEventType
+  | IntelWorkflowEventName
+  | IngestionEventType

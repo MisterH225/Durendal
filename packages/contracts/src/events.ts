@@ -36,7 +36,7 @@ export interface UserForecastSubmittedPayload {
 
 export interface BlendedRecomputeRequestedPayload {
   questionId: string
-  reason: 'user_forecast' | 'ai_forecast' | 'manual'
+  reason: 'user_forecast' | 'ai_forecast' | 'manual' | 'market_move'
 }
 
 export interface AIForecastRequestedPayload {

@@ -1,24 +1,10 @@
 /**
  * Typed payloads for workflow events (outbox + forecast_event_queue integration).
+ * IntelWorkflowEventName is re-exported from packages/contracts (single source of truth).
  */
 
 import type { UUID } from './types'
-
-export type IntelWorkflowEventName =
-  | 'intel.signal.ingested'
-  | 'intel.signal.enriched'
-  | 'intel.signal.linked'
-  | 'intel.signal.rejected'
-  | 'intel.event.created'
-  | 'intel.event.context.updated'
-  | 'intel.event.severity.changed'
-  | 'intel.event.material_change.detected'
-  | 'intel.question.recalculation.requested'
-  | 'intel.forecast.ai.updated'
-  | 'intel.forecast.blended.updated'
-  | 'intel.alert.triggered'
-  | 'intel.veille_export.requested'
-  | 'intel.analyst_review.created'
+export type { IntelWorkflowEventName, IngestionEventType, UnifiedEventType } from '@/packages/contracts/src/intel-workflow'
 
 export interface IntelEventEnvelope<TPayload extends Record<string, unknown> = Record<string, unknown>> {
   id: UUID

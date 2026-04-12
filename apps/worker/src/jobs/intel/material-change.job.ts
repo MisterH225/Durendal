@@ -26,15 +26,23 @@ export async function runMaterialChangeJob(input: {
 
   if (!event || !snapshot) return { status: 'skipped', reason: 'missing_event_or_snapshot' } as const
 
+  const previousSnapshot = await fetchPreviousSnapshot(admin, input.intelEventId, input.snapshotId)
+  const signalTrust = await resolveSignalTrustTier(admin, input.triggerSignalIds)
+  const novelty = computeSnapshotNovelty(snapshot, previousSnapshot)
+  const contradiction = computeContradiction(snapshot, previousSnapshot)
+  const newKeyEntity = detectNewKeyEntities(snapshot, previousSnapshot)
+  const regionChanged = previousSnapshot?.structured_facts?.primary_region !== (snapshot.structured_facts as any)?.primary_region
+  const sectorChanged = previousSnapshot?.structured_facts?.sectors?.join() !== (snapshot.structured_facts as any)?.sectors?.join()
+
   const factors = computeMaterialityScore({
-    sourceTrustTier: 3,
-    novelty: 0.25,
-    contradiction: 0.1,
-    newKeyEntity: false,
-    prevSeverity: event.severity ?? 2,
+    sourceTrustTier: signalTrust,
+    novelty,
+    contradiction,
+    newKeyEntity,
+    prevSeverity: previousSnapshot?.severity ?? event.severity ?? 2,
     nextSeverity: event.severity ?? 2,
-    regionChanged: false,
-    sectorChanged: false,
+    regionChanged,
+    sectorChanged,
     timelineDeltaDays: null,
     signalConfidence: 0.6,
     duplicatePenalty: 0,
@@ -121,4 +129,76 @@ export async function runMaterialChangeJob(input: {
   })
 
   return { status: 'scheduled', requestId: request.id, score: factors.score } as const
+}
+
+// ── Helper: fetch the previous snapshot for diff-based scoring ─────────────
+
+type SnapshotRow = { id: string; structured_facts: any; severity?: number }
+
+async function fetchPreviousSnapshot(
+  admin: ReturnType<typeof createAdminClient>,
+  intelEventId: UUID,
+  currentSnapshotId: UUID,
+): Promise<SnapshotRow | null> {
+  const { data } = await admin
+    .from('intel_event_context_snapshots')
+    .select('id, structured_facts')
+    .eq('intel_event_id', intelEventId)
+    .neq('id', currentSnapshotId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  return data ?? null
+}
+
+async function resolveSignalTrustTier(
+  admin: ReturnType<typeof createAdminClient>,
+  signalIds?: UUID[],
+): Promise<number> {
+  if (!signalIds?.length) return 3
+  const { data } = await admin
+    .from('source_trust_profiles')
+    .select('trust_score')
+    .limit(1)
+  if (!data?.length) return 3
+  const score = data[0].trust_score ?? 0.5
+  if (score >= 0.8) return 5
+  if (score >= 0.6) return 4
+  if (score >= 0.4) return 3
+  if (score >= 0.2) return 2
+  return 1
+}
+
+function computeSnapshotNovelty(current: SnapshotRow, previous: SnapshotRow | null): number {
+  if (!previous) return 0.5
+  const currentFacts = JSON.stringify(current.structured_facts ?? {})
+  const previousFacts = JSON.stringify(previous.structured_facts ?? {})
+  if (currentFacts === previousFacts) return 0
+  const currentKeys = Object.keys(current.structured_facts ?? {})
+  const previousKeys = new Set(Object.keys(previous.structured_facts ?? {}))
+  const newKeys = currentKeys.filter(k => !previousKeys.has(k))
+  return Math.min(1, 0.2 + (newKeys.length * 0.15))
+}
+
+function computeContradiction(current: SnapshotRow, previous: SnapshotRow | null): number {
+  if (!previous?.structured_facts || !current.structured_facts) return 0
+  const prev = previous.structured_facts as Record<string, unknown>
+  const curr = current.structured_facts as Record<string, unknown>
+  let contradictions = 0
+  let comparisons = 0
+  for (const key of Object.keys(prev)) {
+    if (key in curr && typeof prev[key] === typeof curr[key]) {
+      comparisons++
+      if (JSON.stringify(prev[key]) !== JSON.stringify(curr[key])) contradictions++
+    }
+  }
+  return comparisons > 0 ? Math.min(1, contradictions / comparisons) : 0
+}
+
+function detectNewKeyEntities(current: SnapshotRow, previous: SnapshotRow | null): boolean {
+  const currEntities = (current.structured_facts as any)?.key_entities ?? []
+  if (!previous) return currEntities.length > 0
+  const prevEntities = new Set((previous.structured_facts as any)?.key_entities ?? [])
+  return currEntities.some((e: string) => !prevEntities.has(e))
 }

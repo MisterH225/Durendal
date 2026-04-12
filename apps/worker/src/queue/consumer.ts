@@ -6,7 +6,9 @@ import { runNewsSignalJob } from '../jobs/forecast/news-signal.job'
 import { runResolutionSourceJob } from '../jobs/resolution/resolution-source.job'
 import { runResolutionProposalJob } from '../jobs/resolution/resolution-proposal.job'
 import { runRewardProcessJob } from '../jobs/rewards/reward-process.job'
-import { FORECAST_TOPICS } from './topics'
+import { runSignalEnrichmentJob } from '../jobs/ingestion/signal-enrichment.job'
+import { runMarketMoveJob } from '../jobs/ingestion/market-move.job'
+import { FORECAST_TOPICS, INGESTION_TOPICS } from './topics'
 
 type QueueRow = {
   id: string
@@ -121,8 +123,21 @@ async function processOne(row: QueueRow) {
       // No-op: submit already queues a separate blended.recompute.requested.
       break
 
+    // ── Ingestion events ──────────────────────────────────────────────────
+    case INGESTION_TOPICS.SIGNAL_READY_FOR_ENRICHMENT:
+      await runSignalEnrichmentJob(jobPayload)
+      break
+
+    case INGESTION_TOPICS.MARKET_MOVE_DETECTED:
+      await runMarketMoveJob(jobPayload)
+      break
+
+    case INGESTION_TOPICS.SIGNAL_LINKED_TO_EVENT:
+    case INGESTION_TOPICS.SIGNAL_LINK_NEEDS_REVIEW:
+      // Informational events — logged via outbox, no worker action needed
+      break
+
     default:
-      // Unknown event types are marked done to avoid blocking.
       console.warn(`[consumer] Event type inconnu ignoré : ${row.event_type}`)
       break
   }

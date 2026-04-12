@@ -37,3 +37,12 @@ export const INTEL_TOPICS = {
 } as const
 
 export type IntelTopic = (typeof INTEL_TOPICS)[keyof typeof INTEL_TOPICS]
+
+export const INGESTION_TOPICS = {
+  SIGNAL_READY_FOR_ENRICHMENT: 'ingestion.signal.ready_for_enrichment',
+  SIGNAL_LINKED_TO_EVENT:      'ingestion.signal.linked_to_event',
+  SIGNAL_LINK_NEEDS_REVIEW:    'ingestion.signal.link_needs_review',
+  MARKET_MOVE_DETECTED:        'ingestion.market.move.detected',
+} as const
+
+export type IngestionTopic = (typeof INGESTION_TOPICS)[keyof typeof INGESTION_TOPICS]

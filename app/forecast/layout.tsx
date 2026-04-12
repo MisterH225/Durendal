@@ -69,6 +69,7 @@ export default async function ForecastLayout({ children }: { children: React.Rea
               { href: '/forecast/signals', label: tr(locale, 'nav.signals') },
               { href: '/forecast/leaderboard', label: tr(locale, 'nav.leaderboard') },
               { href: '/forecast/veille', label: locale === 'fr' ? 'Veille' : 'Intel' },
+              { href: '/forecast/graph', label: 'Graph' },
             ].map(link => (
               <Link key={link.href} href={link.href}
                 className="text-[10px] px-2.5 py-1 rounded-md font-medium text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/80 transition-colors whitespace-nowrap dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800/50">

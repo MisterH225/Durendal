@@ -7,6 +7,7 @@ const dict = {
     'nav.signals':    'Signaux',
     'nav.leaderboard':'Classement',
     'nav.veille':     'Veille Concurrentielle',
+    'nav.graph':      'Graph Intel',
     'nav.dashboard':  'Tableau de bord',
     'nav.login':      'Connexion',
 
@@ -180,6 +181,7 @@ const dict = {
     'nav.signals':    'Signals',
     'nav.leaderboard':'Leaderboard',
     'nav.veille':     'Competitive Intel',
+    'nav.graph':      'Graph Explorer',
     'nav.dashboard':  'Dashboard',
     'nav.login':      'Sign in',
 

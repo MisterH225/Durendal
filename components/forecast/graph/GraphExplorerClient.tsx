@@ -163,7 +163,13 @@ function GraphExplorerInner() {
 
           {viewMode === 'timeline' && result && (
             <div className="h-full overflow-y-auto">
-              <TimelinePanel nodes={result.nodes} selectedNodeId={selectedNodeId} onNodeSelect={onNodeSelect} />
+              <TimelinePanel
+                nodes={result.nodes}
+                edges={result.edges}
+                query={result.query}
+                selectedNodeId={selectedNodeId}
+                onNodeSelect={onNodeSelect}
+              />
             </div>
           )}
         </div>

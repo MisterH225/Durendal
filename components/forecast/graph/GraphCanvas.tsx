@@ -16,7 +16,7 @@ import {
 import '@xyflow/react/dist/style.css'
 
 import { IntelNode, type IntelNodeData } from './IntelNode'
-import type { IntelligenceGraphNode, IntelligenceGraphEdge } from '@/lib/graph/types'
+import type { IntelligenceGraphNode, IntelligenceGraphEdge, GraphNodeType } from '@/lib/graph/types'
 import { NODE_TYPE_CONFIG, EDGE_TYPE_CONFIG } from '@/lib/graph/types'
 
 const nodeTypes: NodeTypes = {
@@ -38,56 +38,127 @@ interface GraphCanvasProps {
   onNodeDoubleClick: (nodeId: string) => void
 }
 
+const NODE_WIDTH: Record<string, number> = { lg: 220, md: 180, sm: 160 }
+const NODE_HEIGHT = 70
+const MIN_SPACING_X = 40
+const MIN_SPACING_Y = 30
+
+function getNodeDimensions(type: GraphNodeType): { w: number; h: number } {
+  const size = NODE_TYPE_CONFIG[type]?.size ?? 'sm'
+  return { w: NODE_WIDTH[size], h: NODE_HEIGHT }
+}
+
+function resolveCollisions(positions: Map<string, { x: number; y: number; w: number; h: number }>, iterations = 30) {
+  const entries = Array.from(positions.entries())
+  for (let iter = 0; iter < iterations; iter++) {
+    let moved = false
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const [, a] = entries[i]
+        const [, b] = entries[j]
+        const overlapX = (a.w / 2 + b.w / 2 + MIN_SPACING_X) - Math.abs(a.x - b.x)
+        const overlapY = (a.h / 2 + b.h / 2 + MIN_SPACING_Y) - Math.abs(a.y - b.y)
+        if (overlapX > 0 && overlapY > 0) {
+          const pushX = overlapX / 2 + 5
+          const pushY = overlapY / 2 + 5
+          if (overlapX < overlapY) {
+            const dir = a.x < b.x ? -1 : 1
+            a.x += dir * pushX
+            b.x -= dir * pushX
+          } else {
+            const dir = a.y < b.y ? -1 : 1
+            a.y += dir * pushY
+            b.y -= dir * pushY
+          }
+          moved = true
+        }
+      }
+    }
+    if (!moved) break
+  }
+}
+
 function layoutNodes(
   nodes: IntelligenceGraphNode[],
   edges: IntelligenceGraphEdge[],
   anchorIds: Set<string>,
 ): Node[] {
-  const adjacency = new Map<string, string[]>()
+  if (nodes.length === 0) return []
+
+  const adjacency = new Map<string, Set<string>>()
   for (const e of edges) {
-    adjacency.set(e.source, [...(adjacency.get(e.source) ?? []), e.target])
-    adjacency.set(e.target, [...(adjacency.get(e.target) ?? []), e.source])
+    if (!adjacency.has(e.source)) adjacency.set(e.source, new Set())
+    if (!adjacency.has(e.target)) adjacency.set(e.target, new Set())
+    adjacency.get(e.source)!.add(e.target)
+    adjacency.get(e.target)!.add(e.source)
   }
 
-  const positioned = new Map<string, { x: number; y: number }>()
+  const positions = new Map<string, { x: number; y: number; w: number; h: number }>()
   const anchors = nodes.filter(n => anchorIds.has(n.id))
-  const others = nodes.filter(n => !anchorIds.has(n.id))
+  const nonAnchors = nodes.filter(n => !anchorIds.has(n.id))
 
+  const anchorRadius = Math.max(450, anchors.length * 100)
   const angleStep = (2 * Math.PI) / Math.max(anchors.length, 1)
-  const anchorRadius = Math.max(300, anchors.length * 60)
   anchors.forEach((n, i) => {
     const angle = angleStep * i - Math.PI / 2
-    positioned.set(n.id, {
+    const dim = getNodeDimensions(n.type)
+    positions.set(n.id, {
       x: Math.cos(angle) * anchorRadius,
       y: Math.sin(angle) * anchorRadius,
+      w: dim.w, h: dim.h,
     })
   })
 
-  for (const n of others) {
-    const neighbors = adjacency.get(n.id) ?? []
-    const positionedNeighbors = neighbors
-      .map(id => positioned.get(id))
-      .filter(Boolean) as { x: number; y: number }[]
+  const layers: IntelligenceGraphNode[][] = [[], [], []]
+  for (const n of nonAnchors) {
+    const neighbors = adjacency.get(n.id)
+    const hasAnchorNeighbor = neighbors && [...neighbors].some(id => anchorIds.has(id))
+    if (hasAnchorNeighbor) layers[0].push(n)
+    else if (neighbors && neighbors.size > 0) layers[1].push(n)
+    else layers[2].push(n)
+  }
 
-    if (positionedNeighbors.length > 0) {
-      const cx = positionedNeighbors.reduce((s, p) => s + p.x, 0) / positionedNeighbors.length
-      const cy = positionedNeighbors.reduce((s, p) => s + p.y, 0) / positionedNeighbors.length
-      const jitter = () => (Math.random() - 0.5) * 180
-      positioned.set(n.id, { x: cx + jitter(), y: cy + jitter() })
-    } else {
-      positioned.set(n.id, {
-        x: (Math.random() - 0.5) * 900,
-        y: (Math.random() - 0.5) * 900,
-      })
+  const ringRadii = [180, 320, 480]
+
+  for (let layer = 0; layer < layers.length; layer++) {
+    const group = layers[layer]
+    for (const n of group) {
+      const dim = getNodeDimensions(n.type)
+      const neighbors = adjacency.get(n.id) ?? new Set()
+      const positionedNeighbors = [...neighbors]
+        .map(id => positions.get(id))
+        .filter(Boolean) as { x: number; y: number }[]
+
+      if (positionedNeighbors.length > 0) {
+        const cx = positionedNeighbors.reduce((s, p) => s + p.x, 0) / positionedNeighbors.length
+        const cy = positionedNeighbors.reduce((s, p) => s + p.y, 0) / positionedNeighbors.length
+        const angle = Math.atan2(cy, cx) + (Math.random() - 0.5) * 1.2
+        const r = ringRadii[layer] + (Math.random() - 0.5) * 80
+        positions.set(n.id, {
+          x: cx + Math.cos(angle) * r,
+          y: cy + Math.sin(angle) * r,
+          w: dim.w, h: dim.h,
+        })
+      } else {
+        const angle = Math.random() * Math.PI * 2
+        const r = anchorRadius + ringRadii[layer]
+        positions.set(n.id, {
+          x: Math.cos(angle) * r,
+          y: Math.sin(angle) * r,
+          w: dim.w, h: dim.h,
+        })
+      }
     }
   }
 
+  resolveCollisions(positions)
+
   return nodes.map(n => {
-    const pos = positioned.get(n.id) ?? { x: 0, y: 0 }
+    const pos = positions.get(n.id) ?? { x: 0, y: 0 }
     return {
       id: n.id,
       type: 'intel',
-      position: pos,
+      position: { x: pos.x, y: pos.y },
       data: { ...n, isAnchor: anchorIds.has(n.id) } as IntelNodeData,
     }
   })
@@ -144,7 +215,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     useImperativeHandle(ref, () => ({
       zoomIn: () => zoomIn({ duration: 200 }),
       zoomOut: () => zoomOut({ duration: 200 }),
-      fitView: () => fitView({ padding: 0.2, duration: 400 }),
+      fitView: () => fitView({ padding: 0.15, duration: 400 }),
     }), [zoomIn, zoomOut, fitView])
 
     useEffect(() => {
@@ -152,7 +223,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         setNodes(layoutNodes(graphNodes, graphEdges, anchorSet))
         setEdges(toFlowEdges(graphEdges, nodeIdSet))
         prevNodesRef.current = graphNodes
-        setTimeout(() => fitView({ padding: 0.2, duration: 400 }), 100)
+        setTimeout(() => fitView({ padding: 0.15, duration: 400 }), 100)
       }
     }, [graphNodes, graphEdges, anchorSet, nodeIdSet, setNodes, setEdges, fitView])
 
@@ -219,8 +290,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.1}
+        fitViewOptions={{ padding: 0.15 }}
+        minZoom={0.05}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
         className="bg-neutral-950"

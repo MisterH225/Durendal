@@ -1,6 +1,6 @@
 'use client'
 
-import { X, ExternalLink, Crosshair, Network, Copy, Bookmark } from 'lucide-react'
+import { X, ExternalLink, Crosshair, Network, Copy } from 'lucide-react'
 import type { IntelligenceGraphNode, IntelligenceGraphEdge } from '@/lib/graph/types'
 import { NODE_TYPE_CONFIG, EDGE_TYPE_CONFIG } from '@/lib/graph/types'
 
@@ -38,6 +38,10 @@ export function GraphDetailPanel({
     arr.push(c)
     groupedConnections.set(key, arr)
   }
+
+  const linkedArticles = connectedNodes.filter(
+    c => c.neighbor && (c.neighbor.type === 'article' || c.neighbor.type === 'signal'),
+  )
 
   return (
     <div className="w-[340px] flex-shrink-0 bg-neutral-900 border-l border-neutral-800 overflow-y-auto">
@@ -87,22 +91,61 @@ export function GraphDetailPanel({
           </div>
         )}
 
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <button onClick={() => onRecenter(node.id)} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-blue-500/15 text-blue-400 border border-blue-500/25 hover:bg-blue-500/25 transition-colors">
             <Crosshair size={11} /> Recentrer
           </button>
-          <button onClick={() => onNavigate(node.id)} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-neutral-800 text-neutral-300 border border-neutral-700 hover:bg-neutral-700 transition-colors">
-            <Network size={11} /> Explorer
+          <button onClick={() => onRecenter(node.id)} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-violet-500/15 text-violet-400 border border-violet-500/25 hover:bg-violet-500/25 transition-colors">
+            <Network size={11} /> Explorer voisinage
           </button>
           {node.url && (
             <a href={node.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-neutral-800 text-neutral-300 border border-neutral-700 hover:bg-neutral-700 transition-colors">
               <ExternalLink size={11} /> Ouvrir
             </a>
           )}
-          <button className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-neutral-800 text-neutral-300 border border-neutral-700 hover:bg-neutral-700 transition-colors">
+          <button
+            onClick={() => navigator.clipboard.writeText(node.label)}
+            className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-neutral-800 text-neutral-300 border border-neutral-700 hover:bg-neutral-700 transition-colors"
+          >
             <Copy size={11} />
           </button>
         </div>
+
+        {linkedArticles.length > 0 && (
+          <div>
+            <h4 className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider mb-2">
+              Sources & articles liés ({linkedArticles.length})
+            </h4>
+            <div className="space-y-1.5">
+              {linkedArticles.map(({ edge, neighbor }) => {
+                if (!neighbor) return null
+                const ncfg = NODE_TYPE_CONFIG[neighbor.type]
+                return (
+                  <div key={edge.id} className="rounded-lg border border-neutral-800 bg-neutral-800/40 p-2">
+                    <div className="flex items-start gap-2">
+                      <span className="text-xs mt-0.5">{ncfg.icon}</span>
+                      <div className="min-w-0 flex-1">
+                        <button
+                          onClick={() => onNavigate(neighbor.id)}
+                          className="text-[11px] font-medium text-amber-300 hover:text-amber-200 hover:underline text-left leading-snug transition-colors"
+                        >
+                          {neighbor.label}
+                        </button>
+                        {neighbor.summary && (
+                          <p className="text-[10px] text-neutral-500 mt-0.5 line-clamp-2">{neighbor.summary}</p>
+                        )}
+                        <div className="flex items-center gap-2 mt-1">
+                          {neighbor.createdAt && <span className="text-[9px] text-neutral-600">{neighbor.createdAt}</span>}
+                          {edge.explanation && <span className="text-[9px] text-neutral-500 italic">{edge.explanation}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         <div>
           <h4 className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider mb-2">
@@ -120,11 +163,11 @@ export function GraphDetailPanel({
                       <button
                         key={edge.id}
                         onClick={() => onNavigate(neighbor.id)}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-neutral-800 transition-colors text-left"
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-neutral-800 transition-colors text-left group"
                       >
                         <span className="text-xs">{ncfg.icon}</span>
                         <div className="min-w-0 flex-1">
-                          <div className="text-[11px] font-medium text-neutral-200 truncate">{neighbor.label}</div>
+                          <div className="text-[11px] font-medium text-neutral-200 truncate group-hover:text-blue-300 transition-colors">{neighbor.label}</div>
                           {edge.explanation && (
                             <div className="text-[9px] text-neutral-500 truncate">{edge.explanation}</div>
                           )}

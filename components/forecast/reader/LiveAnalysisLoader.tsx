@@ -64,7 +64,13 @@ export function LiveAnalysisLoader({ signalId, locale, fallbackAnalysis }: Props
         })),
         whatToWatch: raw.whatToWatch ?? [],
         confidenceNote: raw.confidenceNote ?? undefined,
-        relatedForecasts: [],
+        relatedForecasts: (raw.relatedForecasts ?? []).map((f: any) => ({
+          id: f.id ?? f.title ?? '',
+          title: f.title ?? '',
+          crowdProbability: f.crowdProbability ?? f.probability ?? 0,
+          aiProbability: f.aiProbability ?? f.probability ?? 0,
+          blendedProbability: f.blendedProbability ?? f.probability ?? 0,
+        })),
       }
 
       const hasAnyContent = mapped.executiveTakeaway

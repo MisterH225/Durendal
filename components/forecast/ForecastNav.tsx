@@ -8,9 +8,10 @@ export function ForecastNav({ locale }: { locale: Locale }) {
   const pathname = usePathname()
 
   const links = [
-    { href: '/forecast',            label: tr(locale, 'nav.explore'),     exact: true  },
-    { href: '/forecast/signals',    label: tr(locale, 'nav.signals'),     exact: false },
-    { href: '/forecast/leaderboard',label: locale === 'fr' ? 'Classement & Recompenses' : 'Leaderboard & Rewards', exact: false },
+    { href: '/forecast',             label: tr(locale, 'nav.explore'),     exact: true  },
+    { href: '/forecast/signals',     label: tr(locale, 'nav.signals'),     exact: false },
+    { href: '/forecast/leaderboard', label: tr(locale, 'nav.leaderboard'), exact: false },
+    { href: '/forecast/veille',      label: tr(locale, 'nav.veille'),      exact: false },
   ]
 
   return (

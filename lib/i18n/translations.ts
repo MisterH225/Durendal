@@ -6,6 +6,7 @@ const dict = {
     'nav.explore':    'Trending',
     'nav.signals':    'Signaux',
     'nav.leaderboard':'Classement',
+    'nav.veille':     'Veille Concurrentielle',
     'nav.dashboard':  'Tableau de bord',
     'nav.login':      'Connexion',
 
@@ -178,6 +179,7 @@ const dict = {
     'nav.explore':    'Trending',
     'nav.signals':    'Signals',
     'nav.leaderboard':'Leaderboard',
+    'nav.veille':     'Competitive Intel',
     'nav.dashboard':  'Dashboard',
     'nav.login':      'Sign in',
 

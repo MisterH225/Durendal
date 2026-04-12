@@ -4,15 +4,8 @@ import {
   Play, Bot, Zap, ChevronDown, RefreshCw, CheckCircle, AlertCircle,
   Layers, Globe, Newspaper, BarChart2, Search, BrainCircuit,
   Shield, Target, TrendingUp, MessageSquare, Sparkles, Lock,
+  FileSearch,
 } from 'lucide-react'
-
-const SUB_AGENTS = [
-  { key: 'web_scanner',             icon: Globe,        name: 'Scanner Web',         desc: 'Sites officiels + news directes',       color: 'text-blue-600 bg-blue-50' },
-  { key: 'press_monitor',           icon: Newspaper,    name: 'Presse Monitor',      desc: 'Reuters, Jeune Afrique, Bloomberg…',    color: 'text-emerald-600 bg-emerald-50' },
-  { key: 'analyst',                 icon: BarChart2,    name: 'Analyste Marché',     desc: 'Rapports sectoriels, forecasts',        color: 'text-violet-600 bg-violet-50' },
-  { key: 'deep_research',           icon: Search,       name: 'Chercheur Multi-angle', desc: 'Concurrents, expansion, partenariats', color: 'text-orange-600 bg-orange-50' },
-  { key: 'deep_research_iterative', icon: BrainCircuit, name: 'Deep Research IA',    desc: 'Itératif — Gemini adapte ses requêtes', color: 'text-rose-600 bg-rose-50' },
-]
 
 const CHALLENGER_AGENTS = [
   { key: 'blind_spots', icon: Search,  name: 'Angles morts',     desc: 'Identifie les zones d\'ombre, hypothèses non vérifiées et biais',             color: 'text-amber-600 bg-amber-50' },
@@ -29,53 +22,53 @@ type AgentDef = {
   color:         string
   sources:       string[]
   note:          string | null
-  hasSubAgents:  boolean
+  hasSubSteps?:  boolean
   hasChallengers?: boolean
   proOnly?:      boolean
 }
 
 const AGENTS: AgentDef[] = [
   {
-    num: 1, name: 'Agent de Collecte Parallèle', model: 'Gemini 2.5 Flash',
-    desc: '5 agents spécialisés lancés simultanément — chacun couvre un angle différent et l\'ensemble des entreprises de la veille.',
+    num: 1, name: 'Collecteur Gemini', model: 'Gemini 2.5 Flash + Google Search Grounding',
+    desc: 'Recherche en temps réel via Google Search Grounding, extraction d\'articles complets, déduplication par fingerprint, et analyse IA structurée de chaque signal.',
     endpoint: '/api/agents/scrape', color: 'orange',
-    sources: ['Perplexity Sonar Pro', 'Firecrawl', 'LinkedIn Proxycurl', 'Sites officiels', 'Bibliothèque sources'],
-    note: 'Déclenche toute la chaîne automatiquement', hasSubAgents: true,
+    sources: ['Gemini Search Grounding', 'Extraction d\'articles', 'Analyse IA structurée'],
+    note: 'Déclenche toute la chaîne automatiquement', hasSubSteps: true,
   },
   {
     num: 2, name: 'Rapport de Synthèse', model: 'Gemini 2.5 Flash',
     desc: 'Synthétise les signaux collectés en rapport structuré avec citations sources. Prend en compte les rapports précédents pour mesurer les progressions.',
     endpoint: '/api/agents/synthesize', color: 'amber',
-    sources: ['Signaux collectés', 'Rapports précédents'],
-    note: 'Auto-déclenché après l\'Agent 1', hasSubAgents: false,
+    sources: ['Signaux collectés + analyses', 'Rapports précédents'],
+    note: 'Auto-déclenché après le Collecteur', hasSubSteps: false,
   },
   {
     num: 2.5, name: 'Pipeline Challenger', model: 'Gemini 2.5 Flash ×4',
     desc: '3 agents Challengers auditent le rapport en parallèle (angles morts, validation factuelle, profondeur argumentaire), puis l\'agent de Synthèse produit un rapport final enrichi et robuste.',
     endpoint: '', color: 'emerald',
     sources: ['Rapport Agent 2', 'Signaux bruts', 'Retours des 3 Challengers'],
-    note: 'Auto-déclenché · Plans Pro & Business', hasSubAgents: false, hasChallengers: true, proOnly: true,
+    note: 'Auto-déclenché · Plans Pro & Business', hasSubSteps: false, hasChallengers: true, proOnly: true,
   },
   {
     num: 3, name: 'Analyse de Marché', model: 'Gemini 2.5 Flash',
     desc: 'Analyse macro — tendances structurelles, acteurs dominants, signaux de disruption, benchmarks concurrentiels, scénarios prospectifs.',
     endpoint: '/api/agents/analyze', color: 'green',
-    sources: ['Rapport enrichi', 'Signaux historiques'],
-    note: 'Auto-déclenché après l\'Agent 2', hasSubAgents: false,
+    sources: ['Rapport enrichi', 'Signaux avec analyses IA'],
+    note: 'Auto-déclenché après l\'Agent 2', hasSubSteps: false,
   },
   {
     num: 4, name: 'Recommandations Stratégiques', model: 'Gemini 2.5 Flash',
     desc: 'Croise l\'analyse de marché avec les objectifs de veille pour produire un plan d\'action avec SWOT, roadmap et scoring.',
     endpoint: '/api/agents/strategy', color: 'purple',
     sources: ['Rapport Agent 2/3', 'Objectifs veille'],
-    note: 'Auto-déclenché après l\'Agent 3', hasSubAgents: false,
+    note: 'Auto-déclenché après l\'Agent 3', hasSubSteps: false,
   },
   {
-    num: 5, name: 'Moteur de Prédictions', model: 'Gemini 2.5 Flash + MiroFish',
+    num: 5, name: 'Moteur de Prédictions', model: 'Gemini 2.5 Flash',
     desc: 'Produit une analyse prospective par entreprise : prochain mouvement anticipé, intention stratégique déduite, recommandations de contre-positionnement.',
     endpoint: '/api/agents/predict', color: 'indigo',
-    sources: ['Rapports Agents 2-4', 'Signaux (5 ans)', 'MiroFish (optionnel)'],
-    note: 'Auto-déclenché après l\'Agent 4', hasSubAgents: false,
+    sources: ['Rapports Agents 2-4', 'Signaux enrichis'],
+    note: 'Auto-déclenché après l\'Agent 4', hasSubSteps: false,
   },
 ]
 
@@ -123,7 +116,7 @@ export default function AgentsPage() {
         setResults(prev => ({ ...prev, [agent.num]: { type: 'error', message: data.error || `Erreur ${res.status}` } }))
       } else {
         const detail = agent.num === 1
-          ? `${data.total_signals ?? 0} signaux · ${data.report_ready ? 'Rapport ✓' : ''} · Agents 2→5 exécutés`
+          ? `${data.total_signals ?? 0} signaux Gemini · ${data.report_ready ? 'Rapport ✓' : ''} · Pipeline rapports exécuté`
           : `${data.insights ?? data.recommendations ?? 0} éléments produits`
         setResults(prev => ({ ...prev, [agent.num]: { type: 'success', message: 'Terminé', detail } }))
       }
@@ -145,7 +138,7 @@ export default function AgentsPage() {
           </div>
           <div>
             <h2 className="text-base font-bold text-neutral-900">Agents IA</h2>
-            <p className="text-xs text-neutral-500">Pipeline multi-agents · Collecte → Rapport → Challengers → Analyse → Stratégie → Prédictions</p>
+            <p className="text-xs text-neutral-500">Pipeline Gemini · Collecte → Rapport → Challengers → Analyse → Stratégie → Prédictions</p>
           </div>
         </div>
         <div className="relative flex-shrink-0">
@@ -165,7 +158,7 @@ export default function AgentsPage() {
       {/* Pipeline visuel */}
       <div className="flex items-center gap-1 mb-6 overflow-x-auto pb-2">
         {[
-          { label: 'Collecte ×5', color: COLOR.orange, icon: Layers },
+          { label: 'Gemini Search', color: COLOR.orange, icon: Sparkles },
           { label: 'Rapport', color: COLOR.amber, icon: Zap },
           { label: 'Challengers', color: COLOR.emerald, icon: Shield },
           { label: 'Marché', color: COLOR.green, icon: BarChart2 },
@@ -231,13 +224,17 @@ export default function AgentsPage() {
 
               <p className="text-xs text-neutral-600 leading-relaxed mb-3">{agent.desc}</p>
 
-              {/* Sub-agents (Agent 1) */}
-              {agent.hasSubAgents && (
-                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 mb-3">
-                  {SUB_AGENTS.map(sa => {
+              {/* Sub-steps for Agent 1 (Gemini collector) */}
+              {agent.hasSubSteps && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+                  {[
+                    { icon: Globe,         name: 'Google Search Grounding', desc: 'Recherche web temps réel avec sources vérifiables', color: 'text-blue-600 bg-blue-50' },
+                    { icon: FileSearch,    name: 'Extraction & Dédup',       desc: 'Articles complets, images OG, fingerprint 24h',    color: 'text-emerald-600 bg-emerald-50' },
+                    { icon: BrainCircuit,  name: 'Analyse IA structurée',    desc: 'Impact concurrentiel, recommandations, risques',    color: 'text-purple-600 bg-purple-50' },
+                  ].map(sa => {
                     const Icon = sa.icon
                     return (
-                      <div key={sa.key} className={`rounded-lg p-2 ${sa.color.split(' ')[1]}`}>
+                      <div key={sa.name} className={`rounded-lg p-2 ${sa.color.split(' ')[1]}`}>
                         <div className="flex items-center gap-1.5 mb-1">
                           <Icon size={11} className={sa.color.split(' ')[0]} />
                           <span className={`text-[10px] font-bold ${sa.color.split(' ')[0]}`}>{sa.name}</span>
@@ -305,7 +302,7 @@ export default function AgentsPage() {
                   </div>
                   {agent.num === 1 && (
                     <p className="text-[10px] text-neutral-400 mt-1.5">
-                      5 agents en parallèle · Perplexity + Firecrawl · Gemini extraction · Pipeline complet…
+                      Gemini Search Grounding · Extraction articles · Déduplication · Analyse IA structurée · Pipeline rapports…
                     </p>
                   )}
                 </div>
@@ -319,12 +316,11 @@ export default function AgentsPage() {
       <div className="mt-6 p-4 bg-neutral-50 border border-neutral-200 rounded-xl">
         <p className="text-xs font-bold text-neutral-700 mb-2">Architecture du pipeline</p>
         <div className="text-[11px] text-neutral-500 space-y-1 leading-relaxed">
-          <p>• <strong className="text-neutral-700">Agent 1</strong> lance 5 sous-agents en parallèle (Promise.allSettled) + Perplexity Sonar Pro en phase 2 — si l&apos;un échoue, les autres continuent.</p>
-          <p>• <strong className="text-neutral-700">Agent 2</strong> génère le rapport initial en analysant les signaux et en comparant avec les rapports précédents (progression/régression).</p>
-          <p>• <strong className="text-emerald-700">Pipeline Challenger</strong> (Pro+) : 3 agents auditent le rapport en parallèle, puis l&apos;agent de synthèse produit un rapport final enrichi et robuste. Chaque Challenger n&apos;intervient qu&apos;une seule fois.</p>
+          <p>• <strong className="text-neutral-700">Collecteur Gemini</strong> utilise Google Search Grounding pour une recherche web en temps réel, puis extrait les articles complets, déduplique par fingerprint (24h), et génère une analyse IA structurée par signal.</p>
+          <p>• <strong className="text-neutral-700">Agent 2</strong> génère le rapport initial en analysant les signaux enrichis et en comparant avec les rapports précédents (progression/régression).</p>
+          <p>• <strong className="text-emerald-700">Pipeline Challenger</strong> (Pro+) : 3 agents auditent le rapport en parallèle, puis l&apos;agent de synthèse produit un rapport final enrichi et robuste.</p>
           <p>• <strong className="text-neutral-700">Agents 3-4-5</strong> travaillent sur le rapport enrichi (si Challengers actifs) ou le rapport initial (plan Free).</p>
-          <p>• <strong className="text-neutral-700">Agent 5</strong> peut utiliser <strong className="text-neutral-700">MiroFish</strong> (module optionnel) pour enrichir ses prédictions via simulation multi-agents.</p>
-          <p>• <strong className="text-neutral-700">Chat IA</strong> permet de challenger le rapport final, avec support MiroFish pour les arguments profonds.</p>
+          <p>• <strong className="text-neutral-700">Chat IA</strong> permet de challenger le rapport final avec accès aux signaux et analyses structurées.</p>
           <p>• Les rapports sont <strong className="text-neutral-700">exportables en PDF</strong> depuis la page de chaque rapport.</p>
         </div>
       </div>

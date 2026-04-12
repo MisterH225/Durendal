@@ -5,10 +5,10 @@ import Link from 'next/link'
 
 // Statut d'un agent IA basé sur les derniers agent_jobs
 const AGENT_DEFS = [
-  { num: 1, name: 'Agent collecte',      minPlan: 'free' },
-  { num: 2, name: 'Agent synthèse',      minPlan: 'free' },
-  { num: 3, name: 'Agent analyse marché', minPlan: 'pro' },
-  { num: 4, name: 'Agent stratégie',     minPlan: 'business' },
+  { num: 1, name: 'Collecteur Gemini',       minPlan: 'free' },
+  { num: 2, name: 'Rapport de synthèse',     minPlan: 'free' },
+  { num: 3, name: 'Analyse de marché',       minPlan: 'pro' },
+  { num: 4, name: 'Recommandations stratégiques', minPlan: 'business' },
 ]
 
 const PLAN_ORDER: Record<string, number> = { free: 0, pro: 1, business: 2 }
@@ -270,11 +270,11 @@ export default async function DashboardPage() {
           ) : (
             <EmptyState
               icon={<FileText size={28} className="text-neutral-300" />}
-              text={isNew ? "Créez une veille pour démarrer la collecte." : "Aucun signal collecté. Lancez un agent de collecte."}
+              text={isNew ? "Créez une veille pour démarrer la collecte." : "Aucun signal collecté. Lancez un scan Gemini."}
               action={
                 isNew
                   ? <Link href="/veilles" className="text-xs text-blue-700 font-medium hover:underline">Créer une veille →</Link>
-                  : <Link href="/agents" className="text-xs text-blue-700 font-medium hover:underline">Lancer les agents →</Link>
+                  : <Link href="/agents" className="text-xs text-blue-700 font-medium hover:underline">Lancer un scan →</Link>
               }
             />
           )}
@@ -334,12 +334,12 @@ export default async function DashboardPage() {
           {/* CTA si aucun job lancé et veilles présentes */}
           {!isNew && Object.keys(latestJobByAgent).length === 0 && (
             <div className="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-100">
-              <div className="text-xs font-semibold text-amber-800 mb-1">Aucun agent lancé</div>
+              <div className="text-xs font-semibold text-amber-800 mb-1">Aucun scan lancé</div>
               <div className="text-xs text-amber-700 mb-2">
-                Les agents n'ont pas encore été exécutés sur vos veilles.
+                Le collecteur Gemini n'a pas encore été exécuté sur vos veilles.
               </div>
               <Link href="/agents" className="text-xs font-bold text-amber-700 hover:underline">
-                Lancer les agents →
+                Lancer un scan →
               </Link>
             </div>
           )}

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { TrendingUp, LayoutDashboard, LogIn, User } from 'lucide-react'
+import { TrendingUp, LogIn, User } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { ForecastNav } from '@/components/forecast/ForecastNav'
 import { LocaleSwitcher } from '@/components/LocaleSwitcher'
@@ -35,41 +35,24 @@ export default async function ForecastLayout({ children }: { children: React.Rea
             <LocaleSwitcher current={locale} />
 
             {user ? (
-              <>
-                <Link
-                  href="/dashboard"
-                  className="hidden sm:flex items-center gap-1.5 text-xs text-neutral-400 hover:text-white transition-colors"
-                >
-                  <LayoutDashboard size={13} />
-                  {tr(locale, 'nav.dashboard')}
-                </Link>
-                <Link
-                  href="/profil"
-                  className="flex items-center gap-1.5 text-xs px-2 sm:px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-100 font-medium transition-colors"
-                >
-                  <User size={13} />
-                  <span className="hidden sm:inline max-w-[100px] truncate">
-                    {user.email?.split('@')[0] ?? 'Profil'}
-                  </span>
-                </Link>
-              </>
+              <Link
+                href="/profil"
+                className="flex items-center gap-1.5 text-xs px-2 sm:px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-100 font-medium transition-colors"
+              >
+                <User size={13} />
+                <span className="hidden sm:inline max-w-[100px] truncate">
+                  {user.email?.split('@')[0] ?? 'Profil'}
+                </span>
+              </Link>
             ) : (
-              <>
-                <Link
-                  href="/dashboard"
-                  className="hidden sm:inline text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-                >
-                  {tr(locale, 'footer.veille')} →
-                </Link>
-                <Link
-                  href="/login"
-                  className="flex items-center gap-1.5 text-xs px-2.5 sm:px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
-                >
-                  <LogIn size={13} />
-                  <span className="hidden sm:inline">{tr(locale, 'nav.login')}</span>
-                  <span className="sm:hidden">{locale === 'fr' ? 'Connexion' : 'Login'}</span>
-                </Link>
-              </>
+              <Link
+                href="/login"
+                className="flex items-center gap-1.5 text-xs px-2.5 sm:px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
+              >
+                <LogIn size={13} />
+                <span className="hidden sm:inline">{tr(locale, 'nav.login')}</span>
+                <span className="sm:hidden">{locale === 'fr' ? 'Connexion' : 'Login'}</span>
+              </Link>
             )}
           </div>
         </div>
@@ -80,7 +63,8 @@ export default async function ForecastLayout({ children }: { children: React.Rea
             {[
               { href: '/forecast', label: tr(locale, 'nav.explore') },
               { href: '/forecast/signals', label: tr(locale, 'nav.signals') },
-              { href: '/forecast/leaderboard', label: locale === 'fr' ? 'Classement' : 'Leaderboard' },
+              { href: '/forecast/leaderboard', label: tr(locale, 'nav.leaderboard') },
+              { href: '/forecast/veille', label: locale === 'fr' ? 'Veille' : 'Intel' },
             ].map(link => (
               <Link key={link.href} href={link.href}
                 className="text-[10px] px-2.5 py-1 rounded-md font-medium text-neutral-400 hover:text-white hover:bg-neutral-800/50 transition-colors whitespace-nowrap">
@@ -101,8 +85,8 @@ export default async function ForecastLayout({ children }: { children: React.Rea
           <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 text-[10px] sm:text-xs text-neutral-700">
             <Link href="/forecast"             className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.explore')}</Link>
             <Link href="/forecast/signals"     className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.signals')}</Link>
-            <Link href="/forecast/leaderboard" className="hover:text-neutral-400 transition-colors">{locale === 'fr' ? 'Classement' : 'Leaderboard'}</Link>
-            <Link href="/dashboard" className="hover:text-neutral-400 transition-colors">{tr(locale, 'footer.veille')}</Link>
+            <Link href="/forecast/leaderboard" className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.leaderboard')}</Link>
+            <Link href="/forecast/veille"      className="hover:text-neutral-400 transition-colors">{tr(locale, 'nav.veille')}</Link>
           </div>
         </div>
       </footer>

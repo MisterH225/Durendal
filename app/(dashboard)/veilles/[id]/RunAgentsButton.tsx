@@ -15,7 +15,7 @@ export default function RunAgentsButton({ watchId, hasCompanies }: Props) {
     setState('running')
     setDetail('')
     try {
-      // Agent 1 lance les 5 agents en parallèle ET génère le rapport (Phase 4)
+      // Gemini + Search Grounding → collecte + extraction + analyse IA → pipeline rapports
       const res = await fetch('/api/agents/scrape', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -75,7 +75,7 @@ export default function RunAgentsButton({ watchId, hasCompanies }: Props) {
          state === 'done'    ? <CheckCircle size={14} /> :
          state === 'error'   ? <AlertTriangle size={14} /> :
                                <Play        size={14} />}
-        {state === 'running' ? '5 agents en cours…' :
+        {state === 'running' ? 'Collecte Gemini…' :
          state === 'done'    ? 'Terminé ✓' :
          state === 'error'   ? 'Erreur' :
          'Lancer le scan'}
@@ -98,7 +98,7 @@ export default function RunAgentsButton({ watchId, hasCompanies }: Props) {
       {/* Description pendant l'exécution */}
       {state === 'running' && (
         <p className="text-[10px] text-neutral-400">
-          web_scanner · press_monitor · analyst · deep_research · Deep Research IA
+          Gemini Search Grounding · Extraction articles · Analyse IA · Pipeline rapports
         </p>
       )}
     </div>

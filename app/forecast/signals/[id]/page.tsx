@@ -1,12 +1,14 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, ExternalLink, Calendar, Radio, Tag, MapPin, Newspaper, TrendingUp, CheckCircle2, Zap } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Calendar, Tag, MapPin, Newspaper, TrendingUp, CheckCircle2, Zap, Globe, User, Clock } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
 import { localizeChannel } from '@/lib/forecast/locale'
-import { SignalImage } from '@/components/forecast/SignalImage'
 import { BookmarkButton, ShareButton } from '@/components/forecast/SignalActions'
 import { createClient } from '@/lib/supabase/server'
+import { SplitReaderLayout } from '@/components/forecast/reader/SplitReaderLayout'
+import { LiveAnalysisLoader } from '@/components/forecast/reader/LiveAnalysisLoader'
+import type { ArticleImplicationAnalysis } from '@/lib/forecast/mock-articles'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,13 +64,14 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
   const chColor = CHANNEL_COLORS[ch?.slug ?? ''] ?? 'bg-neutral-800 text-neutral-400 border-neutral-700'
   const chName = ch ? localizeChannel(ch, locale) : null
 
-  const sourceUrl       = s.data?.source_url     as string | undefined
-  const imageUrl        = s.data?.image_url       as string | undefined
-  const region          = s.data?.region          as string | undefined
-  const sourceHint      = s.data?.source_hint     as string | undefined
-  const articleBody     = s.data?.article_body     as string | undefined
-  const articleAuthor   = s.data?.article_author   as string | undefined
+  const sourceUrl        = s.data?.source_url      as string | undefined
+  const imageUrl         = s.data?.image_url        as string | undefined
+  const region           = s.data?.region           as string | undefined
+  const sourceHint       = s.data?.source_hint      as string | undefined
+  const articleBody      = s.data?.article_body      as string | undefined
+  const articleAuthor    = s.data?.article_author    as string | undefined
   const articlePublished = s.data?.article_published as string | undefined
+  const articlePublisher = s.data?.article_publisher as string | undefined
   const sevLabel = SEVERITY_LABELS[s.severity]?.[locale] ?? s.severity
 
   const dateStr = new Date(s.created_at).toLocaleDateString(
@@ -76,7 +79,6 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
     { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }
   )
 
-  // Check if current user has bookmarked this signal
   let isBookmarked = false
   try {
     const sbUser = createClient()
@@ -92,7 +94,6 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
     }
   } catch { /* not logged in */ }
 
-  // Load related signals from the same channel
   const { data: relatedSignals } = ch
     ? await db
         .from('forecast_signal_feed')
@@ -103,113 +104,149 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
         .limit(5)
     : { data: [] }
 
-  return (
-    <div className="max-w-4xl mx-auto px-3 sm:px-4 py-6 sm:py-10 space-y-6 overflow-x-hidden">
-      {/* Back */}
+  const hasBody = !!articleBody
+  const displayText = articleBody ?? s.summary ?? ''
+  const publisherName = articlePublisher ?? sourceHint ?? 'Source'
+
+  const emptyAnalysis: ArticleImplicationAnalysis = {
+    articleId: s.id,
+    executiveTakeaway: '',
+    whyThisMatters: [],
+    immediateImplications: [],
+    secondOrderEffects: [],
+    regionalImplications: [],
+    sectorExposure: [],
+    whatToWatch: [],
+    relatedForecasts: [],
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  LEFT PANE — Article reading
+  // ═══════════════════════════════════════════════════════════════════════════
+  const leftPane = (
+    <article className="space-y-6">
+      {/* Back link */}
       <Link href="/forecast/signals" className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors">
         <ArrowLeft size={12} />
         {locale === 'fr' ? 'Retour aux signaux' : 'Back to signals'}
       </Link>
 
-      {/* Image */}
-      {imageUrl && (
-        <div className="relative w-full h-48 sm:h-64 md:h-80 rounded-xl sm:rounded-2xl overflow-hidden bg-neutral-800">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
-          <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/80 via-transparent to-neutral-950/20" />
-        </div>
-      )}
-
-      {/* Header */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <SignalTypeIcon type={s.signal_type} />
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700 text-neutral-300">
-            {signalTypeLabel(s.signal_type, locale)}
-          </span>
-          {chName && (
-            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
-              {chName}
-            </span>
-          )}
-          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-            s.severity === 'high' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-            s.severity === 'medium' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-            'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-          }`}>
-            {sevLabel}
-          </span>
-          {region && (
-            <span className="text-[10px] text-neutral-500 flex items-center gap-1">
-              <MapPin size={9} /> {region}
-            </span>
-          )}
-        </div>
-
-        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white leading-tight break-words">
-          {s.title}
-        </h1>
-
-        {/* Actions: Follow + Share */}
-        <div className="flex items-center gap-2">
-          <BookmarkButton signalId={s.id} initialBookmarked={isBookmarked} locale={locale} />
-          <ShareButton signalId={s.id} signalTitle={s.title} locale={locale} />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-500">
-          <span className="flex items-center gap-1">
-            <Calendar size={11} /> {dateStr}
-          </span>
-          {sourceHint && (
-            <span className="flex items-center gap-1">
-              <Tag size={10} /> {sourceHint}
-            </span>
-          )}
-          {articleAuthor && (
-            <span>{locale === 'fr' ? 'Par' : 'By'} {articleAuthor}</span>
-          )}
-        </div>
-      </div>
-
-      {/* Summary */}
-      {s.summary && (
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4 sm:p-5">
-          <p className="text-sm sm:text-base text-neutral-300 leading-relaxed whitespace-pre-line">
-            {s.summary}
-          </p>
-        </div>
-      )}
-
-      {/* Full article body if available */}
-      {articleBody && (
-        <div className="space-y-2">
-          <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
-            {locale === 'fr' ? 'Article complet' : 'Full article'}
-          </h2>
-          <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 sm:p-5">
-            <div className="text-sm text-neutral-400 leading-relaxed whitespace-pre-line max-h-[600px] overflow-y-auto">
-              {articleBody}
+      {/* Publisher attribution */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center flex-shrink-0">
+            <Globe size={14} className="text-neutral-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-neutral-100">{publisherName}</span>
+              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                {locale === 'fr' ? 'Source originale' : 'Original source'}
+              </span>
             </div>
+            {sourceUrl && (
+              <span className="text-[10px] text-neutral-600">
+                {(() => { try { return new URL(sourceUrl).hostname } catch { return '' } })()}
+              </span>
+            )}
           </div>
         </div>
+
+        <div className="flex items-center gap-4 flex-wrap text-[11px] text-neutral-500">
+          {articleAuthor && (
+            <span className="flex items-center gap-1"><User size={10} />{articleAuthor}</span>
+          )}
+          <span className="flex items-center gap-1"><Clock size={10} />{dateStr}</span>
+          {region && (
+            <span className="flex items-center gap-1"><MapPin size={9} />{region}</span>
+          )}
+        </div>
+
+        {sourceUrl && (
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/5 hover:bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2"
+          >
+            <ExternalLink size={12} />
+            {locale === 'fr' ? `Lire sur ${publisherName}` : `Read on ${publisherName}`}
+          </a>
+        )}
+      </div>
+
+      {/* Badges */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <SignalTypeIcon type={s.signal_type} />
+        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700 text-neutral-300">
+          {signalTypeLabel(s.signal_type, locale)}
+        </span>
+        {chName && (
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${chColor}`}>
+            {chName}
+          </span>
+        )}
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+          s.severity === 'high' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+          s.severity === 'medium' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+          'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+        }`}>
+          {sevLabel}
+        </span>
+      </div>
+
+      {/* Image */}
+      {imageUrl && (
+        <div className="relative rounded-xl overflow-hidden bg-neutral-800 aspect-[16/9]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={imageUrl} alt={s.title} className="w-full h-full object-cover" loading="lazy" />
+        </div>
       )}
 
-      {/* Source link */}
-      {sourceUrl && (
-        <a
-          href={sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/5 border border-blue-500/20 rounded-xl px-4 py-3"
-        >
-          <ExternalLink size={14} />
-          {locale === 'fr' ? "Lire l'article source" : 'Read source article'}
-        </a>
-      )}
+      {/* Title */}
+      <h1 className="text-2xl md:text-3xl font-bold text-white leading-tight tracking-tight">
+        {s.title}
+      </h1>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2">
+        <BookmarkButton signalId={s.id} initialBookmarked={isBookmarked} locale={locale} />
+        <ShareButton signalId={s.id} signalTitle={s.title} locale={locale} />
+      </div>
+
+      {/* Content indicator */}
+      {hasBody ? (
+        <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/15 px-4 py-3 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />
+          <p className="text-[11px] font-medium text-emerald-400/80">
+            {locale === 'fr'
+              ? 'Article complet disponible — l\'analyse IA est basée sur le contenu intégral'
+              : 'Full article available — AI analysis is based on the complete content'}
+          </p>
+        </div>
+      ) : s.summary ? (
+        <div className="rounded-lg bg-amber-500/5 border border-amber-500/15 px-4 py-3 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+          <p className="text-[11px] font-medium text-amber-400/80">
+            {locale === 'fr'
+              ? 'Extrait de la source — l\'analyse IA est limitée au résumé disponible'
+              : 'Source excerpt — AI analysis is limited to the available summary'}
+          </p>
+        </div>
+      ) : null}
+
+      {/* Article body */}
+      <div className="prose-custom">
+        {displayText.split('\n\n').map((paragraph: string, i: number) => (
+          <p key={i} className="text-sm text-neutral-300 leading-[1.8] mb-4">
+            {paragraph}
+          </p>
+        ))}
+      </div>
 
       {/* Linked question */}
       {q && (
-        <div className="space-y-2">
+        <div className="space-y-2 border-t border-neutral-800 pt-5">
           <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
             {locale === 'fr' ? 'Question liée' : 'Related question'}
           </h2>
@@ -233,9 +270,9 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
         </div>
       )}
 
-      {/* Related signals from same channel */}
+      {/* Related signals */}
       {(relatedSignals ?? []).length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-3 border-t border-neutral-800 pt-5">
           <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
             {locale === 'fr' ? 'Articles similaires' : 'Related articles'}
           </h2>
@@ -265,6 +302,34 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
           </div>
         </div>
       )}
-    </div>
+
+      {/* Bottom attribution */}
+      <div className="border-t border-neutral-800 pt-5">
+        <p className="text-[10px] text-neutral-600 leading-relaxed">
+          {locale === 'fr'
+            ? `Contenu publié par ${publisherName}. Affiché avec attribution à la source à des fins d'analyse.`
+            : `Content published by ${publisherName}. Displayed with source attribution for analysis purposes.`}
+        </p>
+      </div>
+    </article>
+  )
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  RIGHT PANE — AI Analysis
+  // ═══════════════════════════════════════════════════════════════════════════
+  const rightPane = (
+    <LiveAnalysisLoader
+      signalId={s.id}
+      locale={locale}
+      fallbackAnalysis={emptyAnalysis}
+    />
+  )
+
+  return (
+    <SplitReaderLayout
+      leftPane={leftPane}
+      rightPane={rightPane}
+      locale={locale}
+    />
   )
 }

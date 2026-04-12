@@ -16,6 +16,7 @@ import { runResolutionCheckJob } from './jobs/resolution/resolution-check.job'
 import { runResolutionFinalizeJob } from './jobs/resolution/resolution-finalize.job'
 import { runStreakUpdateJob } from './jobs/rewards/streak-update.job'
 import { runLeaderboardSnapshotJob } from './jobs/rewards/leaderboard-snapshot.job'
+import { runVeilleSignalCollectorJob } from './jobs/veille/veille-signal-collector.job'
 
 type Task = {
   name: string
@@ -129,6 +130,19 @@ async function safeRunStreakUpdate() {
   }
 }
 
+async function safeRunVeilleCollector() {
+  try {
+    await runVeilleSignalCollectorJob()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('relation') && msg.includes('does not exist')) {
+      console.log('[scheduler] veille:signal-collector — tables veille non trouvées, skip.')
+      return
+    }
+    throw e
+  }
+}
+
 async function safeRunLeaderboardSnapshot() {
   try {
     await runLeaderboardSnapshotJob()
@@ -180,6 +194,12 @@ const TASKS: Task[] = [
     intervalMs:  60 * 60 * 1000,        // every 1 hour
     lastRanAt:   0,
     fn:          runResolutionFinalizeJob,
+  },
+  {
+    name:        'veille:signal-collector',
+    intervalMs:  60 * 60 * 1000,        // every 1 hour — internal logic checks per-watch frequency
+    lastRanAt:   0,
+    fn:          safeRunVeilleCollector,
   },
   {
     name:        'rewards:streak-update',

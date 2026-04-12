@@ -6,8 +6,10 @@ import {
   Settings2, Zap, FileText, Globe, ExternalLink, Plus,
   Search, BrainCircuit, BarChart2, Newspaper, ChevronRight,
   Building2, MapPin, Layers, Clock, AlertTriangle, Calendar,
+  Sparkles, FileSearch,
 } from 'lucide-react'
 import ScanHistory from './ScanHistory'
+import SignalAnalysisPanel from '@/components/veille/SignalAnalysisPanel'
 
 const SUB_AGENT_ICONS: Record<string, any> = {
   web_scanner:             Globe,
@@ -114,6 +116,7 @@ function TabParams({ watchId, watch, companies, jobs, breakdown }: {
   watchId: string; watch: any; companies: any[]; jobs: any[]
   breakdown: Record<string, number> | undefined
 }) {
+  const lastScrapeJob = (jobs ?? []).find((j: any) => j.agent_number === 1)
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {/* Infos veille */}
@@ -213,23 +216,43 @@ function TabParams({ watchId, watch, companies, jobs, breakdown }: {
       {breakdown && (
         <div className="card-lg lg:col-span-2">
           <h3 className="text-sm font-bold text-neutral-900 mb-3">Breakdown dernier scan</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {Object.entries(breakdown).map(([key, val]) => {
-              const Icon  = SUB_AGENT_ICONS[key] ?? Search
-              const label = key.replace(/_/g, ' ').replace('deep research iterative', 'Deep Research IA')
-              const max   = Math.max(...Object.values(breakdown), 1)
-              return (
-                <div key={key} className="p-3 rounded-lg bg-neutral-50 border border-neutral-100 text-center">
-                  <Icon size={16} className="text-blue-600 mx-auto mb-1" />
-                  <div className="text-lg font-bold text-neutral-900">{val}</div>
-                  <div className="text-[10px] text-neutral-500 capitalize mt-0.5">{label}</div>
-                  <div className="h-1 bg-neutral-100 rounded-full overflow-hidden mt-2">
-                    <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(val / max) * 100}%` }} />
+          {lastScrapeJob?.metadata?.collector === 'gemini-search-grounding' ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {[
+                { key: 'signals_count', label: 'Signaux', icon: Zap, color: 'text-green-600' },
+                { key: 'grounding_sources', label: 'Sources Google', icon: Globe, color: 'text-blue-600' },
+                { key: 'analyses_generated', label: 'Analyses IA', icon: BrainCircuit, color: 'text-purple-600' },
+              ].map(item => {
+                const val = lastScrapeJob.metadata?.[item.key] ?? 0
+                const Icon = item.icon
+                return (
+                  <div key={item.key} className="p-3 rounded-lg bg-neutral-50 border border-neutral-100 text-center">
+                    <Icon size={16} className={`${item.color} mx-auto mb-1`} />
+                    <div className="text-lg font-bold text-neutral-900">{val}</div>
+                    <div className="text-[10px] text-neutral-500 mt-0.5">{item.label}</div>
                   </div>
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {Object.entries(breakdown).map(([key, val]) => {
+                const Icon  = SUB_AGENT_ICONS[key] ?? Search
+                const label = key.replace(/_/g, ' ').replace('deep research iterative', 'Deep Research IA')
+                const max   = Math.max(...Object.values(breakdown), 1)
+                return (
+                  <div key={key} className="p-3 rounded-lg bg-neutral-50 border border-neutral-100 text-center">
+                    <Icon size={16} className="text-blue-600 mx-auto mb-1" />
+                    <div className="text-lg font-bold text-neutral-900">{val}</div>
+                    <div className="text-[10px] text-neutral-500 capitalize mt-0.5">{label}</div>
+                    <div className="h-1 bg-neutral-100 rounded-full overflow-hidden mt-2">
+                      <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(val / max) * 100}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -251,7 +274,7 @@ function TabSignals({ signals, totalSignals, watchId, noCompanies }: {
         <p className="text-xs text-neutral-400 mt-1">
           {noCompanies
             ? 'Ajoutez des entreprises puis lancez le scan.'
-            : 'Cliquez sur "Lancer le scan" pour démarrer les 5 agents.'}
+            : 'Cliquez sur "Lancer le scan" pour démarrer la collecte Gemini.'}
         </p>
       </div>
     )
@@ -270,62 +293,88 @@ function TabSignals({ signals, totalSignals, watchId, noCompanies }: {
       <div className="space-y-3">
         {signals.map((s: any) => {
           const hasPubDate = s.published_at && !isRecentCollect(s.published_at, s.collected_at)
+          const sigData = (s.data ?? {}) as Record<string, any>
+          const imageUrl = sigData.image_url ?? null
+          const aiAnalysis = sigData.ai_analysis ?? null
+          const severityStyle = s.severity === 'high'
+            ? 'bg-red-50 border-red-200'
+            : s.severity === 'low'
+            ? 'bg-green-50 border-green-200'
+            : 'bg-white border-neutral-100'
+          const severityBadge = s.severity === 'high'
+            ? 'badge-red'
+            : s.severity === 'low'
+            ? 'badge-green'
+            : 'badge-gray'
+
           return (
-          <div key={s.id} className="pb-3 border-b border-neutral-100 last:border-0">
-            <div className="flex items-start justify-between gap-2 mb-1">
-              <div className="text-[10px] text-neutral-400 flex items-center gap-1 flex-wrap">
-                {s.source_name && <span className="font-medium">{s.source_name}</span>}
-                {s.source_name && <span>·</span>}
-                {hasPubDate ? (
-                  <span className="flex items-center gap-0.5" title="Date de publication de l'information">
-                    <Calendar size={9} className="text-blue-500" />
-                    {fmtDateShort(s.published_at)}
-                  </span>
-                ) : (
-                  <span title="Date de collecte">{fmtDate(s.collected_at || s.published_at)}</span>
-                )}
-                {hasPubDate && s.collected_at && (
-                  <span className="text-neutral-300" title={`Collecté le ${fmtDate(s.collected_at)}`}>
-                    · collecté {fmtDateShort(s.collected_at)}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                {s.signal_type && (
-                  <span className="badge badge-gray text-[9px]">{s.signal_type}</span>
-                )}
-                {s.url && (
-                  <a href={s.url} target="_blank" rel="noopener noreferrer"
-                    className="text-neutral-400 hover:text-blue-600 transition-colors">
-                    <ExternalLink size={10} />
-                  </a>
-                )}
-              </div>
-            </div>
-            {s.title && <div className="text-xs font-semibold text-neutral-900 mb-1">{s.title}</div>}
-            <div className="text-xs text-neutral-600 leading-relaxed line-clamp-2">
-              {s.raw_content?.slice(0, 200)}
-            </div>
-            <div className="flex items-center justify-between mt-1.5">
-              {s.companies?.name && (
-                <span className="text-[11px] text-blue-700 font-medium">{s.companies.name}</span>
-              )}
-              {s.relevance_score != null && (
-                <div className="flex items-center gap-1">
-                  <div className="w-12 h-1 bg-neutral-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${
-                        s.relevance_score >= 0.7 ? 'bg-green-500'
-                        : s.relevance_score >= 0.5 ? 'bg-amber-500'
-                        : 'bg-neutral-400'
-                      }`}
-                      style={{ width: `${s.relevance_score * 100}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-neutral-400">{Math.round(s.relevance_score * 100)}%</span>
+          <div key={s.id} className={`pb-3 border rounded-lg p-3 ${severityStyle} last:border-0`}>
+            <div className="flex gap-3">
+              {imageUrl && (
+                <div className="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden bg-neutral-100">
+                  <img src={imageUrl} alt="" className="w-full h-full object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                 </div>
               )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="text-[10px] text-neutral-400 flex items-center gap-1 flex-wrap">
+                    {s.source_name && <span className="font-medium">{s.source_name}</span>}
+                    {s.source_name && <span>·</span>}
+                    {hasPubDate ? (
+                      <span className="flex items-center gap-0.5" title="Date de publication de l'information">
+                        <Calendar size={9} className="text-blue-500" />
+                        {fmtDateShort(s.published_at)}
+                      </span>
+                    ) : (
+                      <span title="Date de collecte">{fmtDate(s.collected_at || s.published_at)}</span>
+                    )}
+                    {s.region && (
+                      <span className="text-neutral-300">· {s.region}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {s.severity && (
+                      <span className={`badge ${severityBadge} text-[9px]`}>{s.severity}</span>
+                    )}
+                    {s.signal_type && (
+                      <span className="badge badge-gray text-[9px]">{s.signal_type}</span>
+                    )}
+                    {s.url && (
+                      <a href={s.url} target="_blank" rel="noopener noreferrer"
+                        className="text-neutral-400 hover:text-blue-600 transition-colors">
+                        <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+                {s.title && <div className="text-xs font-semibold text-neutral-900 mb-1">{s.title}</div>}
+                <div className="text-xs text-neutral-600 leading-relaxed line-clamp-2">
+                  {s.raw_content?.slice(0, 200)}
+                </div>
+                <div className="flex items-center justify-between mt-1.5">
+                  {s.companies?.name && (
+                    <span className="text-[11px] text-blue-700 font-medium">{s.companies.name}</span>
+                  )}
+                  {s.relevance_score != null && (
+                    <div className="flex items-center gap-1">
+                      <div className="w-12 h-1 bg-neutral-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${
+                            s.relevance_score >= 0.7 ? 'bg-green-500'
+                            : s.relevance_score >= 0.5 ? 'bg-amber-500'
+                            : 'bg-neutral-400'
+                          }`}
+                          style={{ width: `${s.relevance_score * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-neutral-400">{Math.round(s.relevance_score * 100)}%</span>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
+            <SignalAnalysisPanel analysis={aiAnalysis} />
           </div>
           )
         })}

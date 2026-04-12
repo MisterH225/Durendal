@@ -26,7 +26,7 @@ export default async function WatchDetailPage({ params }: { params: { id: string
       .select('*, companies(name)', { count: 'exact' })
       .eq('watch_id', params.id)
       .order('published_at', { ascending: false })
-      .limit(30),
+      .limit(50),
     supabase
       .from('reports')
       .select('*')

@@ -1,14 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, Globe, Newspaper, BarChart2, Search, BrainCircuit } from 'lucide-react'
-
-const SUB_AGENT_ICONS: Record<string, any> = {
-  web_scanner:             Globe,
-  press_monitor:           Newspaper,
-  analyst:                 BarChart2,
-  deep_research:           Search,
-  deep_research_iterative: BrainCircuit,
-}
+import { ChevronDown, ChevronUp, Sparkles, Zap, FileSearch, BrainCircuit } from 'lucide-react'
 
 function fmtDate(d: string | null) {
   if (!d) return '—'
@@ -31,14 +23,12 @@ export default function ScanHistory({ jobs }: Props) {
   const list = Array.isArray(jobs) ? jobs : []
   if (list.length === 0) return null
 
-  // Résumé pour l'état replié
   const lastJob   = list[0]
   const lastDate  = fmtDate(lastJob?.started_at)
-  const doneCount = list.filter((j: any) => j.status === 'done').length
+  const doneCount = list.filter((j: any) => j.status === 'done' || j.status === 'completed').length
 
   return (
     <div className="card-lg">
-      {/* En-tête cliquable */}
       <button
         onClick={() => setOpen(v => !v)}
         className="w-full flex items-center justify-between group"
@@ -61,28 +51,35 @@ export default function ScanHistory({ jobs }: Props) {
         </div>
       </button>
 
-      {/* Contenu dépliable */}
       {open && (
         <div className="space-y-2.5 mt-3 pt-3 border-t border-neutral-100">
           {list.map((job: any) => {
-            const dur = fmtDuration(job.started_at, job.completed_at)
-            const bd  = job.metadata?.breakdown_agents as Record<string, number> | undefined
+            const dur = fmtDuration(job.started_at, job.completed_at ?? job.finished_at)
+            const meta = job.metadata ?? {}
+            const isGemini = meta.collector === 'gemini-search-grounding'
+            const signalsCount = meta.signals_count ?? job.signals_count
+            const groundingSources = meta.grounding_sources
+            const analysesCount = meta.analyses_generated
+            const isDone = job.status === 'done' || job.status === 'completed'
+
             return (
               <div key={job.id} className="text-xs border-b border-neutral-50 pb-2.5 last:border-0 last:pb-0">
                 <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                    job.status === 'done'    ? 'bg-green-500' :
+                    isDone               ? 'bg-green-500' :
                     job.status === 'running' ? 'bg-amber-500' : 'bg-red-500'
                   }`} />
-                  <span className="text-neutral-600 font-medium">Agent {job.agent_number}</span>
-                  {job.signals_count != null && (
-                    <span className="text-neutral-400">{job.signals_count} signaux</span>
+                  <span className="text-neutral-600 font-medium">
+                    {isGemini ? 'Gemini Collector' : `Agent ${job.agent_number}`}
+                  </span>
+                  {signalsCount != null && (
+                    <span className="text-neutral-400">{signalsCount} signaux</span>
                   )}
                   <span className={`badge text-[9px] ml-auto ${
-                    job.status === 'done'    ? 'badge-green' :
+                    isDone               ? 'badge-green' :
                     job.status === 'running' ? 'badge-amber' : 'badge-red'
                   }`}>
-                    {job.status === 'done' ? 'Terminé' : job.status === 'running' ? 'En cours' : 'Erreur'}
+                    {isDone ? 'Terminé' : job.status === 'running' ? 'En cours' : 'Erreur'}
                   </span>
                 </div>
                 {dur && (
@@ -90,22 +87,37 @@ export default function ScanHistory({ jobs }: Props) {
                     {dur} · {fmtDate(job.started_at)}
                   </div>
                 )}
-                {/* Breakdown des 5 sous-agents */}
-                {bd && job.agent_number === 1 && (
+                {isGemini && isDone && (
                   <div className="flex flex-wrap gap-1 mt-1.5 pl-3.5">
-                    {Object.entries(bd).map(([key, val]) => {
-                      const Icon = SUB_AGENT_ICONS[key]
-                      return (
-                        <span
-                          key={key}
-                          title={key}
-                          className="flex items-center gap-0.5 text-[9px] bg-neutral-50 border border-neutral-200 px-1.5 py-0.5 rounded"
-                        >
-                          {Icon && <Icon size={8} className="text-neutral-400" />}
-                          {val}
-                        </span>
-                      )
-                    })}
+                    <span className="flex items-center gap-0.5 text-[9px] bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded text-blue-700">
+                      <Sparkles size={8} /> Gemini Search
+                    </span>
+                    {signalsCount != null && (
+                      <span className="flex items-center gap-0.5 text-[9px] bg-green-50 border border-green-100 px-1.5 py-0.5 rounded text-green-700">
+                        <Zap size={8} /> {signalsCount} signaux
+                      </span>
+                    )}
+                    {groundingSources != null && (
+                      <span className="flex items-center gap-0.5 text-[9px] bg-neutral-50 border border-neutral-200 px-1.5 py-0.5 rounded text-neutral-600">
+                        <FileSearch size={8} /> {groundingSources} sources
+                      </span>
+                    )}
+                    {analysesCount != null && (
+                      <span className="flex items-center gap-0.5 text-[9px] bg-purple-50 border border-purple-100 px-1.5 py-0.5 rounded text-purple-700">
+                        <BrainCircuit size={8} /> {analysesCount} analyses
+                      </span>
+                    )}
+                  </div>
+                )}
+                {/* Legacy breakdown for old jobs */}
+                {!isGemini && meta.breakdown_agents && job.agent_number === 1 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5 pl-3.5">
+                    {Object.entries(meta.breakdown_agents as Record<string, number>).map(([key, val]) => (
+                      <span key={key} title={key}
+                        className="flex items-center gap-0.5 text-[9px] bg-neutral-50 border border-neutral-200 px-1.5 py-0.5 rounded text-neutral-600">
+                        {key.replace(/_/g, ' ')}: {val as number}
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>

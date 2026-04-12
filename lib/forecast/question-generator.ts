@@ -8,7 +8,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { callGeminiWithSearch, parseGeminiJson } from '../ai/gemini'
+import { callGemini, callGeminiWithSearch, parseGeminiJson } from '../ai/gemini'
 
 interface GeneratedOutcome {
   label: string
@@ -92,7 +92,104 @@ function pickWeightedRegion(regions: RegionWeight[]): RegionWeight | null {
 const DEDUP_DAYS = 7
 const MAX_EVENTS_PER_CHANNEL = 2
 const MAX_QUESTIONS_PER_EVENT = 2
+const MAX_QUESTIONS_PER_CHANNEL = 3
+const MAX_QUESTIONS_PER_CYCLE = 5
 const CHANNELS_PER_CYCLE = 3
+const EVENT_MATCH_DAYS = 30
+const EVENT_MATCH_THRESHOLD = 0.7
+
+interface ExistingEvent {
+  id: string
+  title: string
+  description: string | null
+}
+
+interface EventMatchResult {
+  match_id: string | null
+  confidence: number
+  reason: string
+}
+
+/**
+ * Semantic dedup: ask Gemini whether a proposed event title/description
+ * is fundamentally the same subject as one of the existing active events
+ * in the same channel. Returns the matched event id or null.
+ */
+async function findMatchingEvent(
+  supabase: SupabaseClient,
+  channelId: string,
+  candidate: { title: string; description?: string },
+): Promise<{ eventId: string; confidence: number; reason: string } | null> {
+  const since = new Date(Date.now() - EVENT_MATCH_DAYS * 86_400_000).toISOString()
+  const { data: existing } = await supabase
+    .from('forecast_events')
+    .select('id, title, description')
+    .eq('channel_id', channelId)
+    .in('status', ['active', 'draft'])
+    .gt('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(40)
+
+  const events: ExistingEvent[] = (existing ?? []) as ExistingEvent[]
+  if (!events.length) return null
+
+  const eventList = events
+    .map(e => `- ID:${e.id} | "${e.title}" | ${(e.description ?? '').slice(0, 120)}`)
+    .join('\n')
+
+  const prompt = [
+    `Voici les événements actifs existants :`,
+    eventList,
+    ``,
+    `Nouveau sujet proposé : "${candidate.title}" — ${(candidate.description ?? '').slice(0, 250)}`,
+    ``,
+    `Ce nouveau sujet est-il FONDAMENTALEMENT LE MÊME SUJET qu'un des événements existants ?`,
+    `Critère : même sujet/crise/phénomène global, pas juste "lié" ou "en rapport".`,
+    `Exemples de MÊME SUJET : "Cessez-le-feu USA-Iran" et "Opération de déminage du détroit d'Ormuz" → même sujet (conflit USA-Iran).`,
+    `Exemples de SUJETS DIFFÉRENTS : "Élections US 2026" et "Fed relève les taux" → sujets différents.`,
+    ``,
+    `Retourne UNIQUEMENT du JSON valide :`,
+    `{ "match_id": "uuid-de-levenement-existant-ou-null", "confidence": 0.0-1.0, "reason": "explication courte" }`,
+    `Si aucun match, retourne : { "match_id": null, "confidence": 0, "reason": "sujet nouveau" }`,
+  ].join('\n')
+
+  try {
+    const { text } = await callGemini(prompt, { maxOutputTokens: 300, temperature: 0.1 })
+    const result = parseGeminiJson<EventMatchResult>(text)
+    if (!result || result.match_id === null || result.match_id === 'null') return null
+    if (result.confidence < EVENT_MATCH_THRESHOLD) return null
+
+    const matched = events.find(e => e.id === result.match_id)
+    if (!matched) {
+      console.warn(`[event-dedup] Gemini returned unknown event id: ${result.match_id}`)
+      return null
+    }
+
+    return { eventId: matched.id, confidence: result.confidence, reason: result.reason ?? '' }
+  } catch (e) {
+    console.warn(`[event-dedup] Matching failed, will create new event:`, e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
+async function logEventMerge(
+  supabase: SupabaseClient,
+  sourceTitle: string,
+  matchedEventId: string,
+  channelId: string,
+  confidence: number,
+  reason: string,
+): Promise<void> {
+  await supabase.from('forecast_event_merge_log').insert({
+    source_title: sourceTitle.slice(0, 500),
+    matched_event_id: matchedEventId,
+    channel_id: channelId,
+    confidence,
+    match_reason: reason.slice(0, 1000),
+  }).catch((e: any) => {
+    console.warn('[event-dedup] Failed to log merge:', e?.message)
+  })
+}
 
 async function columnExists(supabase: SupabaseClient, table: string, column: string): Promise<boolean> {
   const { data } = await supabase.from(table).select(column).limit(0)
@@ -185,6 +282,8 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
   let createdQuestions = 0
 
   for (const channel of selected) {
+    if (createdQuestions >= MAX_QUESTIONS_PER_CYCLE) break
+
     const { data: recentQs } = await supabase
       .from('forecast_questions')
       .select('title')
@@ -316,35 +415,63 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
       }
 
       const eventsSlice = rawEvents.slice(0, MAX_EVENTS_PER_CHANNEL)
+      let channelQuestions = 0
 
       for (const ev of eventsSlice) {
         if (!ev.title || !ev.slug || !ev.questions?.length) continue
+        if (channelQuestions >= MAX_QUESTIONS_PER_CHANNEL || createdQuestions >= MAX_QUESTIONS_PER_CYCLE) break
 
-        const eventSlug = slugify(`auto-${channel.slug}-${ev.slug}-${crypto.randomUUID().slice(0, 6)}`)
+        // ── Semantic dedup: check if an existing event covers the same subject ──
+        let eventId: string
+        const match = await findMatchingEvent(supabase, channel.id, {
+          title: ev.title,
+          description: ev.description,
+        })
 
-        const { data: evRow, error: evErr } = await supabase
-          .from('forecast_events')
-          .insert({
-            channel_id: channel.id,
-            slug: eventSlug,
-            title: ev.title.slice(0, 200),
-            description: ev.description?.slice(0, 2000) ?? null,
-            status: 'active',
-            tags: ['auto-hot-topic', channel.slug],
-          })
-          .select('id')
-          .single()
+        if (match) {
+          eventId = match.eventId
+          console.log(`[event-dedup] MERGED "${ev.title.slice(0, 60)}" → existing event ${eventId} (confidence: ${match.confidence.toFixed(2)}, reason: ${match.reason})`)
+          await logEventMerge(supabase, ev.title, eventId, channel.id, match.confidence, match.reason)
 
-        if (evErr || !evRow) {
-          console.error(`[question-generator] Événement ${channel.slug}:`, evErr?.message)
-          continue
+          // Load existing questions on the matched event to avoid question-level duplicates
+          const { data: existingQs } = await supabase
+            .from('forecast_questions')
+            .select('title')
+            .eq('event_id', eventId)
+          for (const eq of existingQs ?? []) {
+            recentQFp.add(titleFingerprint(eq.title))
+          }
+        } else {
+          const eventSlug = slugify(`auto-${channel.slug}-${ev.slug}-${crypto.randomUUID().slice(0, 6)}`)
+
+          const { data: evRow, error: evErr } = await supabase
+            .from('forecast_events')
+            .insert({
+              channel_id: channel.id,
+              slug: eventSlug,
+              title: ev.title.slice(0, 200),
+              description: ev.description?.slice(0, 2000) ?? null,
+              status: 'active',
+              tags: ['auto-hot-topic', channel.slug],
+            })
+            .select('id')
+            .single()
+
+          if (evErr || !evRow) {
+            console.error(`[question-generator] Événement ${channel.slug}:`, evErr?.message)
+            continue
+          }
+
+          eventId = evRow.id
+          createdEvents += 1
+          console.log(`[event-dedup] NEW event "${ev.title.slice(0, 60)}" → ${eventId}`)
         }
-        createdEvents += 1
 
         const now = Date.now()
         const qs = ev.questions.slice(0, MAX_QUESTIONS_PER_EVENT)
 
         for (const q of qs) {
+          if (channelQuestions >= MAX_QUESTIONS_PER_CHANNEL || createdQuestions >= MAX_QUESTIONS_PER_CYCLE) break
           if (!q.title || !q.resolution_source || !q.resolution_criteria) continue
           const fp = titleFingerprint(q.title)
           if (recentQFp.has(fp)) {
@@ -366,7 +493,7 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
           const resolveAfterDate = new Date(now + (days + 1) * 86_400_000).toISOString()
 
           const insertRow: Record<string, unknown> = {
-            event_id: evRow.id,
+            event_id: eventId,
             channel_id: channel.id,
             slug: qSlug,
             title: q.title.slice(0, 240),
@@ -417,6 +544,7 @@ export async function runQuestionGenerator(supabase: SupabaseClient): Promise<Qu
           }
 
           createdQuestions += 1
+          channelQuestions += 1
 
           // Insert outcomes for multi-choice
           if (isMulti && hasOutcomesTable && q.outcomes) {

@@ -5,18 +5,28 @@ import type {
 import { MOCK_NODES, MOCK_EDGES } from './mock-data'
 
 // ============================================================================
-// Intelligence Graph Search Engine
-// Keyword → scored nodes → focused neighborhood → pruned subgraph
+// Intelligence Graph Search Engine — v3
+// Stopwords + word-boundary matching + token coverage threshold
 // ============================================================================
 
-const MAX_ANCHOR_NODES = 6
+const MAX_ANCHOR_NODES = 5
 const MAX_NEIGHBORHOOD_DEPTH = 1
-const MAX_TOTAL_NODES = 35
-const MIN_KEYWORD_SCORE = 20
+const MAX_TOTAL_NODES = 30
+const MIN_EXPANSION_CONFIDENCE = 0.65
+
+const STOPWORDS = new Set([
+  'de', 'du', 'des', 'le', 'la', 'les', 'l', 'un', 'une',
+  'et', 'en', 'au', 'aux', 'a', 'ce', 'se', 'ne', 'pas',
+  'par', 'pour', 'sur', 'avec', 'dans', 'qui', 'que', 'est',
+  'son', 'sa', 'ses', 'ou', 'the', 'of', 'in', 'and', 'to',
+  'on', 'at', 'by', 'an', 'is', 'it', 'as', 'or', 'be',
+  'from', 'with', 'for', 'this', 'that', 'are', 'was', 'has',
+])
 
 interface ScoredNode {
   node: IntelligenceGraphNode
   keywordScore: number
+  tokenHitRatio: number
   totalScore: number
   matchType: 'exact' | 'partial' | 'tag' | 'entity' | 'semantic'
 }
@@ -26,14 +36,22 @@ function normalizeText(text: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/['']/g, "'")
+    .replace(/[''`]/g, "'")
     .trim()
 }
 
 function tokenize(query: string): string[] {
   return normalizeText(query)
-    .split(/\s+/)
-    .filter(t => t.length > 1)
+    .split(/[\s\-_/,.;:!?']+/)
+    .filter(t => t.length > 2 && !STOPWORDS.has(t))
+}
+
+function wordBoundaryMatch(haystack: string, token: string): boolean {
+  const idx = haystack.indexOf(token)
+  if (idx === -1) return false
+  const before = idx === 0 || /[\s\-_/,.;:!?'()]/.test(haystack[idx - 1])
+  const after = idx + token.length >= haystack.length || /[\s\-_/,.;:!?'()]/.test(haystack[idx + token.length])
+  return before && after
 }
 
 function scoreNodeAgainstQuery(
@@ -49,40 +67,55 @@ function scoreNodeAgainstQuery(
 
   let keywordScore = 0
   let matchType: ScoredNode['matchType'] = 'partial'
+  let tokensHit = 0
 
   if (label === normalizedQuery) {
-    keywordScore += 100
+    keywordScore += 120
     matchType = 'exact'
+    tokensHit = tokens.length
   } else if (label.includes(normalizedQuery)) {
-    keywordScore += 60
+    keywordScore += 80
     matchType = 'partial'
+    tokensHit = tokens.length
+  } else {
+    for (const token of tokens) {
+      let hit = false
+      if (wordBoundaryMatch(label, token))    { keywordScore += 35; hit = true }
+      if (wordBoundaryMatch(subtitle, token)) { keywordScore += 30; hit = true }
+      if (wordBoundaryMatch(regions, token))  { keywordScore += 28; hit = true }
+      if (wordBoundaryMatch(sectors, token))  { keywordScore += 15; hit = true }
+      if (wordBoundaryMatch(summary, token))  { keywordScore += 10; hit = true }
+      if (hit) tokensHit++
+    }
   }
 
-  for (const token of tokens) {
-    if (label.includes(token)) keywordScore += 30
-    if (subtitle.includes(token)) keywordScore += 25
-    if (regions.includes(token)) keywordScore += 25
-    if (summary.includes(token)) keywordScore += 12
-    if (sectors.includes(token)) keywordScore += 10
+  const tokenHitRatio = tokens.length > 0 ? tokensHit / tokens.length : 0
+
+  const minTokenCoverage = tokens.length <= 2 ? 0.5 : 0.3
+  const minScore = tokens.length <= 2 ? 28 : 40
+
+  if (keywordScore < minScore || tokenHitRatio < minTokenCoverage) return null
+
+  if (label === normalizedQuery || label.includes(normalizedQuery)) {
+    matchType = keywordScore >= 100 ? 'exact' : 'partial'
+  } else if (wordBoundaryMatch(regions, normalizedQuery) || wordBoundaryMatch(sectors, normalizedQuery)) {
+    matchType = 'tag'
+  } else if (wordBoundaryMatch(subtitle, normalizedQuery)) {
+    matchType = 'entity'
   }
 
-  if (keywordScore < MIN_KEYWORD_SCORE) return null
-
-  if (regions.includes(normalizedQuery) || sectors.includes(normalizedQuery)) matchType = 'tag'
-  if (subtitle.includes(normalizedQuery)) matchType = 'entity'
-  if (label === normalizedQuery || label.includes(normalizedQuery)) matchType = keywordScore >= 100 ? 'exact' : 'partial'
-
-  const importanceBoost = (node.importance ?? 5) * 1.5
+  const importanceBoost = (node.importance ?? 5) * 1.2
   const typeWeight: Partial<Record<GraphNodeType, number>> = {
-    event: 10, question: 8, entity: 6, article: 3, signal: 3,
+    event: 8, question: 6, entity: 5, article: 2, signal: 2,
   }
-  const totalScore = keywordScore + importanceBoost + (typeWeight[node.type] ?? 2)
+  const totalScore = keywordScore + importanceBoost + (typeWeight[node.type] ?? 1)
 
-  return { node, keywordScore, totalScore, matchType }
+  return { node, keywordScore, tokenHitRatio, totalScore, matchType }
 }
 
 function expandNeighborhood(
   anchorIds: Set<string>,
+  anchorRegions: Set<string>,
   allEdges: IntelligenceGraphEdge[],
   allNodesMap: Map<string, IntelligenceGraphNode>,
   depth: number,
@@ -93,20 +126,21 @@ function expandNeighborhood(
   const edgeSet = new Set<string>()
   let frontier = new Set(anchorIds)
 
-  for (const id of anchorIds) {
+  Array.from(anchorIds).forEach(id => {
     const node = allNodesMap.get(id)
     if (node) resultNodes.set(id, node)
-  }
+  })
 
-  const structuralEdgeTypes = new Set([
-    'belongs_to_region', 'belongs_to_sector',
+  const skipEdgeTypes = new Set([
+    'belongs_to_region', 'belongs_to_sector', 'related_to',
   ])
 
   for (let d = 0; d < depth; d++) {
     const nextFrontier = new Set<string>()
     for (const edge of allEdges) {
       if (edgeSet.has(edge.id)) continue
-      if (filters.minConfidence > 0 && (edge.confidence ?? 1) < filters.minConfidence) continue
+      if (skipEdgeTypes.has(edge.type)) continue
+      if ((edge.confidence ?? 1) < MIN_EXPANSION_CONFIDENCE) continue
       if (!filters.edgeTypes.includes(edge.type)) continue
 
       const srcInFrontier = frontier.has(edge.source)
@@ -117,9 +151,6 @@ function expandNeighborhood(
       const neighborNode = allNodesMap.get(neighborId)
       if (!neighborNode) continue
       if (!filters.nodeTypes.includes(neighborNode.type)) continue
-
-      if (d > 0 && structuralEdgeTypes.has(edge.type)) continue
-      if (d > 0 && (edge.confidence ?? 1) < 0.5) continue
 
       if (!resultNodes.has(neighborId) && resultNodes.size < MAX_TOTAL_NODES) {
         resultNodes.set(neighborId, neighborNode)
@@ -150,11 +181,9 @@ function pruneWeakNodes(
   }
 
   const kept = new Set<string>()
-  for (const [id, node] of nodes) {
-    if (anchorIds.has(id)) { kept.add(id); continue }
-    const conns = connectionCount.get(id) ?? 0
-    if (conns >= 1) kept.add(id)
-  }
+  Array.from(nodes.keys()).forEach(id => {
+    if (anchorIds.has(id) || (connectionCount.get(id) ?? 0) >= 1) kept.add(id)
+  })
 
   const prunedNodes = Array.from(nodes.values()).filter(n => kept.has(n.id))
   const prunedEdges = edges.filter(e => kept.has(e.source) && kept.has(e.target))
@@ -204,10 +233,17 @@ export function searchGraph(
 
   const anchors = scored.slice(0, MAX_ANCHOR_NODES)
   const anchorIds = new Set(anchors.map(a => a.node.id))
+
+  const anchorRegions = new Set<string>()
+  anchors.forEach(a => {
+    (a.node.regionTags ?? []).forEach(r => anchorRegions.add(normalizeText(r)))
+  })
+
   const nodesMap = new Map(allNodes.map(n => [n.id, n]))
 
   const { nodes: subgraphNodes, edges: subgraphEdges } = expandNeighborhood(
     anchorIds,
+    anchorRegions,
     allEdges,
     nodesMap,
     MAX_NEIGHBORHOOD_DEPTH,
@@ -261,8 +297,9 @@ export function getSuggestions(partial: string): IntelligenceGraphNode[] {
     .filter(n => {
       const label = normalizeText(n.label)
       const subtitle = normalizeText(n.subtitle ?? '')
-      const tags = [...(n.regionTags ?? []), ...(n.sectorTags ?? [])].map(normalizeText).join(' ')
-      return label.includes(norm) || subtitle.includes(norm) || tokens.some(t => label.includes(t) || tags.includes(t))
+      if (label.includes(norm) || subtitle.includes(norm)) return true
+      if (tokens.length === 0) return false
+      return tokens.some(t => wordBoundaryMatch(label, t) || wordBoundaryMatch(subtitle, t))
     })
     .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
     .slice(0, 8)

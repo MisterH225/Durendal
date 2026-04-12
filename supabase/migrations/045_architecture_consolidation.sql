@@ -29,16 +29,10 @@ INSERT INTO source_trust_profiles (
   provider_id, source_domain, source_name, trust_score, trust_tier
 )
 SELECT
-  COALESCE(
-    CASE
-      WHEN isp.source_key LIKE '%.%' THEN 'newsdata'
-      ELSE 'newsdata'
-    END,
-    'newsdata'
-  )::text,
+  'newsdata'::text,
   isp.source_key,
   isp.source_key,
-  COALESCE(isp.reliability_score, 0.5),
+  round((COALESCE(isp.trust_tier, 3) - 1) * 0.25, 2),
   COALESCE(isp.trust_tier, 3)
 FROM intel_source_profiles isp
 WHERE NOT EXISTS (

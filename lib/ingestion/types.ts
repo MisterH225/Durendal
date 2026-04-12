@@ -3,9 +3,9 @@
 // Every provider adapter normalizes into these shapes.
 // ============================================================================
 
-export type ProviderId = 'newsdata' | 'finlight' | 'gdelt' | 'polymarket' | 'dome'
+export type ProviderId = 'newsdata' | 'finlight' | 'gdelt' | 'polymarket' | 'dome' | 'perplexity'
 
-export type ProviderType = 'news' | 'financial_news' | 'event_monitor' | 'prediction_market' | 'unified_market'
+export type ProviderType = 'news' | 'financial_news' | 'event_monitor' | 'prediction_market' | 'unified_market' | 'ai_search'
 
 export type FlowType = 'news_general' | 'news_financial' | 'event_discovery' | 'market_snapshot' | 'backfill'
 

@@ -5,7 +5,7 @@ import { getAdapter } from '../adapters'
 import { runIngestion, type EngineOptions } from '../engine'
 import type { ProviderId } from '../types'
 
-const NEWS_PROVIDERS: ProviderId[] = ['newsdata', 'gdelt']
+const NEWS_PROVIDERS: ProviderId[] = ['newsdata', 'gdelt', 'perplexity']
 
 export async function runNewsGeneralFlow(db: SupabaseClient): Promise<void> {
   const opts: EngineOptions = {

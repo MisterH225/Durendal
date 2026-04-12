@@ -5,6 +5,7 @@ import { FinlightAdapter } from './finlight'
 import { GdeltAdapter } from './gdelt'
 import { PolymarketAdapter } from './polymarket'
 import { DomeAdapter } from './dome'
+import { PerplexityAdapter } from './perplexity'
 
 const registry = new Map<ProviderId, SourceAdapter>([
   ['newsdata', new NewsDataAdapter()],
@@ -12,6 +13,7 @@ const registry = new Map<ProviderId, SourceAdapter>([
   ['gdelt', new GdeltAdapter()],
   ['polymarket', new PolymarketAdapter()],
   ['dome', new DomeAdapter()],
+  ['perplexity', new PerplexityAdapter()],
 ])
 
 export function getAdapter(id: ProviderId): SourceAdapter {

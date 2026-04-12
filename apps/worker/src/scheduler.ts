@@ -17,6 +17,10 @@ import { runResolutionFinalizeJob } from './jobs/resolution/resolution-finalize.
 import { runStreakUpdateJob } from './jobs/rewards/streak-update.job'
 import { runLeaderboardSnapshotJob } from './jobs/rewards/leaderboard-snapshot.job'
 import { runVeilleSignalCollectorJob } from './jobs/veille/veille-signal-collector.job'
+import { runMaterialChangeJob } from './jobs/intel/material-change.job'
+import { runRecalculationJob } from './jobs/intel/recalculation.job'
+import { runIntelVeilleExportJob } from './jobs/intel/veille-export.job'
+import { isIntelWorkflowEnabled } from '@/lib/forecast/workflow/feature-flag'
 
 type Task = {
   name: string
@@ -156,6 +160,63 @@ async function safeRunLeaderboardSnapshot() {
   }
 }
 
+async function runIntelMaterialityScan() {
+  if (!isIntelWorkflowEnabled()) {
+    console.log('[scheduler] intel:materiality-scan — désactivé (INTEL_WORKFLOW_ENABLED).')
+    return
+  }
+  const supabase = createWorkerSupabase()
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
+  const { data: snapshots } = await supabase
+    .from('intel_event_context_snapshots')
+    .select('id, intel_event_id, created_at')
+    .gt('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  if (!snapshots?.length) return
+
+  for (const snap of snapshots) {
+    const { data: existing } = await supabase
+      .from('intel_recalculation_requests')
+      .select('id')
+      .eq('context_snapshot_id', snap.id)
+      .maybeSingle()
+
+    if (existing?.id) continue
+
+    await runMaterialChangeJob({
+      intelEventId: snap.intel_event_id,
+      snapshotId: snap.id,
+    })
+  }
+}
+
+async function runIntelRecalculationQueue() {
+  if (!isIntelWorkflowEnabled()) return
+  const supabase = createWorkerSupabase()
+
+  const { data: jobs } = await supabase
+    .from('intel_recalculation_jobs')
+    .select('id')
+    .eq('status', 'pending')
+    .lte('available_at', new Date().toISOString())
+    .order('available_at', { ascending: true })
+    .limit(10)
+
+  if (!jobs?.length) return
+
+  for (const job of jobs) {
+    await runRecalculationJob(job.id)
+  }
+}
+
+async function runIntelVeilleExportSafe() {
+  if (!isIntelWorkflowEnabled()) return
+  await runIntelVeilleExportJob()
+}
+
 // ─── Scheduler engine ─────────────────────────────────────────────────────────
 
 const TASKS: Task[] = [
@@ -212,6 +273,24 @@ const TASKS: Task[] = [
     intervalMs:  24 * 60 * 60 * 1000,   // once per day
     lastRanAt:   0,
     fn:          safeRunLeaderboardSnapshot,
+  },
+  {
+    name:        'intel:materiality-scan',
+    intervalMs:  15 * 60 * 1000,        // every 15 minutes
+    lastRanAt:   0,
+    fn:          runIntelMaterialityScan,
+  },
+  {
+    name:        'intel:recalc-jobs',
+    intervalMs:  2 * 60 * 1000,         // every 2 minutes
+    lastRanAt:   0,
+    fn:          runIntelRecalculationQueue,
+  },
+  {
+    name:        'intel:veille-export',
+    intervalMs:  10 * 60 * 1000,        // every 10 minutes
+    lastRanAt:   0,
+    fn:          runIntelVeilleExportSafe,
   },
 ]
 

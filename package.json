@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:intel-scoring": "tsx lib/forecast/workflow/__tests__/scoring.run.ts",
     "worker:dev": "tsx apps/worker/src/bootstrap.ts",
     "worker:start": "node apps/worker/dist/bootstrap.js"
   },

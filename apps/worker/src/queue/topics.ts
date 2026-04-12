@@ -22,3 +22,18 @@ export const FORECAST_TOPICS = {
 } as const
 
 export type ForecastTopic = (typeof FORECAST_TOPICS)[keyof typeof FORECAST_TOPICS]
+
+export const INTEL_TOPICS = {
+  SIGNAL_ENRICH:           'intel.signal.enrich',
+  SIGNAL_LINK:             'intel.signal.link',
+  EVENT_CONTEXT_REBUILD:   'intel.event.context.rebuild',
+  EVENT_MATERIALITY:       'intel.event.materiality',
+  RECALCULATION_SCHEDULE:  'intel.recalculation.schedule',
+  FORECAST_RECALCULATE:    'intel.forecast.recalculate',
+  ALERT_DISPATCH:          'intel.alert.dispatch',
+  VEILLE_EXPORT:           'intel.veille.export',
+  ANALYST_REVIEW:          'intel.analyst.review',
+  DLQ:                     'intel.dlq',
+} as const
+
+export type IntelTopic = (typeof INTEL_TOPICS)[keyof typeof INTEL_TOPICS]

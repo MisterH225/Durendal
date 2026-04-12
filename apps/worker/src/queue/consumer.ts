@@ -29,17 +29,32 @@ async function markFailed(row: QueueRow, error: unknown) {
   const attempts  = row.attempts + 1
   const exhausted = attempts >= row.max_attempts
   const backoffMs = Math.min(60_000 * attempts, 10 * 60_000)
+  const errMsg = error instanceof Error ? error.message : String(error)
 
   await supabase
     .from('forecast_event_queue')
     .update({
       status:       exhausted ? 'failed' : 'pending',
       attempts,
-      last_error:   error instanceof Error ? error.message : String(error),
+      last_error:   errMsg,
       available_at: new Date(Date.now() + backoffMs).toISOString(),
       updated_at:   new Date().toISOString(),
     })
     .eq('id', row.id)
+
+  if (exhausted) {
+    try {
+      await supabase.from('intel_workflow_failures').insert({
+        ref_table: 'forecast_event_queue',
+        ref_id: row.id,
+        error_code: 'queue_exhausted',
+        error_message: errMsg.slice(0, 500),
+        payload: { event_type: row.event_type, attempts },
+      })
+    } catch {
+      /* table absente ou RLS */
+    }
+  }
 }
 
 async function lockPendingBatch(limit = 10): Promise<QueueRow[]> {

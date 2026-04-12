@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { Plus, Eye, Play } from 'lucide-react'
+import { Plus, Eye } from 'lucide-react'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
@@ -62,91 +62,84 @@ export default async function VeilleWatchesPage() {
         )}
       </div>
 
-      {/* Watches list */}
+      {/* Watches grid */}
       {watches && watches.length > 0 ? (
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {watches.map((watch: any) => {
             const companies = watch.watch_companies?.map((wc: any) => wc.companies) || []
             return (
               <div
                 key={watch.id}
-                className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5"
+                className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4 flex flex-col"
               >
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-white">{watch.name}</h3>
-                    <div className="text-xs text-neutral-400 mt-1">
-                      {watch.sectors?.join(', ')} · {watch.countries?.join(', ')} ·{' '}
-                      {watch.frequency === 'realtime'
-                        ? 'Temps réel'
-                        : watch.frequency === 'daily'
-                          ? 'Quotidienne'
-                          : 'Hebdomadaire'}
+                <div className="flex items-start justify-between mb-2">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-bold text-white truncate">{watch.name}</h3>
+                    <div className="text-[10px] text-neutral-400 mt-0.5 truncate">
+                      {watch.sectors?.join(', ')} · {watch.countries?.join(', ')}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                     <span
                       className={
                         watch.is_active
-                          ? 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400 border border-neutral-700'
+                          ? 'text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : 'text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-neutral-800 text-neutral-400 border border-neutral-700'
                       }
                     >
-                      {watch.is_active ? 'Active' : 'En pause'}
+                      {watch.is_active ? 'Active' : 'Pause'}
                     </span>
-                    <button
-                      type="button"
-                      className="w-7 h-7 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 flex items-center justify-center text-blue-400 transition-colors"
-                      title="Lancer le scan"
-                    >
-                      <Play size={12} />
-                    </button>
                   </div>
+                </div>
+
+                <div className="text-[10px] text-neutral-500 mb-2">
+                  {watch.frequency === 'realtime'
+                    ? 'Temps réel'
+                    : watch.frequency === 'daily'
+                      ? 'Quotidienne'
+                      : 'Hebdomadaire'}
+                  {' · '}{companies.length} entreprise{companies.length > 1 ? 's' : ''}
                 </div>
 
                 {/* Companies */}
                 {companies.length > 0 && (
-                  <div className="space-y-2 mt-3 pt-3 border-t border-neutral-800">
-                    {companies.slice(0, 5).map((co: any, i: number) => (
-                      <div key={i} className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 text-[10px] font-bold flex-shrink-0">
+                  <div className="space-y-1.5 flex-1 pt-2 border-t border-neutral-800">
+                    {companies.slice(0, 4).map((co: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-md bg-blue-500/10 flex items-center justify-center text-blue-400 text-[9px] font-bold flex-shrink-0">
                           {co?.name?.slice(0, 2).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-xs font-medium text-neutral-200 truncate">{co?.name}</div>
-                          <div className="text-[10px] text-neutral-500">
-                            {co?.sector} · {co?.country}
-                          </div>
+                          <div className="text-[11px] font-medium text-neutral-200 truncate">{co?.name}</div>
                         </div>
-                        {/* Signal strength placeholder */}
                         <div className="flex gap-0.5">
                           {[1, 2, 3].map((j) => (
                             <div
                               key={j}
-                              className={`w-1.5 h-1.5 rounded-full ${j <= 2 ? 'bg-green-500' : 'bg-neutral-700'}`}
+                              className={`w-1 h-1 rounded-full ${j <= 2 ? 'bg-green-500' : 'bg-neutral-700'}`}
                             />
                           ))}
                         </div>
                       </div>
                     ))}
-                    {companies.length > 5 && (
-                      <div className="text-xs text-neutral-500 text-center">
-                        +{companies.length - 5} autres
+                    {companies.length > 4 && (
+                      <div className="text-[10px] text-neutral-500 text-center">
+                        +{companies.length - 4} autres
                       </div>
                     )}
                   </div>
                 )}
 
-                <div className="mt-3 pt-3 border-t border-neutral-800 flex gap-2">
+                <div className="mt-auto pt-2 border-t border-neutral-800 flex gap-2">
                   <Link
                     href={`/forecast/veille/watches/${watch.id}`}
-                    className="text-xs text-neutral-400 hover:text-white hover:bg-neutral-800/50 transition-colors py-1.5 flex-1 text-center rounded-lg"
+                    className="text-[11px] text-neutral-400 hover:text-white hover:bg-neutral-800/50 transition-colors py-1.5 flex-1 text-center rounded-lg"
                   >
-                    Voir les insights
+                    Insights
                   </Link>
                   <Link
                     href={`/forecast/veille/watches/${watch.id}/edit`}
-                    className="text-xs text-neutral-400 hover:text-white hover:bg-neutral-800/50 transition-colors py-1.5 px-4 rounded-lg"
+                    className="text-[11px] text-neutral-400 hover:text-white hover:bg-neutral-800/50 transition-colors py-1.5 px-3 rounded-lg"
                   >
                     Modifier
                   </Link>

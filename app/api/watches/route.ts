@@ -125,6 +125,20 @@ export async function POST(req: NextRequest) {
       console.warn('[API/watches POST] Avertissements entreprises:', errors)
     }
 
+    // Trigger initial signal collection immediately after watch creation
+    if (watch?.id) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
+      if (appUrl) {
+        fetch(`${appUrl}/api/agents/scrape`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ watchId: watch.id }),
+        }).catch((e) => {
+          console.warn('[API/watches POST] Auto-scrape trigger failed:', e?.message)
+        })
+      }
+    }
+
     return NextResponse.json({
       success:        true,
       watch,

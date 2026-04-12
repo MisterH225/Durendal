@@ -6,16 +6,18 @@ import { MOCK_NODES, MOCK_EDGES } from './mock-data'
 
 // ============================================================================
 // Intelligence Graph Search Engine
-// Keyword → scored nodes → neighborhood expansion → pruned subgraph
+// Keyword → scored nodes → focused neighborhood → pruned subgraph
 // ============================================================================
 
-const MAX_ANCHOR_NODES = 8
-const MAX_NEIGHBORHOOD_DEPTH = 2
-const MAX_TOTAL_NODES = 60
+const MAX_ANCHOR_NODES = 6
+const MAX_NEIGHBORHOOD_DEPTH = 1
+const MAX_TOTAL_NODES = 35
+const MIN_KEYWORD_SCORE = 20
 
 interface ScoredNode {
   node: IntelligenceGraphNode
-  score: number
+  keywordScore: number
+  totalScore: number
   matchType: 'exact' | 'partial' | 'tag' | 'entity' | 'semantic'
 }
 
@@ -44,47 +46,39 @@ function scoreNodeAgainstQuery(
   const subtitle = normalizeText(node.subtitle ?? '')
   const regions = (node.regionTags ?? []).map(normalizeText).join(' ')
   const sectors = (node.sectorTags ?? []).map(normalizeText).join(' ')
-  const haystack = `${label} ${summary} ${subtitle} ${regions} ${sectors}`
 
-  let score = 0
+  let keywordScore = 0
   let matchType: ScoredNode['matchType'] = 'partial'
 
   if (label === normalizedQuery) {
-    score += 100
+    keywordScore += 100
     matchType = 'exact'
   } else if (label.includes(normalizedQuery)) {
-    score += 60
+    keywordScore += 60
     matchType = 'partial'
   }
 
   for (const token of tokens) {
-    if (label.includes(token)) score += 30
-    if (summary.includes(token)) score += 15
-    if (subtitle.includes(token)) score += 20
-    if (regions.includes(token)) score += 25
-    if (sectors.includes(token)) score += 20
+    if (label.includes(token)) keywordScore += 30
+    if (subtitle.includes(token)) keywordScore += 25
+    if (regions.includes(token)) keywordScore += 25
+    if (summary.includes(token)) keywordScore += 12
+    if (sectors.includes(token)) keywordScore += 10
   }
 
-  const importanceBoost = (node.importance ?? 5) * 2
-  score += importanceBoost
+  if (keywordScore < MIN_KEYWORD_SCORE) return null
 
+  if (regions.includes(normalizedQuery) || sectors.includes(normalizedQuery)) matchType = 'tag'
+  if (subtitle.includes(normalizedQuery)) matchType = 'entity'
+  if (label === normalizedQuery || label.includes(normalizedQuery)) matchType = keywordScore >= 100 ? 'exact' : 'partial'
+
+  const importanceBoost = (node.importance ?? 5) * 1.5
   const typeWeight: Partial<Record<GraphNodeType, number>> = {
-    event: 15,
-    question: 12,
-    entity: 10,
-    article: 5,
-    signal: 5,
+    event: 10, question: 8, entity: 6, article: 3, signal: 3,
   }
-  score += typeWeight[node.type] ?? 3
+  const totalScore = keywordScore + importanceBoost + (typeWeight[node.type] ?? 2)
 
-  if (score <= importanceBoost + (typeWeight[node.type] ?? 3)) return null
-
-  if (!matchType || matchType === 'partial') {
-    if (regions.includes(normalizedQuery) || sectors.includes(normalizedQuery)) matchType = 'tag'
-    if (subtitle.includes(normalizedQuery)) matchType = 'entity'
-  }
-
-  return { node, score, matchType }
+  return { node, keywordScore, totalScore, matchType }
 }
 
 function expandNeighborhood(
@@ -104,6 +98,10 @@ function expandNeighborhood(
     if (node) resultNodes.set(id, node)
   }
 
+  const structuralEdgeTypes = new Set([
+    'belongs_to_region', 'belongs_to_sector',
+  ])
+
   for (let d = 0; d < depth; d++) {
     const nextFrontier = new Set<string>()
     for (const edge of allEdges) {
@@ -119,6 +117,9 @@ function expandNeighborhood(
       const neighborNode = allNodesMap.get(neighborId)
       if (!neighborNode) continue
       if (!filters.nodeTypes.includes(neighborNode.type)) continue
+
+      if (d > 0 && structuralEdgeTypes.has(edge.type)) continue
+      if (d > 0 && (edge.confidence ?? 1) < 0.5) continue
 
       if (!resultNodes.has(neighborId) && resultNodes.size < MAX_TOTAL_NODES) {
         resultNodes.set(neighborId, neighborNode)
@@ -137,6 +138,29 @@ function expandNeighborhood(
   return { nodes: resultNodes, edges: resultEdges }
 }
 
+function pruneWeakNodes(
+  nodes: Map<string, IntelligenceGraphNode>,
+  edges: IntelligenceGraphEdge[],
+  anchorIds: Set<string>,
+): { nodes: IntelligenceGraphNode[]; edges: IntelligenceGraphEdge[] } {
+  const connectionCount = new Map<string, number>()
+  for (const e of edges) {
+    connectionCount.set(e.source, (connectionCount.get(e.source) ?? 0) + 1)
+    connectionCount.set(e.target, (connectionCount.get(e.target) ?? 0) + 1)
+  }
+
+  const kept = new Set<string>()
+  for (const [id, node] of nodes) {
+    if (anchorIds.has(id)) { kept.add(id); continue }
+    const conns = connectionCount.get(id) ?? 0
+    if (conns >= 1) kept.add(id)
+  }
+
+  const prunedNodes = Array.from(nodes.values()).filter(n => kept.has(n.id))
+  const prunedEdges = edges.filter(e => kept.has(e.source) && kept.has(e.target))
+  return { nodes: prunedNodes, edges: prunedEdges }
+}
+
 export function searchGraph(
   query: string,
   filters: GraphFilters,
@@ -146,16 +170,16 @@ export function searchGraph(
   const normalizedQuery = normalizeText(query)
   const tokens = tokenize(query)
 
-  if (tokens.length === 0) {
-    return {
-      query,
-      nodes: [],
-      edges: [],
-      anchorNodeIds: [],
-      groupedMatches: { articles: [], events: [], entities: [], questions: [], signals: [], documents: [] },
-      totals: { articles: 0, events: 0, entities: 0, questions: 0, signals: 0, documents: 0 },
-    }
+  const emptyResult: GraphSearchResult = {
+    query,
+    nodes: [],
+    edges: [],
+    anchorNodeIds: [],
+    groupedMatches: { articles: [], events: [], entities: [], questions: [], signals: [], documents: [] },
+    totals: { articles: 0, events: 0, entities: 0, questions: 0, signals: 0, documents: 0 },
   }
+
+  if (tokens.length === 0) return emptyResult
 
   let filteredNodes = allNodes
   if (filters.nodeTypes.length < 10) {
@@ -174,7 +198,9 @@ export function searchGraph(
     if (result) scored.push(result)
   }
 
-  scored.sort((a, b) => b.score - a.score)
+  if (scored.length === 0) return emptyResult
+
+  scored.sort((a, b) => b.totalScore - a.totalScore)
 
   const anchors = scored.slice(0, MAX_ANCHOR_NODES)
   const anchorIds = new Set(anchors.map(a => a.node.id))
@@ -188,7 +214,12 @@ export function searchGraph(
     filters,
   )
 
-  const nodeArray = Array.from(subgraphNodes.values())
+  const { nodes: prunedNodes, edges: prunedEdges } = pruneWeakNodes(
+    subgraphNodes,
+    subgraphEdges,
+    anchorIds,
+  )
+
   const anchorNodeIds = anchors.map(a => a.node.id)
 
   const groupedMatches: GraphSearchResult['groupedMatches'] = {
@@ -206,8 +237,8 @@ export function searchGraph(
 
   return {
     query,
-    nodes: nodeArray,
-    edges: subgraphEdges,
+    nodes: prunedNodes,
+    edges: prunedEdges,
     anchorNodeIds,
     groupedMatches,
     totals: {
@@ -229,8 +260,9 @@ export function getSuggestions(partial: string): IntelligenceGraphNode[] {
   return MOCK_NODES
     .filter(n => {
       const label = normalizeText(n.label)
+      const subtitle = normalizeText(n.subtitle ?? '')
       const tags = [...(n.regionTags ?? []), ...(n.sectorTags ?? [])].map(normalizeText).join(' ')
-      return label.includes(norm) || tokens.some(t => label.includes(t) || tags.includes(t))
+      return label.includes(norm) || subtitle.includes(norm) || tokens.some(t => label.includes(t) || tags.includes(t))
     })
     .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
     .slice(0, 8)

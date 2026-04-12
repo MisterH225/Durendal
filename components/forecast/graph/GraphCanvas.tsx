@@ -38,8 +38,8 @@ interface GraphCanvasProps {
   onNodeDoubleClick: (nodeId: string) => void
 }
 
-const NODE_WIDTH: Record<string, number> = { lg: 220, md: 180, sm: 160 }
-const NODE_HEIGHT = 70
+const NODE_WIDTH: Record<string, number> = { lg: 260, md: 220, sm: 200 }
+const NODE_HEIGHT = 80
 const MIN_SPACING_X = 40
 const MIN_SPACING_Y = 30
 

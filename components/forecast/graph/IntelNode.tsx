@@ -17,8 +17,8 @@ function IntelNodeComponent({ data }: NodeProps) {
   const isLarge = config.size === 'lg'
   const isMedium = config.size === 'md'
 
-  const w = isLarge ? 'w-[220px]' : isMedium ? 'w-[180px]' : 'w-[160px]'
-  const pad = isLarge ? 'p-3' : 'p-2'
+  const w = isLarge ? 'w-[260px]' : isMedium ? 'w-[220px]' : 'w-[200px]'
+  const pad = isLarge ? 'p-3.5' : 'p-2.5'
 
   const dimCls = d.dimmed ? 'opacity-40' : ''
   const anchorRing = d.isAnchor ? 'ring-2 ring-amber-400/60' : ''
@@ -28,36 +28,36 @@ function IntelNodeComponent({ data }: NodeProps) {
     <>
       <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-neutral-600 !border-neutral-700" />
       <div className={`${w} ${pad} rounded-lg border ${config.borderClass} ${config.bgClass} ${dimCls} ${anchorRing} ${selectedRing} backdrop-blur-sm transition-all duration-200 hover:scale-[1.03] cursor-pointer`}>
-        <div className="flex items-start gap-2">
-          <span className="text-sm flex-shrink-0 mt-0.5">{config.icon}</span>
+        <div className="flex items-start gap-2.5">
+          <span className="text-base flex-shrink-0 mt-0.5">{config.icon}</span>
           <div className="min-w-0 flex-1">
-            <div className={`text-[11px] font-bold leading-tight ${d.dimmed ? 'text-neutral-500' : 'text-neutral-100'} line-clamp-2`}>
+            <div className={`text-[13px] font-bold leading-snug ${d.dimmed ? 'text-neutral-500' : 'text-neutral-100'} line-clamp-2`}>
               {d.label}
             </div>
             {d.subtitle && (
-              <div className="text-[9px] text-neutral-500 mt-0.5 truncate">{d.subtitle}</div>
+              <div className="text-[11px] text-neutral-500 mt-0.5 truncate">{d.subtitle}</div>
             )}
             {d.probability != null && (
-              <div className="mt-1">
-                <div className="flex items-center gap-1">
-                  <div className="flex-1 h-1 rounded-full bg-neutral-800 overflow-hidden">
+              <div className="mt-1.5">
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-1 h-1.5 rounded-full bg-neutral-800 overflow-hidden">
                     <div
                       className="h-full rounded-full bg-violet-500"
                       style={{ width: `${Math.round(d.probability * 100)}%` }}
                     />
                   </div>
-                  <span className="text-[9px] font-bold text-violet-400">{Math.round(d.probability * 100)}%</span>
+                  <span className="text-[11px] font-bold text-violet-400">{Math.round(d.probability * 100)}%</span>
                 </div>
               </div>
             )}
           </div>
         </div>
-        <div className="flex items-center justify-between mt-1">
-          <span className={`text-[8px] font-semibold uppercase tracking-wider ${config.textClass}`}>
+        <div className="flex items-center justify-between mt-1.5">
+          <span className={`text-[10px] font-semibold uppercase tracking-wider ${config.textClass}`}>
             {config.label}
           </span>
           {d.createdAt && (
-            <span className="text-[8px] text-neutral-600">{d.createdAt}</span>
+            <span className="text-[10px] text-neutral-600">{d.createdAt}</span>
           )}
         </div>
       </div>

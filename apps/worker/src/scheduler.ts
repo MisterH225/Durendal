@@ -21,6 +21,7 @@ import { runMaterialChangeJob } from './jobs/intel/material-change.job'
 import { runRecalculationJob } from './jobs/intel/recalculation.job'
 import { runIntelVeilleExportJob } from './jobs/intel/veille-export.job'
 import { isIntelWorkflowEnabled } from '@/lib/forecast/workflow/feature-flag'
+import { runNewsIngestionJob, runEventDiscoveryJob, runMarketSnapshotJob } from './jobs/ingestion/ingestion-orchestrator.job'
 
 type Task = {
   name: string
@@ -291,6 +292,25 @@ const TASKS: Task[] = [
     intervalMs:  10 * 60 * 1000,        // every 10 minutes
     lastRanAt:   0,
     fn:          runIntelVeilleExportSafe,
+  },
+  // ── External source ingestion ───────────────────────────────────────────
+  {
+    name:        'ingestion:news',
+    intervalMs:  30 * 60 * 1000,        // every 30 minutes
+    lastRanAt:   0,
+    fn:          runNewsIngestionJob,
+  },
+  {
+    name:        'ingestion:event-discovery',
+    intervalMs:  60 * 60 * 1000,        // every 1 hour
+    lastRanAt:   0,
+    fn:          runEventDiscoveryJob,
+  },
+  {
+    name:        'ingestion:market-snapshot',
+    intervalMs:  15 * 60 * 1000,        // every 15 minutes
+    lastRanAt:   0,
+    fn:          runMarketSnapshotJob,
   },
 ]
 

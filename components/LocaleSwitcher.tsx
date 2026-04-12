@@ -12,13 +12,13 @@ export function LocaleSwitcher({ current }: { current: Locale }) {
   }
 
   return (
-    <div className={`flex items-center gap-0.5 text-[11px] font-semibold rounded-lg border border-neutral-700 overflow-hidden transition-opacity ${pending ? 'opacity-50' : ''}`}>
+    <div className={`flex items-center gap-0.5 text-[11px] font-semibold rounded-lg border border-neutral-300 overflow-hidden transition-opacity dark:border-neutral-700 ${pending ? 'opacity-50' : ''}`}>
       <button
         onClick={() => toggle('fr')}
         className={`px-2.5 py-1.5 transition-colors ${
           current === 'fr'
-            ? 'bg-neutral-700 text-white'
-            : 'text-neutral-500 hover:text-neutral-300'
+            ? 'bg-neutral-200 text-neutral-900 dark:bg-neutral-700 dark:text-white'
+            : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-300'
         }`}
       >
         FR
@@ -27,8 +27,8 @@ export function LocaleSwitcher({ current }: { current: Locale }) {
         onClick={() => toggle('en')}
         className={`px-2.5 py-1.5 transition-colors ${
           current === 'en'
-            ? 'bg-neutral-700 text-white'
-            : 'text-neutral-500 hover:text-neutral-300'
+            ? 'bg-neutral-200 text-neutral-900 dark:bg-neutral-700 dark:text-white'
+            : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-300'
         }`}
       >
         EN

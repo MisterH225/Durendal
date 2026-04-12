@@ -24,8 +24,8 @@ export function ForecastNav({ locale }: { locale: Locale }) {
             href={href}
             className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
               active
-                ? 'text-white bg-neutral-800'
-                : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
+                ? 'text-neutral-900 bg-neutral-200 dark:text-white dark:bg-neutral-800'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/80 dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800/50'
             }`}
           >
             {label}

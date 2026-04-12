@@ -1,22 +1,7 @@
-import { createClient } from '@/lib/supabase/server'
-import { notFound } from 'next/navigation'
-import EditWatchContent from './EditWatchContent'
+import { redirect } from 'next/navigation'
 
-export default async function EditWatchPage({ params }: { params: { id: string } }) {
-  const supabase = createClient()
+export const dynamic = 'force-dynamic'
 
-  const { data: watch } = await supabase
-    .from('watches')
-    .select('*, watch_companies(aspects, companies(id, name, country, sector, logo_url))')
-    .eq('id', params.id)
-    .single()
-
-  if (!watch) notFound()
-
-  const companies = (watch.watch_companies ?? []).map((wc: any) => ({
-    ...wc.companies,
-    aspects: wc.aspects ?? [],
-  })).filter(Boolean)
-
-  return <EditWatchContent watch={watch} initialCompanies={companies} />
+export default function EditWatchRedirect({ params }: { params: { id: string } }) {
+  redirect(`/forecast/veille/watches/${params.id}/edit`)
 }

@@ -34,6 +34,7 @@ interface CollectedSignalItem {
   severity: 'high' | 'medium' | 'low'
   region: string
   signal_type: string
+  category: string
   company_name: string | null
   source_hint: string
   source_url: string
@@ -92,6 +93,8 @@ function buildCollectionPrompt(
     `- Inclus l'URL source la plus précise possible.`,
     `- Varie les types de signaux : news, funding, product, partnership, regulation, market_shift.`,
     `- Si une entreprise surveillée est directement concernée, mentionne-la dans company_name.`,
+    `- Classe chaque signal dans une CATÉGORIE MÉTIER pertinente selon son contenu :`,
+    `  Régulation, Vente, RSE, Livraison, Partenariat, Innovation, Finance, Ressources Humaines, etc.`,
     `IMPORTANT : retourne UNIQUEMENT un objet JSON valide avec une clé "signals", sans markdown.`,
   ].filter(Boolean).join('\n')
 
@@ -113,12 +116,13 @@ function buildCollectionPrompt(
     `- "severity" : "high" | "medium" | "low"`,
     `- "region" : pays ou région principale`,
     `- "signal_type" : "news" | "funding" | "product" | "partnership" | "regulation" | "market_shift"`,
+    `- "category" : catégorie métier (ex: "Régulation", "Vente", "RSE", "Livraison", "Partenariat", "Innovation", "Finance", "Ressources Humaines")`,
     `- "company_name" : nom de l'entreprise surveillée directement concernée (ou null)`,
     `- "source_hint" : source/publication`,
     `- "source_url" : URL directe vers l'article source`,
     ``,
     `Format JSON :`,
-    `{"signals":[{"title":"...","summary":"...","severity":"high","region":"...","signal_type":"news","company_name":"..." ou null,"source_hint":"...","source_url":"https://..."}]}`,
+    `{"signals":[{"title":"...","summary":"...","severity":"high","region":"...","signal_type":"news","category":"Régulation","company_name":"..." ou null,"source_hint":"...","source_url":"https://..."}]}`,
   ].join('\n')
 
   return { systemInstruction, prompt }
@@ -299,6 +303,7 @@ export async function POST(req: NextRequest) {
           url:             url,
           source_name:     s.source_hint ?? articlePublisher ?? null,
           signal_type:     s.signal_type ?? 'news',
+          category:        (s as any).category ?? null,
           relevance_score: severity === 'high' ? 0.9 : severity === 'medium' ? 0.6 : 0.3,
           severity,
           region:          s.region ?? null,

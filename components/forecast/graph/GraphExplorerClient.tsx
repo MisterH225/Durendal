@@ -19,6 +19,8 @@ import { GraphResultsPanel } from './GraphResultsPanel'
 import { GraphToolbar, type ViewMode } from './GraphToolbar'
 import { NodeLegend } from './NodeLegend'
 import { TimelinePanel } from './TimelinePanel'
+import { StorylinePanel } from './StorylinePanel'
+import type { Storyline } from '@/lib/storyline/types'
 
 export function GraphExplorerClient() {
   return (
@@ -35,6 +37,9 @@ function GraphExplorerInner() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('graph')
   const [showLeftPanel, setShowLeftPanel] = useState(true)
+  const [storyline, setStoryline] = useState<Storyline | null>(null)
+  const [storylineLoading, setStorylineLoading] = useState(false)
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
 
   const canvasRef = useRef<{ zoomIn: () => void; zoomOut: () => void; fitView: () => void }>(null)
 
@@ -87,6 +92,48 @@ function GraphExplorerInner() {
     onRecenter(nodeId)
   }, [onRecenter])
 
+  const buildStorylineFromQuery = useCallback(async (query: string) => {
+    setStorylineLoading(true)
+    setStoryline(null)
+    try {
+      const res = await fetch('/api/storyline/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputType: 'keyword', inputValue: query }),
+      })
+      const data = await res.json()
+      if (data.storyline) setStoryline(data.storyline)
+    } catch (err) {
+      console.error('[GraphExplorer] storyline build error:', err)
+    } finally {
+      setStorylineLoading(false)
+    }
+  }, [])
+
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode)
+    if (mode === 'storyline' && !storyline && !storylineLoading && result?.query) {
+      buildStorylineFromQuery(result.query)
+    }
+  }, [storyline, storylineLoading, result?.query, buildStorylineFromQuery])
+
+  const handleSaveStoryline = useCallback(async () => {
+    if (!storyline) return
+    try {
+      await fetch('/api/storyline/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inputType: storyline.inputType,
+          inputValue: storyline.inputValue,
+          save: true,
+        }),
+      })
+    } catch (err) {
+      console.error('[GraphExplorer] storyline save error:', err)
+    }
+  }, [storyline])
+
   const activeTypes = [...new Set(result?.nodes.map(n => n.type) ?? [])]
 
   return (
@@ -111,7 +158,7 @@ function GraphExplorerInner() {
           <div className="flex items-center justify-between px-4 pb-2">
             <GraphToolbar
               viewMode={viewMode}
-              onViewModeChange={setViewMode}
+              onViewModeChange={handleViewModeChange}
               nodeCount={result.nodes.length}
               edgeCount={result.edges.length}
               onZoomIn={() => canvasRef.current?.zoomIn()}
@@ -171,6 +218,17 @@ function GraphExplorerInner() {
                 onNodeSelect={onNodeSelect}
               />
             </div>
+          )}
+
+          {viewMode === 'storyline' && (
+            <StorylinePanel
+              storyline={storyline}
+              isLoading={storylineLoading}
+              onSave={handleSaveStoryline}
+              onRefresh={result?.query ? () => buildStorylineFromQuery(result.query) : undefined}
+              onCardSelect={setSelectedCardId}
+              selectedCardId={selectedCardId}
+            />
           )}
         </div>
 

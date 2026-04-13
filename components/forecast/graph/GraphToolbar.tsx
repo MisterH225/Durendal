@@ -1,8 +1,8 @@
 'use client'
 
-import { ZoomIn, ZoomOut, Maximize, Network, List, Clock } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Network, List, Clock, BookOpen } from 'lucide-react'
 
-export type ViewMode = 'graph' | 'list' | 'timeline'
+export type ViewMode = 'graph' | 'list' | 'timeline' | 'storyline'
 
 interface GraphToolbarProps {
   viewMode: ViewMode
@@ -30,6 +30,7 @@ export function GraphToolbar({
           { mode: 'graph' as const, icon: Network, label: 'Graphe' },
           { mode: 'list' as const, icon: List, label: 'Liste' },
           { mode: 'timeline' as const, icon: Clock, label: 'Timeline' },
+          { mode: 'storyline' as const, icon: BookOpen, label: 'Storyline' },
         ]).map(({ mode, icon: Icon, label }) => (
           <button
             key={mode}

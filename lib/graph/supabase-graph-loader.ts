@@ -55,14 +55,19 @@ export async function loadGraphFromSupabase(
 
   for (const s of signals ?? []) {
     const isArticle = s.signal_type === 'news'
-    const sourceUrl = s.data?.source_url ?? s.data?.url ?? null
+    const d = s.data as Record<string, unknown> | null
+    const sourceUrl = d?.source_url ?? d?.url ?? null
+    const publishedAt = d?.published_at ?? d?.pubDate ?? d?.pub_date ?? null
+    const displayDate = typeof publishedAt === 'string'
+      ? publishedAt.slice(0, 10)
+      : s.created_at?.slice(0, 10)
     addNode({
       id: `sig-${s.id}`,
       type: isArticle ? 'article' : 'signal',
       label: s.title ?? 'Signal sans titre',
       subtitle: s.signal_type,
       summary: s.summary,
-      createdAt: s.created_at?.slice(0, 10),
+      createdAt: displayDate,
       regionTags: s.region ? [s.region] : [],
       importance: s.severity === 'high' || s.severity === 'critical' ? 8 : s.severity === 'medium' ? 5 : 3,
       url: typeof sourceUrl === 'string' ? sourceUrl : undefined,
@@ -97,7 +102,7 @@ export async function loadGraphFromSupabase(
   // ── 3. Search forecast_events ──────────────────────────────────────────────
   const { data: fEvents } = await db
     .from('forecast_events')
-    .select('id, title, description, status, tags, created_at')
+    .select('id, title, description, status, tags, starts_at, created_at')
     .or(buildOrFilter(tokens, ['title', 'description']))
     .order('created_at', { ascending: false })
     .limit(SEARCH_LIMIT_PER_TABLE)
@@ -108,7 +113,7 @@ export async function loadGraphFromSupabase(
       type: 'event',
       label: ev.title,
       summary: ev.description,
-      createdAt: ev.created_at?.slice(0, 10),
+      createdAt: (ev.starts_at ?? ev.created_at)?.slice(0, 10),
       sectorTags: ev.tags ?? [],
       importance: ev.status === 'active' ? 9 : 5,
     })
@@ -117,7 +122,7 @@ export async function loadGraphFromSupabase(
   // ── 4. Search intel_events ─────────────────────────────────────────────────
   const { data: iEvents } = await db
     .from('intel_events')
-    .select('id, title, summary, status, severity, primary_region, sectors, tags, created_at')
+    .select('id, title, summary, status, severity, primary_region, sectors, tags, timeline_anchor, created_at')
     .or(buildOrFilter(tokens, ['title', 'summary']))
     .order('created_at', { ascending: false })
     .limit(SEARCH_LIMIT_PER_TABLE)
@@ -128,7 +133,7 @@ export async function loadGraphFromSupabase(
       type: 'event',
       label: ie.title,
       summary: ie.summary,
-      createdAt: ie.created_at?.slice(0, 10),
+      createdAt: (ie.timeline_anchor ?? ie.created_at)?.slice(0, 10),
       regionTags: ie.primary_region ? [ie.primary_region] : [],
       sectorTags: ie.sectors ?? [],
       importance: (ie.severity ?? 2) * 2,
@@ -191,7 +196,7 @@ export async function loadGraphFromSupabase(
   if (missingEventIds.length > 0) {
     const { data: linkedEvents } = await db
       .from('forecast_events')
-      .select('id, title, description, status, tags, created_at')
+      .select('id, title, description, status, tags, starts_at, created_at')
       .in('id', missingEventIds)
 
     for (const ev of linkedEvents ?? []) {
@@ -200,7 +205,7 @@ export async function loadGraphFromSupabase(
         type: 'event',
         label: ev.title,
         summary: ev.description,
-        createdAt: ev.created_at?.slice(0, 10),
+        createdAt: (ev.starts_at ?? ev.created_at)?.slice(0, 10),
         sectorTags: ev.tags ?? [],
         importance: ev.status === 'active' ? 9 : 5,
       })

@@ -1,7 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, ExternalLink, Calendar, Tag, MapPin, Newspaper, TrendingUp, CheckCircle2, Zap, Globe, User, Clock } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Calendar, Tag, MapPin, Newspaper, TrendingUp, CheckCircle2, Zap, Globe, User, Clock, Network } from 'lucide-react'
 import { getLocale } from '@/lib/i18n/server'
 import { localizeChannel } from '@/lib/forecast/locale'
 import { BookmarkButton, ShareButton } from '@/components/forecast/SignalActions'
@@ -212,6 +212,13 @@ export default async function SignalDetailPage({ params }: { params: { id: strin
       <div className="flex items-center gap-2">
         <BookmarkButton signalId={s.id} initialBookmarked={isBookmarked} locale={locale} />
         <ShareButton signalId={s.id} signalTitle={s.title} locale={locale} />
+        <Link
+          href={`/forecast/graph?articleId=${s.id}`}
+          className="inline-flex items-center gap-1.5 text-[11px] font-medium px-3 py-2 rounded-lg bg-teal-500/10 text-teal-400 border border-teal-500/20 hover:bg-teal-500/20 transition-colors"
+        >
+          <Network size={13} />
+          {locale === 'fr' ? 'Construire Storyline' : 'Build Storyline'}
+        </Link>
       </div>
 
       {/* Content indicator */}

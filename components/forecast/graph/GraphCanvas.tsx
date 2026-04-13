@@ -16,7 +16,7 @@ import {
 import '@xyflow/react/dist/style.css'
 
 import { IntelNode, type IntelNodeData } from './IntelNode'
-import type { IntelligenceGraphNode, IntelligenceGraphEdge, GraphNodeType } from '@/lib/graph/types'
+import type { IntelligenceGraphNode, IntelligenceGraphEdge, GraphNodeType, StorylineCard, StorylineEdge, TemporalPosition } from '@/lib/graph/types'
 import { NODE_TYPE_CONFIG, EDGE_TYPE_CONFIG } from '@/lib/graph/types'
 
 const nodeTypes: NodeTypes = {
@@ -36,6 +36,9 @@ interface GraphCanvasProps {
   selectedNodeId: string | null
   onNodeSelect: (nodeId: string | null) => void
   onNodeDoubleClick: (nodeId: string) => void
+  storylineCards?: StorylineCard[]
+  storylineEdges?: StorylineEdge[]
+  isStorylineMode?: boolean
 }
 
 const NODE_WIDTH: Record<string, number> = { lg: 260, md: 220, sm: 200 }
@@ -78,7 +81,114 @@ function resolveCollisions(positions: Map<string, { x: number; y: number; w: num
   }
 }
 
-function layoutNodes(
+const POSITION_X: Record<TemporalPosition, number> = {
+  deep_past: -1200,
+  past: -800,
+  recent: -400,
+  anchor: 0,
+  concurrent: 100,
+  consequence: 500,
+  future: 900,
+}
+
+function layoutStorylineCards(cards: StorylineCard[]): Node[] {
+  if (cards.length === 0) return []
+
+  const positions = new Map<string, { x: number; y: number; w: number; h: number }>()
+  const columnCounts: Record<string, number> = {}
+
+  const sortedCards = [...cards].sort((a, b) => a.sortOrder - b.sortOrder)
+
+  for (const card of sortedCards) {
+    const tp = card.temporalPosition
+    const colKey = tp
+    columnCounts[colKey] = (columnCounts[colKey] ?? 0)
+    const rowInColumn = columnCounts[colKey]
+    columnCounts[colKey]++
+
+    const nodeType = cardTypeToNodeType(card.cardType)
+    const dim = getNodeDimensions(nodeType)
+
+    const baseX = POSITION_X[tp] ?? 0
+    const yOffset = rowInColumn * (dim.h + MIN_SPACING_Y + 20)
+    const yCenter = yOffset - (((columnCounts[colKey] ?? 1) - 1) * (dim.h + MIN_SPACING_Y + 20)) / 2
+
+    positions.set(card.id, {
+      x: baseX + (Math.random() - 0.5) * 40,
+      y: yCenter,
+      w: dim.w,
+      h: dim.h,
+    })
+  }
+
+  resolveCollisions(positions)
+
+  return sortedCards.map(card => {
+    const pos = positions.get(card.id) ?? { x: 0, y: 0 }
+    const nodeType = cardTypeToNodeType(card.cardType)
+    const isAnchor = card.temporalPosition === 'anchor'
+
+    return {
+      id: card.id,
+      type: 'intel',
+      position: { x: pos.x, y: pos.y },
+      data: {
+        id: card.id,
+        type: nodeType,
+        label: card.title,
+        subtitle: card.date ?? undefined,
+        summary: card.summary ?? undefined,
+        probability: card.probability ?? undefined,
+        importance: card.importance,
+        createdAt: card.date ?? undefined,
+        regionTags: card.regionTags,
+        sectorTags: card.sectorTags,
+        isAnchor,
+        isSelected: false,
+        dimmed: false,
+        metadata: { temporalPosition: card.temporalPosition, confidence: card.confidence },
+      } as Record<string, unknown>,
+    }
+  }) as Node[]
+}
+
+function storylineEdgesToFlow(stEdges: StorylineEdge[], cardIds: Set<string>): Edge[] {
+  return stEdges
+    .filter(e => cardIds.has(e.sourceCardId) && cardIds.has(e.targetCardId))
+    .map(e => {
+      const edgeType = e.relationType as string
+      const config = EDGE_TYPE_CONFIG[edgeType as keyof typeof EDGE_TYPE_CONFIG]
+      return {
+        id: e.id,
+        source: e.sourceCardId,
+        target: e.targetCardId,
+        label: config?.label ?? e.relationType,
+        style: {
+          stroke: config?.color ?? (e.isTrunk ? '#f59e0b' : '#6b7280'),
+          strokeWidth: e.isTrunk ? 2.5 : Math.max(1, (e.confidence ?? 0.5) * 2),
+          strokeDasharray: config?.dash ? '6 3' : undefined,
+        },
+        labelStyle: { fontSize: 9, fill: '#9ca3af' },
+        labelBgStyle: { fill: '#171717', fillOpacity: 0.9 },
+        animated: e.relationType === 'raises_probability' || e.relationType === 'lowers_probability',
+        data: e as unknown as Record<string, unknown>,
+      } as Edge
+    })
+}
+
+function cardTypeToNodeType(cardType: string): GraphNodeType {
+  const map: Record<string, GraphNodeType> = {
+    event: 'event',
+    article: 'article',
+    signal: 'signal',
+    entity: 'entity',
+    outcome: 'outcome',
+    context: 'context',
+  }
+  return map[cardType] ?? 'article'
+}
+
+function layoutGraphNodes(
   nodes: IntelligenceGraphNode[],
   edges: IntelligenceGraphEdge[],
   anchorIds: Set<string>,
@@ -112,20 +222,18 @@ function layoutNodes(
   const layers: IntelligenceGraphNode[][] = [[], [], []]
   for (const n of nonAnchors) {
     const neighbors = adjacency.get(n.id)
-    const hasAnchorNeighbor = neighbors && [...neighbors].some(id => anchorIds.has(id))
+    const hasAnchorNeighbor = neighbors && Array.from(neighbors).some(id => anchorIds.has(id))
     if (hasAnchorNeighbor) layers[0].push(n)
     else if (neighbors && neighbors.size > 0) layers[1].push(n)
     else layers[2].push(n)
   }
 
   const ringRadii = [180, 320, 480]
-
   for (let layer = 0; layer < layers.length; layer++) {
-    const group = layers[layer]
-    for (const n of group) {
+    for (const n of layers[layer]) {
       const dim = getNodeDimensions(n.type)
       const neighbors = adjacency.get(n.id) ?? new Set()
-      const positionedNeighbors = [...neighbors]
+      const positionedNeighbors = Array.from(neighbors)
         .map(id => positions.get(id))
         .filter(Boolean) as { x: number; y: number }[]
 
@@ -134,19 +242,11 @@ function layoutNodes(
         const cy = positionedNeighbors.reduce((s, p) => s + p.y, 0) / positionedNeighbors.length
         const angle = Math.atan2(cy, cx) + (Math.random() - 0.5) * 1.2
         const r = ringRadii[layer] + (Math.random() - 0.5) * 80
-        positions.set(n.id, {
-          x: cx + Math.cos(angle) * r,
-          y: cy + Math.sin(angle) * r,
-          w: dim.w, h: dim.h,
-        })
+        positions.set(n.id, { x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r, w: dim.w, h: dim.h })
       } else {
         const angle = Math.random() * Math.PI * 2
         const r = anchorRadius + ringRadii[layer]
-        positions.set(n.id, {
-          x: Math.cos(angle) * r,
-          y: Math.sin(angle) * r,
-          w: dim.w, h: dim.h,
-        })
+        positions.set(n.id, { x: Math.cos(angle) * r, y: Math.sin(angle) * r, w: dim.w, h: dim.h })
       }
     }
   }
@@ -159,16 +259,13 @@ function layoutNodes(
       id: n.id,
       type: 'intel',
       position: { x: pos.x, y: pos.y },
-      data: { ...n, isAnchor: anchorIds.has(n.id) } as IntelNodeData,
-    }
+      data: { ...n, isAnchor: anchorIds.has(n.id) } as unknown as Record<string, unknown>,
+    } as Node
   })
 }
 
-function toFlowEdges(
-  edges: IntelligenceGraphEdge[],
-  nodeIds: Set<string>,
-): Edge[] {
-  return edges
+function graphEdgesToFlow(gEdges: IntelligenceGraphEdge[], nodeIds: Set<string>): Edge[] {
+  return gEdges
     .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
     .map(e => {
       const config = EDGE_TYPE_CONFIG[e.type]
@@ -185,32 +282,38 @@ function toFlowEdges(
         labelStyle: { fontSize: 9, fill: '#9ca3af' },
         labelBgStyle: { fill: '#171717', fillOpacity: 0.9 },
         animated: e.type === 'raises_probability_of' || e.type === 'lowers_probability_of',
-        data: e,
-      }
+        data: e as unknown as Record<string, unknown>,
+      } as Edge
     })
 }
 
 export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
   function GraphCanvasInner(
-    { graphNodes, graphEdges, anchorNodeIds, selectedNodeId, onNodeSelect, onNodeDoubleClick },
+    { graphNodes, graphEdges, anchorNodeIds, selectedNodeId, onNodeSelect, onNodeDoubleClick, storylineCards, storylineEdges, isStorylineMode },
     ref,
   ) {
     const anchorSet = useMemo(() => new Set(anchorNodeIds), [anchorNodeIds])
     const nodeIdSet = useMemo(() => new Set(graphNodes.map(n => n.id)), [graphNodes])
 
-    const initialNodes = useMemo(
-      () => layoutNodes(graphNodes, graphEdges, anchorSet),
-      [graphNodes, graphEdges, anchorSet],
-    )
-    const initialEdges = useMemo(
-      () => toFlowEdges(graphEdges, nodeIdSet),
-      [graphEdges, nodeIdSet],
-    )
+    const useStoryline = isStorylineMode && storylineCards && storylineCards.length > 0
+
+    const initialNodes = useMemo(() => {
+      if (useStoryline) return layoutStorylineCards(storylineCards!)
+      return layoutGraphNodes(graphNodes, graphEdges, anchorSet)
+    }, [useStoryline, storylineCards, graphNodes, graphEdges, anchorSet])
+
+    const initialEdges = useMemo(() => {
+      if (useStoryline && storylineEdges) {
+        const cardIds = new Set(storylineCards!.map(c => c.id))
+        return storylineEdgesToFlow(storylineEdges, cardIds)
+      }
+      return graphEdgesToFlow(graphEdges, nodeIdSet)
+    }, [useStoryline, storylineEdges, storylineCards, graphEdges, nodeIdSet])
 
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
     const { fitView, zoomIn, zoomOut } = useReactFlow()
-    const prevNodesRef = useRef(graphNodes)
+    const prevDataRef = useRef({ graphNodes, storylineCards })
 
     useImperativeHandle(ref, () => ({
       zoomIn: () => zoomIn({ duration: 200 }),
@@ -219,56 +322,65 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     }), [zoomIn, zoomOut, fitView])
 
     useEffect(() => {
-      if (prevNodesRef.current !== graphNodes) {
-        setNodes(layoutNodes(graphNodes, graphEdges, anchorSet))
-        setEdges(toFlowEdges(graphEdges, nodeIdSet))
-        prevNodesRef.current = graphNodes
+      const changed = prevDataRef.current.graphNodes !== graphNodes || prevDataRef.current.storylineCards !== storylineCards
+      if (changed) {
+        if (useStoryline) {
+          setNodes(layoutStorylineCards(storylineCards!))
+          const cardIds = new Set(storylineCards!.map(c => c.id))
+          setEdges(storylineEdgesToFlow(storylineEdges ?? [], cardIds))
+        } else {
+          setNodes(layoutGraphNodes(graphNodes, graphEdges, anchorSet))
+          setEdges(graphEdgesToFlow(graphEdges, nodeIdSet))
+        }
+        prevDataRef.current = { graphNodes, storylineCards }
         setTimeout(() => fitView({ padding: 0.15, duration: 400 }), 100)
       }
-    }, [graphNodes, graphEdges, anchorSet, nodeIdSet, setNodes, setEdges, fitView])
+    }, [graphNodes, graphEdges, anchorSet, nodeIdSet, storylineCards, storylineEdges, useStoryline, setNodes, setEdges, fitView])
 
     useEffect(() => {
       setNodes(nds =>
-        nds.map(n => ({
-          ...n,
-          data: {
-            ...(n.data as IntelNodeData),
-            isSelected: n.id === selectedNodeId,
-            dimmed: selectedNodeId
-              ? n.id !== selectedNodeId && !anchorSet.has(n.id)
-              : false,
-          },
-        })),
+        nds.map(n => {
+          const d = n.data as unknown as IntelNodeData
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              isSelected: n.id === selectedNodeId,
+              dimmed: selectedNodeId
+                ? n.id !== selectedNodeId && !d.isAnchor
+                : false,
+            },
+          }
+        }),
       )
-    }, [selectedNodeId, anchorSet, setNodes])
+    }, [selectedNodeId, setNodes])
 
     const onNodeClick = useCallback(
       (_: React.MouseEvent, node: Node) => onNodeSelect(node.id),
       [onNodeSelect],
     )
-
     const handleDoubleClick = useCallback(
       (_: React.MouseEvent, node: Node) => onNodeDoubleClick(node.id),
       [onNodeDoubleClick],
     )
-
     const onPaneClick = useCallback(() => onNodeSelect(null), [onNodeSelect])
 
-    if (graphNodes.length === 0) {
+    const hasContent = useStoryline ? storylineCards!.length > 0 : graphNodes.length > 0
+
+    if (!hasContent) {
       return (
         <div className="w-full h-full flex items-center justify-center">
           <div className="text-center max-w-md">
             <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-center">
               <span className="text-2xl">🔍</span>
             </div>
-            <h3 className="text-base font-bold text-neutral-200 mb-2">Intelligence Graph Explorer</h3>
+            <h3 className="text-base font-bold text-neutral-200 mb-2">Storyline Intelligence Explorer</h3>
             <p className="text-sm text-neutral-500 leading-relaxed">
-              Recherchez un sujet — Iran, cacao, Niger, inflation, IA — pour explorer
-              le graphe de connexions intelligence et naviguer entre événements,
-              signaux, entités et questions.
+              Recherchez un sujet ou collez un lien d'article pour construire une storyline intelligence
+              qui retrace les causes, le contexte et les projections d'un événement.
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
-              {['Iran', 'cacao', 'Niger', 'inflation', 'IA', 'CEDEAO'].map(tag => (
+              {['Iran', 'cacao', 'Niger', 'inflation', 'IA', 'crypto'].map(tag => (
                 <span key={tag} className="text-[10px] px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-400">
                   {tag}
                 </span>
@@ -291,7 +403,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.15 }}
-        minZoom={0.05}
+        minZoom={0.03}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
         className="bg-neutral-950"
@@ -299,7 +411,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#333" />
         <MiniMap
           nodeColor={node => {
-            const d = node.data as IntelNodeData
+            const d = node.data as unknown as IntelNodeData
             return NODE_TYPE_CONFIG[d.type]?.color ?? '#6b7280'
           }}
           maskColor="rgba(0,0,0,0.8)"

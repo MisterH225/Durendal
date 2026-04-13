@@ -9,6 +9,7 @@ interface TimelinePanelProps {
   query: string
   selectedNodeId: string | null
   onNodeSelect: (id: string) => void
+  narrative?: string
 }
 
 // ── Chronological narrative builder ───────────────────────────────────────────
@@ -262,8 +263,10 @@ function renderSourcePills(
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function TimelinePanel({ nodes, edges, query, selectedNodeId, onNodeSelect }: TimelinePanelProps) {
-  const narrative = buildChronologicalNarrative(nodes, edges, query)
+export function TimelinePanel({ nodes, edges, query, selectedNodeId, onNodeSelect, narrative: externalNarrative }: TimelinePanelProps) {
+  const heuristicNarrative = !externalNarrative ? buildChronologicalNarrative(nodes, edges, query) : []
+  const narrativeText = externalNarrative ?? ''
+  const narrative = heuristicNarrative
 
   const dated = nodes
     .filter(n => n.createdAt)
@@ -277,7 +280,7 @@ export function TimelinePanel({ nodes, edges, query, selectedNodeId, onNodeSelec
     grouped.set(month, arr)
   }
 
-  if (narrative.length === 0 && dated.length === 0) {
+  if (narrative.length === 0 && !narrativeText && dated.length === 0) {
     return (
       <div className="flex items-center justify-center h-48 text-neutral-600 text-xs">
         Aucun élément daté dans les résultats
@@ -287,7 +290,29 @@ export function TimelinePanel({ nodes, edges, query, selectedNodeId, onNodeSelec
 
   return (
     <div className="max-w-3xl mx-auto p-4 pb-12 space-y-6">
-      {/* Chronological narrative */}
+      {/* LLM Narrative (from storyline engine) */}
+      {narrativeText && (
+        <div className="rounded-xl border border-teal-500/20 bg-teal-500/5 p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-7 h-7 rounded-lg bg-teal-500/15 flex items-center justify-center">
+              <span className="text-sm">🧠</span>
+            </div>
+            <div>
+              <h3 className="text-[13px] font-bold text-neutral-200">Analyse intelligence — « {query} »</h3>
+              <p className="text-[10px] text-neutral-500">Récit structuré généré par l'IA à partir de sources multiples</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            {narrativeText.split('\n\n').map((paragraph, i) => (
+              <p key={i} className="text-[13px] text-neutral-300 leading-[1.7]">
+                {paragraph}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Heuristic chronological narrative */}
       <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5">
         <div className="flex items-center gap-2 mb-4">
           <div className="w-7 h-7 rounded-lg bg-blue-500/15 border border-blue-500/30 flex items-center justify-center">

@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { searchGraph } from '@/lib/graph/search-engine'
-import { loadGraphFromSupabase, getSuggestionsFromSupabase } from '@/lib/graph/supabase-graph-loader'
-import { DEFAULT_FILTERS } from '@/lib/graph/types'
-import type { GraphFilters } from '@/lib/graph/types'
+import { getSuggestionsFromSupabase } from '@/lib/graph/supabase-graph-loader'
+import { resolveAnchor, buildStoryline } from '@/lib/storyline/builder'
+import type { StorylineSSEEvent } from '@/lib/graph/types'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const query = searchParams.get('q')?.trim() ?? ''
-  const mode = searchParams.get('mode') ?? 'search'
+  const articleId = searchParams.get('articleId')?.trim() ?? ''
+  const mode = searchParams.get('mode') ?? 'storyline'
 
   if (mode === 'suggest') {
     try {
@@ -21,41 +22,45 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  if (!query) {
-    return NextResponse.json({ error: 'Query parameter "q" is required' }, { status: 400 })
+  if (!query && !articleId) {
+    return NextResponse.json({ error: 'Query "q" or "articleId" is required' }, { status: 400 })
   }
 
-  const filters: GraphFilters = { ...DEFAULT_FILTERS }
-  const nodeTypes = searchParams.get('nodeTypes')
-  if (nodeTypes) filters.nodeTypes = nodeTypes.split(',') as GraphFilters['nodeTypes']
-  const from = searchParams.get('from')
-  const to = searchParams.get('to')
-  if (from) filters.dateRange.from = from
-  if (to) filters.dateRange.to = to
-  const minConf = searchParams.get('minConfidence')
-  if (minConf) filters.minConfidence = parseFloat(minConf)
+  const encoder = new TextEncoder()
 
-  try {
-    const { nodes, edges } = await loadGraphFromSupabase(query)
+  const stream = new ReadableStream({
+    async start(controller) {
+      function sendEvent(event: StorylineSSEEvent) {
+        try {
+          const data = JSON.stringify(event)
+          controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+        } catch {
+          // controller closed
+        }
+      }
 
-    if (nodes.length === 0) {
-      return NextResponse.json({
-        query,
-        nodes: [],
-        edges: [],
-        anchorNodeIds: [],
-        groupedMatches: { articles: [], events: [], entities: [], questions: [], signals: [], documents: [] },
-        totals: { articles: 0, events: 0, entities: 0, questions: 0, signals: 0, documents: 0 },
-      })
-    }
+      try {
+        const anchor = await resolveAnchor({
+          query: query || undefined,
+          articleId: articleId || undefined,
+        })
 
-    const result = searchGraph(query, filters, nodes, edges)
-    return NextResponse.json(result)
-  } catch (err) {
-    console.error('[graph/search] error:', err)
-    return NextResponse.json(
-      { error: 'Erreur lors de la recherche dans le graphe' },
-      { status: 500 },
-    )
-  }
+        await buildStoryline(anchor, { onEvent: sendEvent })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        sendEvent({ phase: 'error', error: message })
+      } finally {
+        try { controller.close() } catch { /* already closed */ }
+      }
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  })
 }

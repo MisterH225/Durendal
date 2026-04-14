@@ -444,24 +444,53 @@ async function directGeminiSearchFallback(
     `{"events":[{"title":"...","date":"2025-01-15","summary":"...","entities":["..."],"regions":["..."],"causalRole":"escalation"}]}`,
   ].join('\n')
 
+  let parsed: DirectSearchResult | null = null
+
   try {
     const { text: structuredText } = await callGemini(structurePrompt, {
-      maxOutputTokens: 6000,
+      maxOutputTokens: 8192,
       temperature: 0.1,
+      responseMimeType: 'application/json',
     })
 
-    console.log(`[directGeminiSearchFallback] Step 2: Got ${structuredText.length} chars structured response`)
+    console.log(`[directGeminiSearchFallback] Step 2: Got ${structuredText.length} chars (JSON mode)`)
 
-    const parsed = parseGeminiJson<DirectSearchResult>(structuredText)
+    try {
+      parsed = JSON.parse(structuredText) as DirectSearchResult
+    } catch {
+      parsed = parseGeminiJson<DirectSearchResult>(structuredText)
+    }
+
     if (!parsed?.events || parsed.events.length === 0) {
-      console.warn('[directGeminiSearchFallback] No events parsed from structured response')
-      console.warn('[directGeminiSearchFallback] Raw text preview:', structuredText.slice(0, 300))
+      console.warn('[directGeminiSearchFallback] Step 2 empty, trying minimal JSON prompt')
+      const minimalPrompt = [
+        `Sujet: "${anchor.title}".`,
+        anchor.summary ? `Contexte: ${anchor.summary.slice(0, 300)}` : '',
+        `Produis un JSON avec exactement la clé "events" : tableau de 8 objets.`,
+        `Chaque objet: "title" (titre court en français), "date" (YYYY-MM-DD), "summary" (2 phrases), "entities" (tableau de chaînes), "regions" (tableau de chaînes).`,
+        `Ordre chronologique du plus ancien au plus récent. Dates plausibles même si approximatives.`,
+      ].filter(Boolean).join('\n')
+
+      const { text: minimalText } = await callGemini(minimalPrompt, {
+        maxOutputTokens: 6000,
+        temperature: 0.05,
+        responseMimeType: 'application/json',
+      })
+      try {
+        parsed = JSON.parse(minimalText) as DirectSearchResult
+      } catch {
+        parsed = parseGeminiJson<DirectSearchResult>(minimalText)
+      }
+    }
+
+    if (!parsed?.events || parsed.events.length === 0) {
+      console.warn('[directGeminiSearchFallback] No events after step 2 + minimal retry')
       return []
     }
 
     console.log(`[directGeminiSearchFallback] Parsed ${parsed.events.length} events`)
 
-    const sourceUrlMap = new Map(groundingSources.map(s => [s.title, s.url]))
+    const titleByUrl = new Map(groundingSources.map(s => [s.url, s.title]))
     const sourceUrls = groundingSources.map(s => s.url)
 
     const clusters: EventCluster[] = parsed.events
@@ -477,7 +506,7 @@ async function directGeminiSearchFallback(
         }
 
         return {
-          clusterId: `fb-${Date.now().toString(36)}-${rand}`,
+          clusterId: `fb-${Date.now().toString(36)}-${i}-${rand}`,
           canonicalTitle: e.title.slice(0, 120),
           eventDate: e.date?.match(/\d{4}-\d{2}-\d{2}/) ? e.date.slice(0, 10) : null,
           eventDateConfidence: (e.date ? 'medium' : 'low') as EventCluster['eventDateConfidence'],
@@ -488,7 +517,7 @@ async function directGeminiSearchFallback(
             let hostname = 'source'
             try { hostname = new URL(url).hostname.replace('www.', '') } catch { /* malformed URL */ }
             return {
-              title: sourceUrlMap.get(url) ?? groundingSources.find(s => s.url === url)?.title ?? hostname,
+              title: titleByUrl.get(url) ?? groundingSources.find(s => s.url === url)?.title ?? hostname,
               url,
               source: hostname,
             }

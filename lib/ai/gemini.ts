@@ -25,6 +25,8 @@ export async function callGemini(
     model?: GeminiModel
     maxOutputTokens?: number
     temperature?: number
+    /** Force une sortie JSON valide (évite markdown / texte autour du JSON). */
+    responseMimeType?: 'application/json' | 'text/plain'
   } = {}
 ): Promise<{ text: string; tokensUsed: number }> {
   const apiKey = process.env.GEMINI_API_KEY
@@ -34,6 +36,11 @@ export async function callGemini(
   const maxOutputTokens = options.maxOutputTokens ?? 2000
   const temperature     = options.temperature     ?? 0.3
 
+  const generationConfig: Record<string, unknown> = { maxOutputTokens, temperature }
+  if (options.responseMimeType) {
+    generationConfig.responseMimeType = options.responseMimeType
+  }
+
   const res = await fetch(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
     {
@@ -41,7 +48,7 @@ export async function callGemini(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens, temperature },
+        generationConfig,
       }),
       signal: AbortSignal.timeout(GEMINI_FETCH_TIMEOUT_MS),
     }

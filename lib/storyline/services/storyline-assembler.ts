@@ -86,7 +86,27 @@ export function assembleStorylineGraph(
   const cards: StorylineCard[] = []
   const edges: StorylineEdge[] = []
 
-  const trunkClusterIds = detectTrunkClusters(relations)
+  const corollaryRelations = relations.filter(r => r.semanticCategory === 'corollary')
+  const corollaryTargetIds = new Set(corollaryRelations.map(r => r.targetClusterId))
+
+  const causalTrunkIds = detectTrunkClusters(relations)
+  const hasCausalTrunk = Array.from(causalTrunkIds).some(id => id !== ANCHOR_CLUSTER_ID)
+
+  function clusterBeforeAnchor(c: EventCluster): boolean {
+    if (!anchor.date) return true
+    if (!c.eventDate) return true
+    return c.eventDate < anchor.date
+  }
+
+  /** Tronc visuel : causalité si dispo, sinon antériorité par rapport à l’ancre (évite 0 nœud à gauche). */
+  let layoutTrunkIds = causalTrunkIds
+  if (!hasCausalTrunk && clusters.length > 0) {
+    layoutTrunkIds = new Set<string>([ANCHOR_CLUSTER_ID])
+    for (const c of clusters) {
+      if (corollaryTargetIds.has(c.clusterId)) continue
+      if (clusterBeforeAnchor(c)) layoutTrunkIds.add(c.clusterId)
+    }
+  }
 
   // Anchor card
   const anchorCard: StorylineCard = {
@@ -113,10 +133,6 @@ export function assembleStorylineGraph(
   const cardByClusterId = new Map<string, StorylineCard>()
   cardByClusterId.set(ANCHOR_CLUSTER_ID, anchorCard)
 
-  // Corollary detection
-  const corollaryRelations = relations.filter(r => r.semanticCategory === 'corollary')
-  const corollaryTargetIds = new Set(corollaryRelations.map(r => r.targetClusterId))
-
   // Sort clusters chronologically
   const sortedClusters = [...clusters].sort((a, b) =>
     (a.eventDate ?? '').localeCompare(b.eventDate ?? ''),
@@ -125,7 +141,7 @@ export function assembleStorylineGraph(
   // Build cluster cards
   let trunkOrder = 0
   for (const cluster of sortedClusters) {
-    const isTrunk = trunkClusterIds.has(cluster.clusterId)
+    const isTrunk = layoutTrunkIds.has(cluster.clusterId)
     const isCorollary = corollaryTargetIds.has(cluster.clusterId)
     const temporalPosition = inferPositionFromClusterDate(cluster, anchor)
 
@@ -175,9 +191,9 @@ export function assembleStorylineGraph(
     cardByClusterId.set(cluster.clusterId, card)
   }
 
-  // Build edges from semantic relations (skip pure temporal)
+  // Build edges from semantic relations (temporal cluster → ancre inclus pour lier la timeline)
   for (const rel of relations) {
-    if (rel.semanticCategory === 'temporal') continue
+    if (rel.semanticCategory === 'temporal' && rel.targetClusterId !== ANCHOR_CLUSTER_ID) continue
 
     const sourceCard = cardByClusterId.get(rel.sourceClusterId)
     const targetCard = cardByClusterId.get(rel.targetClusterId)
@@ -192,7 +208,7 @@ export function assembleStorylineGraph(
       confidence: rel.confidence,
       explanation: rel.explanation,
       causalEvidence: rel.mechanismEvidence || undefined,
-      isTrunk: rel.semanticCategory === 'causal' && trunkClusterIds.has(rel.sourceClusterId),
+      isTrunk: rel.semanticCategory === 'causal' && layoutTrunkIds.has(rel.sourceClusterId),
     })
   }
 

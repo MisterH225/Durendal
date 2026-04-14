@@ -1,4 +1,4 @@
-import { perplexityResponses } from '@/lib/ai/perplexity'
+import { perplexityResponses, isPerplexityQuotaError } from '@/lib/ai/perplexity'
 import type { SearchRecency } from '@/lib/ai/perplexity'
 import type { CandidateItem } from '@/lib/graph/types'
 import type { EventCluster } from '../types/event-cluster'
@@ -119,6 +119,10 @@ export async function searchHistoricalContext(
   entities: string[],
   currentClusters: EventCluster[],
 ): Promise<CandidateItem[]> {
+  if (process.env.DISABLE_PERPLEXITY === '1' || process.env.DISABLE_PERPLEXITY === 'true') {
+    return []
+  }
+
   const queries = buildHistoricalQueries(keywords, entities, currentClusters)
 
   const results = await Promise.allSettled(
@@ -135,12 +139,24 @@ export async function searchHistoricalContext(
   )
 
   const allCandidates: CandidateItem[] = []
+  let quotaFailures = 0
+  let otherFailures = 0
+
   for (let i = 0; i < results.length; i++) {
     if (results[i].status === 'fulfilled') {
       allCandidates.push(...(results[i] as PromiseFulfilledResult<CandidateItem[]>).value)
     } else {
-      console.error(`[historical-searcher] ${queries[i].focus} failed:`, (results[i] as PromiseRejectedResult).reason)
+      const reason = (results[i] as PromiseRejectedResult).reason
+      if (isPerplexityQuotaError(reason)) quotaFailures++
+      else {
+        otherFailures++
+        console.error(`[historical-searcher] ${queries[i].focus} failed:`, reason)
+      }
     }
+  }
+
+  if (quotaFailures === queries.length && queries.length > 0) {
+    console.warn('[historical-searcher] Perplexity quota épuisée — expansion historique via Perplexity ignorée')
   }
 
   const deduped: CandidateItem[] = []

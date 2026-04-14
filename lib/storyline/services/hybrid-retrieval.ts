@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { perplexityResponses } from '@/lib/ai/perplexity'
+import { perplexityResponses, isPerplexityQuotaError } from '@/lib/ai/perplexity'
 import type { PerplexityCitation, SearchRecency } from '@/lib/ai/perplexity'
 import type { CandidateItem } from '@/lib/graph/types'
 
@@ -166,6 +166,11 @@ export async function retrieveExternalCandidates(
   anchor: AnchorContext,
   onWindowComplete?: (windowLabel: string, candidates: CandidateItem[]) => void,
 ): Promise<CandidateItem[]> {
+  if (process.env.DISABLE_PERPLEXITY === '1' || process.env.DISABLE_PERPLEXITY === 'true') {
+    console.warn('[hybrid-retrieval] Perplexity désactivée (DISABLE_PERPLEXITY) — recherche externe ignorée')
+    return []
+  }
+
   const anchorDesc = `${anchor.title}. ${anchor.summary ?? ''}`
 
   const results = await Promise.allSettled(
@@ -183,13 +188,29 @@ export async function retrieveExternalCandidates(
   )
 
   const allCandidates: CandidateItem[] = []
+  let quotaFailures = 0
+  let otherFailures = 0
+
   for (let i = 0; i < results.length; i++) {
     const result = results[i]
     if (result.status === 'fulfilled') {
       allCandidates.push(...result.value)
+    } else if (isPerplexityQuotaError((result as PromiseRejectedResult).reason)) {
+      quotaFailures++
     } else {
-      console.error(`[hybrid-retrieval] Window ${TIME_WINDOWS[i].label} failed:`, result.reason)
+      otherFailures++
+      console.error(`[hybrid-retrieval] Window ${TIME_WINDOWS[i].label} failed:`, (result as PromiseRejectedResult).reason)
     }
+  }
+
+  if (quotaFailures === TIME_WINDOWS.length) {
+    console.warn(
+      '[hybrid-retrieval] Perplexity: quota / facturation épuisée (toutes les fenêtres en 401). ' +
+        'Le graphe continue avec Gemini + recherche interne uniquement. ' +
+        'Voir https://www.perplexity.ai/settings/api ou définir DISABLE_PERPLEXITY=1 pour éviter ces appels.',
+    )
+  } else if (quotaFailures > 0 && otherFailures === 0) {
+    console.warn(`[hybrid-retrieval] ${quotaFailures} fenêtre(s) Perplexity en échec (quota?), ${TIME_WINDOWS.length - quotaFailures} OK`)
   }
 
   return allCandidates

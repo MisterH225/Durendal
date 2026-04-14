@@ -56,6 +56,22 @@ export interface PerplexityFilters {
  * Utilise `sonar-pro` avec `search_context_size: "high"` pour maximiser
  * la quantité d'information récupérée par la recherche temps réel.
  */
+/** Quota / facturation Perplexity épuisée (401 insufficient_quota). */
+export class PerplexityQuotaError extends Error {
+  constructor(message = 'Perplexity: quota ou facturation insuffisante (401). Voir https://www.perplexity.ai/settings/api') {
+    super(message)
+    this.name = 'PerplexityQuotaError'
+  }
+}
+
+export function isPerplexityQuotaError(err: unknown): boolean {
+  if (err instanceof PerplexityQuotaError) return true
+  if (err instanceof Error) {
+    return /insufficient_quota|exceeded your current quota|PerplexityQuotaError/i.test(err.message)
+  }
+  return false
+}
+
 export async function perplexityResponses(
   input:   string,
   filters?: PerplexityFilters,
@@ -96,8 +112,21 @@ export async function perplexityResponses(
   })
 
   if (!res.ok) {
-    const err = await res.text().catch(() => res.statusText)
-    throw new Error(`Perplexity Sonar API ${res.status}: ${err}`)
+    const errBody = await res.text().catch(() => res.statusText)
+    if (res.status === 401) {
+      try {
+        const parsed = JSON.parse(errBody) as { error?: { type?: string } }
+        if (parsed?.error?.type === 'insufficient_quota') {
+          throw new PerplexityQuotaError()
+        }
+      } catch (e) {
+        if (e instanceof PerplexityQuotaError) throw e
+      }
+      if (/insufficient_quota|exceeded your current quota/i.test(errBody)) {
+        throw new PerplexityQuotaError()
+      }
+    }
+    throw new Error(`Perplexity Sonar API ${res.status}: ${errBody}`)
   }
 
   const data = await res.json()

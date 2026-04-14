@@ -366,15 +366,21 @@ function graphEdgesToFlow(gEdges: IntelligenceGraphEdge[], nodeIds: Set<string>)
     })
 }
 
-export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
-  function GraphCanvasInner(
+function graphCanvasHasContent(props: GraphCanvasProps): boolean {
+  const useStoryline = !!(props.isStorylineMode && props.storylineCards && props.storylineCards.length > 0)
+  return useStoryline ? (props.storylineCards?.length ?? 0) > 0 : props.graphNodes.length > 0
+}
+
+/** Hooks React Flow uniquement lorsque le graphe est affiché (évite erreur sans composant ReactFlow). */
+const GraphCanvasFlow = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
+  function GraphCanvasFlowInner(
     { graphNodes, graphEdges, anchorNodeIds, selectedNodeId, onNodeSelect, onNodeDoubleClick, storylineCards, storylineEdges, isStorylineMode },
     ref,
   ) {
     const anchorSet = useMemo(() => new Set(anchorNodeIds), [anchorNodeIds])
     const nodeIdSet = useMemo(() => new Set(graphNodes.map(n => n.id)), [graphNodes])
 
-    const useStoryline = isStorylineMode && storylineCards && storylineCards.length > 0
+    const useStoryline = !!(isStorylineMode && storylineCards && storylineCards.length > 0)
 
     const initialNodes = useMemo(() => {
       if (useStoryline) return layoutStorylineCards(storylineCards!)
@@ -444,32 +450,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     )
     const onPaneClick = useCallback(() => onNodeSelect(null), [onNodeSelect])
 
-    const hasContent = useStoryline ? storylineCards!.length > 0 : graphNodes.length > 0
-
-    if (!hasContent) {
-      return (
-        <div className="w-full h-full flex items-center justify-center">
-          <div className="text-center max-w-md">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-center">
-              <span className="text-2xl">🔍</span>
-            </div>
-            <h3 className="text-base font-bold text-neutral-200 mb-2">Storyline Intelligence Explorer</h3>
-            <p className="text-sm text-neutral-500 leading-relaxed">
-              Recherchez un sujet ou collez un lien d'article pour construire une storyline intelligence
-              qui retrace les causes, le contexte et les projections d'un événement.
-            </p>
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
-              {['Iran', 'cacao', 'Niger', 'inflation', 'IA', 'crypto'].map(tag => (
-                <span key={tag} className="text-[10px] px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-400">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )
-    }
-
     return (
       <ReactFlow
         nodes={nodes}
@@ -502,3 +482,44 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     )
   },
 )
+
+export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function GraphCanvasInner(props, ref) {
+  const hasContent = graphCanvasHasContent(props)
+  const flowRef = useRef<GraphCanvasHandle>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      zoomIn: () => flowRef.current?.zoomIn(),
+      zoomOut: () => flowRef.current?.zoomOut(),
+      fitView: () => flowRef.current?.fitView(),
+    }),
+    [],
+  )
+
+  if (!hasContent) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-center">
+            <span className="text-2xl" aria-hidden>{"🔍"}</span>
+          </div>
+          <h3 className="text-base font-bold text-neutral-200 mb-2">Storyline Intelligence Explorer</h3>
+          <p className="text-sm text-neutral-500 leading-relaxed">
+            Recherchez un sujet ou collez un lien d&apos;article pour construire une storyline intelligence
+            qui retrace les causes, le contexte et les projections d&apos;un événement.
+          </p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {['Iran', 'cacao', 'Niger', 'inflation', 'IA', 'crypto'].map(tag => (
+              <span key={tag} className="text-[10px] px-2 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-400">
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return <GraphCanvasFlow ref={flowRef} {...props} />
+})

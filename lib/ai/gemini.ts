@@ -1,5 +1,8 @@
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 
+/** Timeout HTTP par appel (génération longue / gros maxOutputTokens). */
+const GEMINI_FETCH_TIMEOUT_MS = 180_000
+
 export type GeminiModel =
   | 'gemini-2.5-flash'          // Stable — MODÈLE PAR DÉFAUT (meilleur rapport qualité/prix 2025-2026)
   | 'gemini-2.5-flash-lite'     // Ultra-rapide et économique
@@ -40,6 +43,7 @@ export async function callGemini(
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { maxOutputTokens, temperature },
       }),
+      signal: AbortSignal.timeout(GEMINI_FETCH_TIMEOUT_MS),
     }
   )
 
@@ -96,6 +100,7 @@ export async function callGeminiWithSearch(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(GEMINI_FETCH_TIMEOUT_MS),
     }
   )
 

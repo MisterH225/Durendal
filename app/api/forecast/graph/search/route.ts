@@ -4,6 +4,7 @@ import { resolveAnchor, buildStoryline } from '@/lib/storyline/builder'
 import type { StorylineSSEEvent } from '@/lib/graph/types'
 
 export const dynamic = 'force-dynamic'
+/** Vercel / plateformes managées. Sur VPS + Nginx, ajuster aussi proxy_read_timeout (ex. 360s). */
 export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
@@ -27,9 +28,19 @@ export async function GET(req: NextRequest) {
   }
 
   const encoder = new TextEncoder()
+  /** Commentaires SSE : maintiennent la connexion ouverte pendant les phases LLM (évite timeout proxy Nginx/CDN). */
+  const KEEPALIVE_MS = 12_000
 
   const stream = new ReadableStream({
     async start(controller) {
+      const keepAlive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': ping\n\n'))
+        } catch {
+          /* flux fermé */
+        }
+      }, KEEPALIVE_MS)
+
       function sendEvent(event: StorylineSSEEvent) {
         try {
           const data = JSON.stringify(event)
@@ -50,6 +61,7 @@ export async function GET(req: NextRequest) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         sendEvent({ phase: 'error', error: message })
       } finally {
+        clearInterval(keepAlive)
         try { controller.close() } catch { /* already closed */ }
       }
     },

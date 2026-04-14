@@ -357,6 +357,9 @@ function storylineToGraphResult(
       supportingEvidence: c.supportingEvidence,
       contradictingEvidence: c.contradictingEvidence,
       outcomeStatus: c.outcomeStatus,
+      isTrunk: c.isTrunk,
+      isCorollary: c.isCorollary,
+      sourceArticles: c.sourceArticles,
     },
   }))
 

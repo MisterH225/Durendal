@@ -6,6 +6,7 @@ import { analyzeStoryline } from './services/storyline-analysis'
 import { assembleStoryline } from './services/storyline-assembler'
 import { generateOutcomes } from './services/outcome-generator'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 
 export type { AnchorContext }
 
@@ -59,6 +60,71 @@ export async function resolveAnchor(input: {
   }
 
   const query = input.query ?? ''
+  return resolveKeywordToEvent(query)
+}
+
+interface EventResolution {
+  eventTitle: string
+  eventSummary: string
+  approximateDate: string
+  entities: string[]
+  keywords: string[]
+}
+
+async function resolveKeywordToEvent(query: string): Promise<AnchorContext> {
+  const prompt = [
+    `Given the keyword or topic: "${query}"`,
+    ``,
+    `Identify the MAIN current event or situation this keyword is most likely about.`,
+    `Do NOT just repeat the keyword. Identify the actual geopolitical, economic, or strategic EVENT.`,
+    ``,
+    `Examples:`,
+    `- "strait of Ormuz" → "US-Iran military confrontation and Strait of Hormuz blockade risk 2025-2026"`,
+    `- "cocoa" → "West African cocoa supply crisis and record price surge 2024-2025"`,
+    `- "Niger" → "Niger military junta standoff with ECOWAS and French withdrawal"`,
+    `- "crypto" → "Global cryptocurrency market volatility and regulatory developments 2025"`,
+    ``,
+    `Return ONLY valid JSON:`,
+    `{`,
+    `  "eventTitle": "Short, specific title of the central event (max 15 words)",`,
+    `  "eventSummary": "2-3 sentence summary of the current situation",`,
+    `  "approximateDate": "YYYY-MM-DD approximate date of the most recent developments",`,
+    `  "entities": ["key actor 1", "key actor 2", "key actor 3"],`,
+    `  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]`,
+    `}`,
+  ].join('\n')
+
+  try {
+    const { text } = await callGemini(prompt, { maxOutputTokens: 1000, temperature: 0.3 })
+    const parsed = parseGeminiJson<EventResolution>(text)
+
+    if (parsed?.eventTitle) {
+      console.log(`[resolveKeywordToEvent] "${query}" → "${parsed.eventTitle}"`)
+
+      const db = createAdminClient()
+      const { data: matchingEvent } = await db
+        .from('forecast_events')
+        .select('id, title, description')
+        .ilike('title', `%${query}%`)
+        .limit(1)
+        .maybeSingle()
+
+      return {
+        title: parsed.eventTitle,
+        summary: parsed.eventSummary,
+        keywords: parsed.keywords?.length > 0
+          ? parsed.keywords
+          : extractKeywords(parsed.eventTitle, parsed.eventSummary),
+        entities: parsed.entities ?? [],
+        date: parsed.approximateDate?.slice(0, 10),
+        platformRefType: matchingEvent ? 'forecast_event' : undefined,
+        platformRefId: matchingEvent?.id,
+      }
+    }
+  } catch (err) {
+    console.error('[resolveKeywordToEvent] Gemini call failed, falling back to raw keyword:', err)
+  }
+
   return {
     title: query,
     summary: undefined,

@@ -200,6 +200,11 @@ export type StorylineCardType =
   | 'outcome'
   | 'context'
 
+export interface SourceArticle {
+  title: string
+  url: string
+}
+
 export interface StorylineCard {
   id: string
   cardType: StorylineCardType
@@ -214,10 +219,14 @@ export interface StorylineCard {
   regionTags: string[]
   sectorTags: string[]
   sourceUrls: string[]
+  sourceArticles?: SourceArticle[]
   platformRefType?: string
   platformRefId?: string
   importance: number
   sortOrder: number
+  isTrunk?: boolean
+  isCorollary?: boolean
+  attachedToCardId?: string
   supportingEvidence?: string[]
   contradictingEvidence?: string[]
   outcomeStatus?: 'projected' | 'verified' | 'contradicted' | 'expired'
@@ -282,6 +291,10 @@ export interface StorylineAnalysisEntry {
   causalEvidence: string
   explanation: string
   entities: string[]
+  chainPredecessorRef?: string
+  sourceArticles?: SourceArticle[]
+  isCorollary?: boolean
+  attachedToRef?: string
 }
 
 export interface StorylineOutcome {

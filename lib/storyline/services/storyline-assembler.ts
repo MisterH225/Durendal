@@ -1,5 +1,6 @@
 import type {
   CandidateItem,
+  SourceArticle,
   StorylineAnalysis,
   StorylineAnalysisEntry,
   StorylineCard,
@@ -11,10 +12,8 @@ import type {
   RelationCategory,
   RelationSubtype,
   TemporalSubtype,
-  CounterfactualRelationLabel,
 } from '@/lib/graph/types'
 import type { AnchorContext } from './hybrid-retrieval'
-import { runCounterfactualChecks } from './counterfactual-check'
 
 let nextId = 0
 function uid(): string { return `sc-${++nextId}-${Date.now().toString(36)}` }
@@ -90,26 +89,18 @@ function inferPositionFromDate(c: CandidateItem, anchor: AnchorContext): Tempora
   return 'concurrent'
 }
 
-const CF_CAUSAL_LABELS = new Set<CounterfactualRelationLabel>([
-  'triggers', 'likely_cause', 'contributes_to',
-])
-
-function cfLabelToEdge(label: CounterfactualRelationLabel): {
-  category: RelationCategory
-  subtype: string
-  isTrunk: boolean
-} {
-  switch (label) {
-    case 'triggers':             return { category: 'causal', subtype: 'triggers', isTrunk: true }
-    case 'likely_cause':         return { category: 'causal', subtype: 'causes', isTrunk: true }
-    case 'contributes_to':       return { category: 'causal', subtype: 'contributes_to', isTrunk: true }
-    case 'response_to':          return { category: 'corollary', subtype: 'response_to', isTrunk: false }
-    case 'spillover_from':       return { category: 'corollary', subtype: 'spillover_from', isTrunk: false }
-    case 'long_term_precursor':  return { category: 'contextual', subtype: 'background_context', isTrunk: false }
-    case 'background_context':   return { category: 'contextual', subtype: 'background_context', isTrunk: false }
-    case 'preceded_by':
-    default:                     return { category: 'contextual', subtype: 'related_to', isTrunk: false }
+function findAnalysisEntryByRef(
+  ref: string,
+  timeline: StorylineAnalysisEntry[],
+): StorylineAnalysisEntry | null {
+  if (!ref) return null
+  const lower = ref.toLowerCase()
+  for (const entry of timeline) {
+    if (entry.candidateRef.toLowerCase() === lower) return entry
+    if (entry.candidateRef.toLowerCase().includes(lower.slice(0, 30))) return entry
+    if (lower.includes(entry.candidateRef.toLowerCase().slice(0, 30))) return entry
   }
+  return null
 }
 
 export function assembleStoryline(
@@ -126,7 +117,7 @@ export function assembleStoryline(
     cardType: 'event',
     temporalPosition: 'anchor',
     title: anchor.title,
-    summary: anchor.summary,
+    summary: analysis.anchor?.summary || anchor.summary,
     date: anchor.date,
     confidence: 1,
     entities: anchor.entities ?? [],
@@ -137,8 +128,14 @@ export function assembleStoryline(
     platformRefId: anchor.platformRefId,
     importance: 10,
     sortOrder: POSITION_ORDER.anchor * 100,
+    isTrunk: true,
+    isCorollary: false,
   }
   cards.push(anchorCard)
+
+  // Build cards for all matched candidates
+  const cardByRef = new Map<string, StorylineCard>()
+  const matchByCard = new Map<string, StorylineAnalysisEntry>()
 
   const matchedPairs = candidates.map((c, i) => ({
     index: i,
@@ -146,122 +143,150 @@ export function assembleStoryline(
     match: matchCandidateToAnalysis(c, analysis.timeline),
   }))
 
-  // Run counterfactual checks on all LLM-matched entries
-  const cfInputEntries = matchedPairs
-    .filter(p => p.match !== null)
-    .map(p => ({
-      candidateTitle: p.candidate.title,
-      candidateSummary: p.candidate.summary ?? '',
-      candidateDate: p.candidate.date,
-      candidateEntities: p.match!.entities ?? p.candidate.entities ?? [],
-      candidateRegions: p.candidate.regionTags ?? [],
-      candidateSectors: p.candidate.sectorTags ?? [],
-      temporalRelation: p.match!.temporalRelation,
-      llmRelationCategory: p.match!.relationCategory,
-      llmRelationSubtype: p.match!.relationSubtype,
-      llmCausalConfidence: p.match!.causalConfidence,
-      llmCausalEvidence: p.match!.causalEvidence,
-      llmExplanation: p.match!.explanation,
-    }))
+  // Separate trunk vs corollary events
+  const trunkPairs = matchedPairs.filter(p => p.match && !p.match.isCorollary)
+  const corollaryPairs = matchedPairs.filter(p => p.match?.isCorollary)
+  const unmatchedPairs = matchedPairs.filter(p => !p.match)
 
-  const cfResults = cfInputEntries.length > 0
-    ? runCounterfactualChecks(
-        { title: anchor.title, summary: anchor.summary ?? '', date: anchor.date ?? '', entities: anchor.entities ?? [] },
-        cfInputEntries,
-      )
-    : []
-
-  // Map cfResults back by candidate title for lookup
-  const cfResultByTitle = new Map<string, typeof cfResults[number]>()
-  cfInputEntries.forEach((entry, idx) => {
-    cfResultByTitle.set(entry.candidateTitle, cfResults[idx])
+  // Sort trunk by date for chain ordering
+  trunkPairs.sort((a, b) => {
+    const da = a.candidate.date ?? ''
+    const db = b.candidate.date ?? ''
+    return da.localeCompare(db)
   })
 
-  for (const { index: i, candidate: c, match } of matchedPairs) {
+  let trunkOrder = 0
+  for (const { candidate: c, match } of trunkPairs) {
+    if (!match) continue
     const temporalPosition = resolveTemporalPosition(match, c, anchor)
-    const cfResult = match ? cfResultByTitle.get(c.title) : undefined
-    const isCausal = cfResult ? CF_CAUSAL_LABELS.has(cfResult.finalLabel) : false
-
-    const confidence = cfResult?.confidence ?? (match ? Math.max(0.1, match.causalConfidence) : 0.2)
 
     const card: StorylineCard = {
       id: uid(),
       cardType: inferCardType(c),
       temporalPosition,
       title: c.title,
-      summary: c.summary || match?.explanation,
+      summary: match.explanation || c.summary,
       date: c.date,
-      confidence,
-      entities: match?.entities ?? c.entities ?? [],
+      confidence: match.causalConfidence > 0 ? match.causalConfidence : 0.5,
+      entities: match.entities ?? c.entities ?? [],
       regionTags: c.regionTags ?? [],
       sectorTags: c.sectorTags ?? [],
       sourceUrls: c.url ? [c.url] : [],
+      sourceArticles: match.sourceArticles ?? (c.url ? [{ title: c.title.slice(0, 60), url: c.url }] : []),
       platformRefType: c.platformRefType,
       platformRefId: c.platformRefId,
-      importance: isCausal ? Math.round(confidence * 8) + 4 : (match ? 4 : 3),
-      sortOrder: POSITION_ORDER[temporalPosition] * 100 + i,
+      importance: match.relationCategory === 'causal' ? 8 : 5,
+      sortOrder: trunkOrder++,
+      isTrunk: true,
+      isCorollary: false,
     }
     cards.push(card)
+    cardByRef.set(match.candidateRef, card)
+    matchByCard.set(card.id, match)
+  }
 
-    if (!match) continue
+  // Build CHAIN EDGES for trunk: each card → next card → ... → anchor
+  const trunkCards = cards.filter(c => c.isTrunk && c.temporalPosition !== 'anchor' && c.temporalPosition !== 'future')
+    .sort((a, b) => a.sortOrder - b.sortOrder)
 
-    const isPast = POSITION_ORDER[temporalPosition] < POSITION_ORDER.anchor
-    const sourceId = isPast ? card.id : anchorCard.id
-    const targetId = isPast ? anchorCard.id : card.id
+  for (let i = 0; i < trunkCards.length; i++) {
+    const current = trunkCards[i]
+    const next = i < trunkCards.length - 1 ? trunkCards[i + 1] : anchorCard
+    const match = matchByCard.get(current.id)
 
-    // Temporal edge (always present)
+    // Check if LLM specified a specific predecessor
+    let predecessorCard: StorylineCard | undefined
+    if (match?.chainPredecessorRef) {
+      predecessorCard = cardByRef.get(match.chainPredecessorRef) ?? undefined
+    }
+
+    // Chain edge: current → next (or LLM-specified predecessor ← current)
+    const edgeCategory: RelationCategory = match?.relationCategory === 'causal' ? 'causal' : 'contextual'
+    const edgeSubtype = match?.relationCategory === 'causal'
+      ? (match.relationSubtype || 'causes')
+      : 'background_context'
+
     edges.push({
       id: uid(),
-      sourceCardId: sourceId,
-      targetCardId: targetId,
-      relationCategory: 'temporal' as RelationCategory,
-      relationSubtype: match.temporalRelation as RelationSubtype,
-      confidence: 0.9,
+      sourceCardId: current.id,
+      targetCardId: next.id,
+      relationCategory: edgeCategory,
+      relationSubtype: edgeSubtype as RelationSubtype,
+      confidence: match?.causalConfidence ?? 0.5,
+      explanation: match?.explanation ?? '',
+      causalEvidence: match?.causalEvidence,
+      isTrunk: true,
+    })
+  }
+
+  // Build corollary cards — attached to their trunk card
+  for (const { candidate: c, match } of corollaryPairs) {
+    if (!match) continue
+    const temporalPosition = resolveTemporalPosition(match, c, anchor)
+
+    const attachedTrunkCard = match.attachedToRef
+      ? cardByRef.get(match.attachedToRef) ?? anchorCard
+      : anchorCard
+
+    const card: StorylineCard = {
+      id: uid(),
+      cardType: inferCardType(c),
+      temporalPosition,
+      title: c.title,
+      summary: match.explanation || c.summary,
+      date: c.date,
+      confidence: 0.5,
+      entities: match.entities ?? c.entities ?? [],
+      regionTags: c.regionTags ?? [],
+      sectorTags: c.sectorTags ?? [],
+      sourceUrls: c.url ? [c.url] : [],
+      sourceArticles: match.sourceArticles ?? (c.url ? [{ title: c.title.slice(0, 60), url: c.url }] : []),
+      platformRefType: c.platformRefType,
+      platformRefId: c.platformRefId,
+      importance: 4,
+      sortOrder: POSITION_ORDER[temporalPosition] * 100 + cards.length,
+      isTrunk: false,
+      isCorollary: true,
+      attachedToCardId: attachedTrunkCard.id,
+    }
+    cards.push(card)
+    cardByRef.set(match.candidateRef, card)
+
+    edges.push({
+      id: uid(),
+      sourceCardId: attachedTrunkCard.id,
+      targetCardId: card.id,
+      relationCategory: 'corollary' as RelationCategory,
+      relationSubtype: (match.relationSubtype || 'spillover_from') as RelationSubtype,
+      confidence: 0.6,
       explanation: match.explanation,
       isTrunk: false,
     })
+  }
 
-    // Semantic edge — determined by counterfactual check if available
-    if (cfResult) {
-      const mapped = cfLabelToEdge(cfResult.finalLabel)
-      const enriched = cfResult.wasDowngraded
-        ? `${match.explanation} [CF: ${cfResult.explanation.downgrades[0] ?? 'rétrogradé'}]`
-        : match.explanation
-
-      edges.push({
-        id: uid(),
-        sourceCardId: sourceId,
-        targetCardId: targetId,
-        relationCategory: mapped.category,
-        relationSubtype: mapped.subtype as RelationSubtype,
-        confidence: cfResult.confidence,
-        explanation: enriched,
-        causalEvidence: mapped.isTrunk ? (match.causalEvidence || cfResult.explanation.finalRationale) : undefined,
-        isTrunk: mapped.isTrunk,
-      })
-    } else if (match.relationCategory === 'corollary') {
-      edges.push({
-        id: uid(),
-        sourceCardId: sourceId,
-        targetCardId: targetId,
-        relationCategory: 'corollary' as RelationCategory,
-        relationSubtype: match.relationSubtype as RelationSubtype,
-        confidence: 0.6,
-        explanation: match.explanation,
-        isTrunk: false,
-      })
-    } else {
-      edges.push({
-        id: uid(),
-        sourceCardId: sourceId,
-        targetCardId: targetId,
-        relationCategory: 'contextual' as RelationCategory,
-        relationSubtype: (match.relationSubtype || 'background_context') as RelationSubtype,
-        confidence: 0.5,
-        explanation: match.explanation,
-        isTrunk: false,
-      })
-    }
+  // Handle unmatched candidates as minor context nodes (no edges to avoid clutter)
+  for (const { candidate: c, index: i } of unmatchedPairs.slice(0, 5)) {
+    const temporalPosition = inferPositionFromDate(c, anchor)
+    cards.push({
+      id: uid(),
+      cardType: inferCardType(c),
+      temporalPosition,
+      title: c.title,
+      summary: c.summary,
+      date: c.date,
+      confidence: 0.2,
+      entities: c.entities ?? [],
+      regionTags: c.regionTags ?? [],
+      sectorTags: c.sectorTags ?? [],
+      sourceUrls: c.url ? [c.url] : [],
+      sourceArticles: c.url ? [{ title: c.title.slice(0, 60), url: c.url }] : [],
+      platformRefType: c.platformRefType,
+      platformRefId: c.platformRefId,
+      importance: 2,
+      sortOrder: POSITION_ORDER[temporalPosition] * 100 + 90 + i,
+      isTrunk: false,
+      isCorollary: false,
+    })
   }
 
   addOutcomeCards(cards, edges, anchorCard.id, analysis.outcomes)
@@ -306,6 +331,8 @@ function addOutcomeCards(
       contradictingEvidence: outcome.contradictingEvidence,
       outcomeStatus: 'projected',
       metadata: { timeHorizon: outcome.timeHorizon },
+      isTrunk: false,
+      isCorollary: false,
     }
     cards.push(card)
 

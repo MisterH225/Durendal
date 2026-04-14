@@ -41,10 +41,10 @@ interface GraphCanvasProps {
   isStorylineMode?: boolean
 }
 
-const NODE_WIDTH: Record<string, number> = { lg: 260, md: 220, sm: 200 }
-const NODE_HEIGHT = 80
-const MIN_SPACING_X = 40
-const MIN_SPACING_Y = 30
+const NODE_WIDTH: Record<string, number> = { lg: 300, md: 280, sm: 260 }
+const NODE_HEIGHT = 160
+const MIN_SPACING_X = 60
+const MIN_SPACING_Y = 40
 
 function getNodeDimensions(type: GraphNodeType): { w: number; h: number } {
   const size = NODE_TYPE_CONFIG[type]?.size ?? 'sm'
@@ -81,49 +81,93 @@ function resolveCollisions(positions: Map<string, { x: number; y: number; w: num
   }
 }
 
-const POSITION_X: Record<TemporalPosition, number> = {
-  deep_past: -1200,
-  past: -800,
-  recent: -400,
-  anchor: 0,
-  concurrent: 100,
-  consequence: 500,
-  future: 900,
-}
+const CHAIN_SPACING_X = 380
+const COROLLARY_OFFSET_Y = 250
+const OUTCOME_SPACING_Y = 220
 
 function layoutStorylineCards(cards: StorylineCard[]): Node[] {
   if (cards.length === 0) return []
 
   const positions = new Map<string, { x: number; y: number; w: number; h: number }>()
-  const columnCounts: Record<string, number> = {}
 
-  const sortedCards = [...cards].sort((a, b) => a.sortOrder - b.sortOrder)
+  // Separate trunk, corollary, outcome, and other cards
+  const anchorCard = cards.find(c => c.temporalPosition === 'anchor')
+  const trunkCards = cards
+    .filter(c => c.isTrunk && c.temporalPosition !== 'anchor' && c.cardType !== 'outcome')
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  const outcomeCards = cards.filter(c => c.cardType === 'outcome')
+  const corollaryCards = cards.filter(c => c.isCorollary)
+  const otherCards = cards.filter(c =>
+    c !== anchorCard &&
+    !trunkCards.includes(c) &&
+    !outcomeCards.includes(c) &&
+    !corollaryCards.includes(c),
+  )
 
-  for (const card of sortedCards) {
-    const tp = card.temporalPosition
-    const colKey = tp
-    columnCounts[colKey] = (columnCounts[colKey] ?? 0)
-    const rowInColumn = columnCounts[colKey]
-    columnCounts[colKey]++
+  // 1. Position trunk cards in a horizontal chain: left-to-right
+  //    Anchor is at center (x=0), trunk cards go left, outcomes go right
+  const trunkCount = trunkCards.length
+  const anchorX = 0
+  const anchorY = 0
 
-    const nodeType = cardTypeToNodeType(card.cardType)
-    const dim = getNodeDimensions(nodeType)
+  if (anchorCard) {
+    const dim = getNodeDimensions(cardTypeToNodeType(anchorCard.cardType))
+    positions.set(anchorCard.id, { x: anchorX, y: anchorY, w: dim.w, h: dim.h })
+  }
 
-    const baseX = POSITION_X[tp] ?? 0
-    const yOffset = rowInColumn * (dim.h + MIN_SPACING_Y + 20)
-    const yCenter = yOffset - (((columnCounts[colKey] ?? 1) - 1) * (dim.h + MIN_SPACING_Y + 20)) / 2
+  // Trunk cards: spread to the LEFT of anchor, oldest first
+  for (let i = 0; i < trunkCount; i++) {
+    const card = trunkCards[i]
+    const dim = getNodeDimensions(cardTypeToNodeType(card.cardType))
+    const x = anchorX - (trunkCount - i) * CHAIN_SPACING_X
+    positions.set(card.id, { x, y: anchorY, w: dim.w, h: dim.h })
+  }
+
+  // 2. Outcomes: spread to the RIGHT of anchor
+  for (let i = 0; i < outcomeCards.length; i++) {
+    const card = outcomeCards[i]
+    const dim = getNodeDimensions(cardTypeToNodeType(card.cardType))
+    const x = anchorX + CHAIN_SPACING_X
+    const y = anchorY + (i - (outcomeCards.length - 1) / 2) * OUTCOME_SPACING_Y
+    positions.set(card.id, { x, y, w: dim.w, h: dim.h })
+  }
+
+  // 3. Corollaries: positioned ABOVE or BELOW the trunk card they're attached to
+  const corollaryCountPerTrunk = new Map<string, number>()
+  for (const card of corollaryCards) {
+    const attachedId = card.attachedToCardId ?? anchorCard?.id
+    if (!attachedId) continue
+
+    const parentPos = positions.get(attachedId)
+    if (!parentPos) continue
+
+    const count = corollaryCountPerTrunk.get(attachedId) ?? 0
+    corollaryCountPerTrunk.set(attachedId, count + 1)
+
+    const dim = getNodeDimensions(cardTypeToNodeType(card.cardType))
+    const yDir = count % 2 === 0 ? 1 : -1
+    const yLayer = Math.floor(count / 2) + 1
 
     positions.set(card.id, {
-      x: baseX + (Math.random() - 0.5) * 40,
-      y: yCenter,
+      x: parentPos.x,
+      y: parentPos.y + yDir * yLayer * COROLLARY_OFFSET_Y,
       w: dim.w,
       h: dim.h,
     })
   }
 
-  resolveCollisions(positions)
+  // 4. Other unattached cards: spread below the chain
+  for (let i = 0; i < otherCards.length; i++) {
+    const card = otherCards[i]
+    const dim = getNodeDimensions(cardTypeToNodeType(card.cardType))
+    const x = anchorX - (trunkCount * CHAIN_SPACING_X / 2) + i * CHAIN_SPACING_X * 0.6
+    const y = anchorY + COROLLARY_OFFSET_Y * 2.5
+    positions.set(card.id, { x, y, w: dim.w, h: dim.h })
+  }
 
-  return sortedCards.map(card => {
+  resolveCollisions(positions, 20)
+
+  return cards.map(card => {
     const pos = positions.get(card.id) ?? { x: 0, y: 0 }
     const nodeType = cardTypeToNodeType(card.cardType)
     const isAnchor = card.temporalPosition === 'anchor'
@@ -143,6 +187,7 @@ function layoutStorylineCards(cards: StorylineCard[]): Node[] {
         createdAt: card.date ?? undefined,
         regionTags: card.regionTags,
         sectorTags: card.sectorTags,
+        url: card.sourceUrls?.[0] ?? undefined,
         isAnchor,
         isSelected: false,
         dimmed: false,
@@ -153,6 +198,9 @@ function layoutStorylineCards(cards: StorylineCard[]): Node[] {
           supportingEvidence: card.supportingEvidence,
           contradictingEvidence: card.contradictingEvidence,
           outcomeStatus: card.outcomeStatus,
+          isTrunk: card.isTrunk,
+          isCorollary: card.isCorollary,
+          sourceArticles: card.sourceArticles,
         },
       } as Record<string, unknown>,
     }

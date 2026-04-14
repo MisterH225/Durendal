@@ -31,14 +31,38 @@ export type GraphEdgeType =
   | 'lowers_probability_of'
   | 'belongs_to_region'
   | 'belongs_to_sector'
+  // temporal
+  | 'before'
+  | 'after'
+  | 'concurrent_with'
+  | 'immediate_precursor'
+  | 'long_term_precursor'
+  // causal
   | 'causes'
+  | 'contributes_to'
+  | 'enables'
   | 'triggers'
+  | 'prevents'
+  // contextual
+  | 'background_context'
+  | 'same_storyline'
+  // corollary
+  | 'response_to'
+  | 'spillover_from'
+  | 'retaliation_to'
+  | 'market_reaction_to'
+  | 'policy_reaction_to'
+  | 'parallel_development'
+  // outcome
+  | 'may_lead_to'
+  | 'raises_probability'
+  | 'lowers_probability'
+  | 'outcome_of'
+  // legacy compat
   | 'precedes'
   | 'parallel'
   | 'corollary'
   | 'leads_to'
-  | 'raises_probability'
-  | 'lowers_probability'
 
 export interface IntelligenceGraphNode {
   id: string
@@ -103,7 +127,7 @@ export interface GraphFilters {
 
 export const DEFAULT_FILTERS: GraphFilters = {
   nodeTypes: ['article', 'signal', 'event', 'entity', 'question', 'region', 'sector', 'document', 'market_signal', 'source', 'outcome', 'context'],
-  edgeTypes: ['mentions', 'linked_to', 'updates', 'impacts', 'affects', 'supports', 'contradicts', 'related_to', 'raises_probability_of', 'lowers_probability_of', 'belongs_to_region', 'belongs_to_sector', 'causes', 'triggers', 'precedes', 'parallel', 'corollary', 'leads_to', 'raises_probability', 'lowers_probability'],
+  edgeTypes: ['mentions', 'linked_to', 'updates', 'impacts', 'affects', 'supports', 'contradicts', 'related_to', 'raises_probability_of', 'lowers_probability_of', 'belongs_to_region', 'belongs_to_sector', 'before', 'after', 'concurrent_with', 'immediate_precursor', 'long_term_precursor', 'causes', 'contributes_to', 'enables', 'triggers', 'prevents', 'background_context', 'same_storyline', 'response_to', 'spillover_from', 'retaliation_to', 'market_reaction_to', 'policy_reaction_to', 'parallel_development', 'may_lead_to', 'raises_probability', 'lowers_probability', 'outcome_of'],
   dateRange: { from: null, to: null },
   regions: [],
   sectors: [],
@@ -121,14 +145,52 @@ export type TemporalPosition =
   | 'consequence'
   | 'future'
 
-export type CausalRole =
-  | 'root_cause'
-  | 'precursor'
-  | 'trigger'
-  | 'parallel'
-  | 'effect'
+export type RelationCategory =
+  | 'temporal'
+  | 'causal'
+  | 'contextual'
   | 'corollary'
-  | 'reaction'
+  | 'outcome'
+
+export type TemporalSubtype =
+  | 'before'
+  | 'after'
+  | 'concurrent_with'
+  | 'immediate_precursor'
+  | 'long_term_precursor'
+
+export type CausalSubtype =
+  | 'causes'
+  | 'contributes_to'
+  | 'enables'
+  | 'triggers'
+  | 'prevents'
+
+export type ContextualSubtype =
+  | 'background_context'
+  | 'related_to'
+  | 'same_storyline'
+
+export type CorollarySubtype =
+  | 'response_to'
+  | 'spillover_from'
+  | 'retaliation_to'
+  | 'market_reaction_to'
+  | 'policy_reaction_to'
+  | 'parallel_development'
+
+export type OutcomeSubtype =
+  | 'may_lead_to'
+  | 'raises_probability_of'
+  | 'lowers_probability_of'
+  | 'outcome_of'
+
+export type RelationSubtype =
+  | TemporalSubtype
+  | CausalSubtype
+  | ContextualSubtype
+  | CorollarySubtype
+  | OutcomeSubtype
 
 export type StorylineCardType =
   | 'event'
@@ -137,18 +199,6 @@ export type StorylineCardType =
   | 'entity'
   | 'outcome'
   | 'context'
-
-export type StorylineEdgeType =
-  | 'causes'
-  | 'triggers'
-  | 'precedes'
-  | 'parallel'
-  | 'corollary'
-  | 'leads_to'
-  | 'contradicts'
-  | 'supports'
-  | 'raises_probability'
-  | 'lowers_probability'
 
 export interface StorylineCard {
   id: string
@@ -168,6 +218,9 @@ export interface StorylineCard {
   platformRefId?: string
   importance: number
   sortOrder: number
+  supportingEvidence?: string[]
+  contradictingEvidence?: string[]
+  outcomeStatus?: 'projected' | 'verified' | 'contradicted' | 'expired'
   metadata?: Record<string, unknown>
 }
 
@@ -175,9 +228,11 @@ export interface StorylineEdge {
   id: string
   sourceCardId: string
   targetCardId: string
-  relationType: StorylineEdgeType
+  relationCategory: RelationCategory
+  relationSubtype: RelationSubtype
   confidence?: number
   explanation?: string
+  causalEvidence?: string
   isTrunk: boolean
 }
 
@@ -218,24 +273,99 @@ export interface CandidateItem {
   platformRefId?: string
 }
 
+export interface StorylineAnalysisEntry {
+  candidateRef: string
+  temporalRelation: TemporalSubtype
+  relationCategory: 'causal' | 'contextual' | 'corollary'
+  relationSubtype: string
+  causalConfidence: number
+  causalEvidence: string
+  explanation: string
+  entities: string[]
+}
+
+export interface StorylineOutcome {
+  title: string
+  probability: number
+  reasoning: string
+  timeHorizon: string
+  supportingEvidence: string[]
+  contradictingEvidence: string[]
+  probabilitySource: 'ai_estimate' | 'crowd' | 'blended' | 'market'
+}
+
 export interface StorylineAnalysis {
   anchor: { title: string; summary: string }
-  timeline: Array<{
-    candidateRef: string
-    temporalPosition: TemporalPosition
-    causalRole: CausalRole
-    causalConfidence: number
-    explanation: string
-    entities: string[]
-  }>
-  outcomes: Array<{
-    title: string
-    probability: number
-    reasoning: string
-    timeHorizon: string
-    supportingEvidence: string[]
-  }>
+  timeline: StorylineAnalysisEntry[]
+  outcomes: StorylineOutcome[]
   narrative: string
+}
+
+// ── Counterfactual Check types ──────────────────────────────────────────────
+
+export type CounterfactualRelationLabel =
+  | 'preceded_by'
+  | 'background_context'
+  | 'long_term_precursor'
+  | 'contributes_to'
+  | 'likely_cause'
+  | 'triggers'
+  | 'response_to'
+  | 'spillover_from'
+
+export interface CounterfactualScores {
+  temporalSupport: number
+  mechanismPlausibility: number
+  counterfactualDependence: number
+  evidenceSupport: number
+  alternativeCausePenalty: number
+  responsePatternScore: number
+  spilloverPatternScore: number
+  composite: number
+}
+
+export interface CounterfactualExplanation {
+  bullets: string[]
+  downgrades: string[]
+  finalRationale: string
+}
+
+export interface CompetingCauseCandidate {
+  title: string
+  entities: string[]
+  causalConfidence: number
+  causalEvidence: string
+  temporalRelation: TemporalSubtype
+  mechanismPlausibility: number
+}
+
+export interface CounterfactualCheckInput {
+  anchorTitle: string
+  anchorSummary: string
+  anchorDate: string
+  anchorEntities: string[]
+  candidateTitle: string
+  candidateSummary: string
+  candidateDate?: string
+  candidateEntities: string[]
+  candidateRegions: string[]
+  candidateSectors: string[]
+  temporalRelation: TemporalSubtype
+  llmRelationCategory: 'causal' | 'contextual' | 'corollary'
+  llmRelationSubtype: string
+  llmCausalConfidence: number
+  llmCausalEvidence: string
+  llmExplanation: string
+  competingCauses: CompetingCauseCandidate[]
+}
+
+export interface CounterfactualCheckResult {
+  finalLabel: CounterfactualRelationLabel
+  scores: CounterfactualScores
+  confidence: number
+  explanation: CounterfactualExplanation
+  wasDowngraded: boolean
+  originalLabel: string
 }
 
 // ── Visual config per node type ─────────────────────────────────────────────
@@ -263,11 +393,13 @@ export const NODE_TYPE_CONFIG: Record<GraphNodeType, {
   context:       { color: '#78716c', bgClass: 'bg-stone-500/15',  borderClass: 'border-stone-500/40',  textClass: 'text-stone-400',   icon: '📋', label: 'Contexte',      size: 'md' },
 }
 
-export const EDGE_TYPE_CONFIG: Record<GraphEdgeType, {
+export const EDGE_TYPE_CONFIG: Record<string, {
   color: string
   dash?: boolean
   label: string
+  strokeWidth?: number
 }> = {
+  // ── Legacy graph edges ──
   mentions:                 { color: '#6b7280', label: 'Mentionne' },
   linked_to:                { color: '#6b7280', label: 'Lié à' },
   updates:                  { color: '#3b82f6', label: 'Met à jour' },
@@ -275,17 +407,47 @@ export const EDGE_TYPE_CONFIG: Record<GraphEdgeType, {
   affects:                  { color: '#f97316', label: 'Affecte' },
   supports:                 { color: '#22c55e', label: 'Soutient' },
   contradicts:              { color: '#ef4444', dash: true, label: 'Contredit' },
-  related_to:               { color: '#8b5cf6', dash: true, label: 'Relié à' },
   raises_probability_of:    { color: '#22c55e', label: '↑ Probabilité' },
   lowers_probability_of:    { color: '#ef4444', label: '↓ Probabilité' },
   belongs_to_region:        { color: '#10b981', dash: true, label: 'Région' },
   belongs_to_sector:        { color: '#06b6d4', dash: true, label: 'Secteur' },
-  causes:                   { color: '#dc2626', label: 'Cause' },
-  triggers:                 { color: '#ea580c', label: 'Déclenche' },
-  precedes:                 { color: '#9ca3af', dash: true, label: 'Précède' },
-  parallel:                 { color: '#6366f1', dash: true, label: 'Parallèle' },
-  corollary:                { color: '#8b5cf6', dash: true, label: 'Corollaire' },
-  leads_to:                 { color: '#f59e0b', label: 'Mène à' },
-  raises_probability:       { color: '#22c55e', label: '↑ Probabilité' },
-  lowers_probability:       { color: '#ef4444', label: '↓ Probabilité' },
+
+  // ── Temporal (dashed gray, thin) ──
+  before:                   { color: '#9ca3af', dash: true, label: 'Précédé par', strokeWidth: 1 },
+  after:                    { color: '#9ca3af', dash: true, label: 'Suivi par', strokeWidth: 1 },
+  concurrent_with:          { color: '#9ca3af', dash: true, label: 'Concurrent', strokeWidth: 1 },
+  immediate_precursor:      { color: '#9ca3af', dash: true, label: 'Précurseur immédiat', strokeWidth: 1 },
+  long_term_precursor:      { color: '#78716c', dash: true, label: 'Précurseur historique', strokeWidth: 1 },
+
+  // ── Causal (solid red/orange, thick) ──
+  causes:                   { color: '#dc2626', label: 'Causé par', strokeWidth: 3 },
+  contributes_to:           { color: '#ea580c', label: 'Contribue à', strokeWidth: 2 },
+  enables:                  { color: '#f97316', label: 'Rend possible', strokeWidth: 2 },
+  triggers:                 { color: '#dc2626', label: 'Déclenché par', strokeWidth: 3 },
+  prevents:                 { color: '#991b1b', dash: true, label: 'Empêche', strokeWidth: 2 },
+
+  // ── Contextual (dotted stone, thin) ──
+  background_context:       { color: '#78716c', dash: true, label: 'Contexte', strokeWidth: 1 },
+  related_to:               { color: '#8b5cf6', dash: true, label: 'Relié à', strokeWidth: 1 },
+  same_storyline:           { color: '#6b7280', dash: true, label: 'Même fil', strokeWidth: 1 },
+
+  // ── Corollary (dashed purple, medium) ──
+  response_to:              { color: '#7c3aed', dash: true, label: 'Réponse à', strokeWidth: 2 },
+  spillover_from:           { color: '#8b5cf6', dash: true, label: 'Retombée', strokeWidth: 2 },
+  retaliation_to:           { color: '#6d28d9', dash: true, label: 'Représailles', strokeWidth: 2 },
+  market_reaction_to:       { color: '#22c55e', dash: true, label: 'Réaction marché', strokeWidth: 2 },
+  policy_reaction_to:       { color: '#2563eb', dash: true, label: 'Réaction politique', strokeWidth: 2 },
+  parallel_development:     { color: '#6366f1', dash: true, label: 'Développement parallèle', strokeWidth: 2 },
+
+  // ── Outcome (solid teal, medium) ──
+  may_lead_to:              { color: '#14b8a6', label: 'Peut mener à', strokeWidth: 2 },
+  raises_probability:       { color: '#22c55e', label: '↑ Probabilité', strokeWidth: 2 },
+  lowers_probability:       { color: '#ef4444', label: '↓ Probabilité', strokeWidth: 2 },
+  outcome_of:               { color: '#14b8a6', dash: true, label: 'Issu de', strokeWidth: 2 },
+
+  // ── Legacy compat ──
+  precedes:                 { color: '#9ca3af', dash: true, label: 'Précède', strokeWidth: 1 },
+  parallel:                 { color: '#6366f1', dash: true, label: 'Parallèle', strokeWidth: 2 },
+  corollary:                { color: '#8b5cf6', dash: true, label: 'Corollaire', strokeWidth: 2 },
+  leads_to:                 { color: '#f59e0b', label: 'Mène à', strokeWidth: 2 },
 }

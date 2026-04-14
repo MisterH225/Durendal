@@ -89,12 +89,13 @@ export async function retrieveInternalCandidates(
 
   for (const s of signals ?? []) {
     const d = s.data as Record<string, unknown> | null
-    const pubDate = (d?.published_at ?? d?.pubDate ?? s.created_at) as string | null
+    const pubDate = d?.published_at ?? d?.pubDate ?? d?.pub_date ?? d?.date
+    const dateStr = pubDate ? String(pubDate).slice(0, 10) : s.created_at?.slice(0, 10)
     candidates.push({
       title: s.title ?? '',
       summary: s.summary ?? '',
       url: typeof d?.source_url === 'string' ? d.source_url : undefined,
-      date: pubDate?.slice(0, 10),
+      date: dateStr,
       sourceType: 'internal',
       entities: [],
       regionTags: s.region ? [s.region] : [],
@@ -154,6 +155,7 @@ export async function retrieveInternalCandidates(
       sectorTags: q.tags ?? [],
       platformRefType: 'question',
       platformRefId: q.id,
+      trustScore: 0.6,
     })
   }
 
@@ -249,12 +251,17 @@ function parsePerplexityResponse(
 
   for (const cit of citations) {
     const existing = candidates.find(c => c.url === cit.url)
+    if (existing && !existing.url) existing.url = cit.url
     if (existing) continue
     if (cit.url && !candidates.some(c => c.title === cit.title)) {
+      const citAny = cit as unknown as Record<string, unknown>
       candidates.push({
         title: cit.title || cit.url,
         summary: '',
         url: cit.url,
+        date: citAny.published_date
+          ? String(citAny.published_date).slice(0, 10)
+          : undefined,
         sourceType: 'perplexity',
         temporalWindow: windowLabel,
       })

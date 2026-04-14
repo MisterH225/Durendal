@@ -350,14 +350,21 @@ function storylineToGraphResult(
     sectorTags: c.sectorTags,
     probability: c.probability,
     url: c.sourceUrls?.[0],
-    metadata: { temporalPosition: c.temporalPosition, confidence: c.confidence },
+    metadata: {
+      temporalPosition: c.temporalPosition,
+      confidence: c.confidence,
+      probabilitySource: c.probabilitySource,
+      supportingEvidence: c.supportingEvidence,
+      contradictingEvidence: c.contradictingEvidence,
+      outcomeStatus: c.outcomeStatus,
+    },
   }))
 
   const graphEdges = edges.map(e => ({
     id: e.id,
     source: e.sourceCardId,
     target: e.targetCardId,
-    type: e.relationType as any,
+    type: (e.relationSubtype ?? 'related_to') as any,
     confidence: e.confidence,
     explanation: e.explanation,
   }))

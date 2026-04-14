@@ -4,9 +4,12 @@ import type { AnchorContext } from './services/hybrid-retrieval'
 import { rankAndPruneCandidates } from './services/candidate-ranking'
 import { analyzeStoryline } from './services/storyline-analysis'
 import { assembleStoryline } from './services/storyline-assembler'
+import { generateOutcomes } from './services/outcome-generator'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export type { AnchorContext }
+
+const MIN_OUTCOMES = 2
 
 export async function resolveAnchor(input: {
   query?: string
@@ -23,11 +26,12 @@ export async function resolveAnchor(input: {
 
     if (signal) {
       const d = signal.data as Record<string, unknown> | null
+      const pubDate = d?.published_at ?? d?.pubDate ?? d?.pub_date
       return {
         title: signal.title,
         summary: signal.summary,
         keywords: extractKeywords(signal.title, signal.summary),
-        date: signal.created_at?.slice(0, 10),
+        date: pubDate ? String(pubDate).slice(0, 10) : signal.created_at?.slice(0, 10),
         url: typeof d?.source_url === 'string' ? d.source_url : undefined,
         platformRefType: 'signal',
         platformRefId: signal.id,
@@ -85,12 +89,10 @@ export async function buildStoryline(
   stream: StorylineBuilderStream,
 ): Promise<StorylineResult> {
   try {
-    // Phase 1: Internal retrieval (fast, 1-3s)
     const internalCandidates = await retrieveInternalCandidates(anchor)
     const internalCards = candidatesToPreviewCards(internalCandidates, 'internal')
     stream.onEvent({ phase: 'internal', cards: internalCards })
 
-    // Phase 2: External retrieval via Perplexity (5-15s)
     let allCandidates = [...internalCandidates]
     const externalCandidates = await retrieveExternalCandidates(anchor, (windowLabel, windowCandidates) => {
       const preview = candidatesToPreviewCards(windowCandidates, windowLabel)
@@ -100,14 +102,12 @@ export async function buildStoryline(
     })
     allCandidates = allCandidates.concat(externalCandidates)
 
-    // Phase 3: Rank and prune
     const ranked = rankAndPruneCandidates(
       allCandidates,
       anchor.keywords,
       anchor.entities ?? [],
     )
 
-    // Phase 4: Gemini analysis (5-12s)
     const analysis = await analyzeStoryline(anchor, ranked)
 
     if (analysis.timeline.length > 0) {
@@ -117,13 +117,48 @@ export async function buildStoryline(
       })
     }
 
-    // Phase 5: Assemble final storyline
-    const storyline = assembleStoryline(anchor, ranked, analysis)
+    let storyline = assembleStoryline(anchor, ranked, analysis)
 
-    if (storyline.cards.some(c => c.cardType === 'outcome')) {
+    const outcomeCards = storyline.cards.filter(c => c.cardType === 'outcome')
+    if (outcomeCards.length < MIN_OUTCOMES) {
+      console.log(`[storyline-builder] Only ${outcomeCards.length} outcomes, triggering dedicated outcome generation`)
+
+      const causalDrivers = storyline.cards.filter(c =>
+        storyline.edges.some(e =>
+          e.relationCategory === 'causal' &&
+          (e.sourceCardId === c.id || e.targetCardId === c.id),
+        ),
+      )
+      const corollaryEvents = storyline.cards.filter(c =>
+        storyline.edges.some(e =>
+          e.relationCategory === 'corollary' &&
+          (e.sourceCardId === c.id || e.targetCardId === c.id),
+        ),
+      )
+      const recentSignals = storyline.cards
+        .filter(c => c.temporalPosition === 'recent' || c.temporalPosition === 'concurrent')
+        .slice(0, 5)
+
+      const generatedOutcomes = await generateOutcomes({
+        anchor,
+        causalDrivers,
+        corollaryEvents,
+        recentSignals,
+        narrative: storyline.narrative ?? '',
+      })
+
+      const anchorCardId = storyline.cards.find(c => c.temporalPosition === 'anchor')?.id
+      if (anchorCardId && generatedOutcomes.length > 0) {
+        analysis.outcomes = generatedOutcomes
+        storyline = assembleStoryline(anchor, ranked, analysis)
+      }
+    }
+
+    const finalOutcomes = storyline.cards.filter(c => c.cardType === 'outcome')
+    if (finalOutcomes.length > 0) {
       stream.onEvent({
         phase: 'outcomes',
-        cards: storyline.cards.filter(c => c.cardType === 'outcome'),
+        cards: finalOutcomes,
       })
     }
 

@@ -146,31 +146,62 @@ function layoutStorylineCards(cards: StorylineCard[]): Node[] {
         isAnchor,
         isSelected: false,
         dimmed: false,
-        metadata: { temporalPosition: card.temporalPosition, confidence: card.confidence },
+        metadata: {
+          temporalPosition: card.temporalPosition,
+          confidence: card.confidence,
+          probabilitySource: card.probabilitySource,
+          supportingEvidence: card.supportingEvidence,
+          contradictingEvidence: card.contradictingEvidence,
+          outcomeStatus: card.outcomeStatus,
+        },
       } as Record<string, unknown>,
     }
   }) as Node[]
 }
 
 function storylineEdgesToFlow(stEdges: StorylineEdge[], cardIds: Set<string>): Edge[] {
+  const seen = new Set<string>()
+
   return stEdges
     .filter(e => cardIds.has(e.sourceCardId) && cardIds.has(e.targetCardId))
+    .filter(e => {
+      if (e.relationCategory === 'temporal') {
+        const pairKey = `${e.sourceCardId}-${e.targetCardId}`
+        const hasSemantic = stEdges.some(
+          other => other.id !== e.id &&
+            other.sourceCardId === e.sourceCardId &&
+            other.targetCardId === e.targetCardId &&
+            other.relationCategory !== 'temporal',
+        )
+        if (hasSemantic) return false
+        if (seen.has(pairKey)) return false
+        seen.add(pairKey)
+      }
+      return true
+    })
     .map(e => {
-      const edgeType = e.relationType as string
-      const config = EDGE_TYPE_CONFIG[edgeType as keyof typeof EDGE_TYPE_CONFIG]
+      const subtype = e.relationSubtype as string
+      const config = EDGE_TYPE_CONFIG[subtype]
+      const category = e.relationCategory
+
+      const strokeWidth = config?.strokeWidth
+        ?? (category === 'causal' ? 3 : category === 'corollary' ? 2 : 1)
+      const isDashed = config?.dash
+        ?? (category === 'temporal' || category === 'contextual')
+
       return {
         id: e.id,
         source: e.sourceCardId,
         target: e.targetCardId,
-        label: config?.label ?? e.relationType,
+        label: config?.label ?? subtype,
         style: {
-          stroke: config?.color ?? (e.isTrunk ? '#f59e0b' : '#6b7280'),
-          strokeWidth: e.isTrunk ? 2.5 : Math.max(1, (e.confidence ?? 0.5) * 2),
-          strokeDasharray: config?.dash ? '6 3' : undefined,
+          stroke: config?.color ?? (category === 'causal' ? '#dc2626' : category === 'corollary' ? '#7c3aed' : category === 'outcome' ? '#14b8a6' : '#9ca3af'),
+          strokeWidth,
+          strokeDasharray: isDashed ? '6 3' : undefined,
         },
-        labelStyle: { fontSize: 9, fill: '#9ca3af' },
+        labelStyle: { fontSize: 10, fill: category === 'causal' ? '#fca5a5' : '#9ca3af', fontWeight: category === 'causal' ? 600 : 400 },
         labelBgStyle: { fill: '#171717', fillOpacity: 0.9 },
-        animated: e.relationType === 'raises_probability' || e.relationType === 'lowers_probability',
+        animated: category === 'outcome',
         data: e as unknown as Record<string, unknown>,
       } as Edge
     })

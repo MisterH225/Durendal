@@ -1,14 +1,20 @@
 import type {
   CandidateItem,
   StorylineAnalysis,
+  StorylineAnalysisEntry,
   StorylineCard,
   StorylineEdge,
   StorylineResult,
   StorylineCardType,
-  StorylineEdgeType,
+  StorylineOutcome,
   TemporalPosition,
+  RelationCategory,
+  RelationSubtype,
+  TemporalSubtype,
+  CounterfactualRelationLabel,
 } from '@/lib/graph/types'
 import type { AnchorContext } from './hybrid-retrieval'
+import { runCounterfactualChecks } from './counterfactual-check'
 
 let nextId = 0
 function uid(): string { return `sc-${++nextId}-${Date.now().toString(36)}` }
@@ -23,14 +29,12 @@ const POSITION_ORDER: Record<TemporalPosition, number> = {
   future: 6,
 }
 
-const ROLE_TO_EDGE: Record<string, StorylineEdgeType> = {
-  root_cause: 'causes',
-  precursor: 'precedes',
-  trigger: 'triggers',
-  parallel: 'parallel',
-  effect: 'leads_to',
-  corollary: 'corollary',
-  reaction: 'leads_to',
+const TEMPORAL_TO_POSITION: Record<string, TemporalPosition> = {
+  long_term_precursor: 'deep_past',
+  before: 'past',
+  immediate_precursor: 'recent',
+  concurrent_with: 'concurrent',
+  after: 'consequence',
 }
 
 function inferCardType(candidate: CandidateItem): StorylineCardType {
@@ -43,8 +47,8 @@ function inferCardType(candidate: CandidateItem): StorylineCardType {
 
 function matchCandidateToAnalysis(
   candidate: CandidateItem,
-  timeline: StorylineAnalysis['timeline'],
-): StorylineAnalysis['timeline'][number] | null {
+  timeline: StorylineAnalysisEntry[],
+): StorylineAnalysisEntry | null {
   const normalTitle = candidate.title.toLowerCase().slice(0, 60)
 
   for (const entry of timeline) {
@@ -67,6 +71,47 @@ function matchCandidateToAnalysis(
   return null
 }
 
+function resolveTemporalPosition(match: StorylineAnalysisEntry | null, candidate: CandidateItem, anchor: AnchorContext): TemporalPosition {
+  if (match) {
+    return TEMPORAL_TO_POSITION[match.temporalRelation] ?? inferPositionFromDate(candidate, anchor)
+  }
+  return inferPositionFromDate(candidate, anchor)
+}
+
+function inferPositionFromDate(c: CandidateItem, anchor: AnchorContext): TemporalPosition {
+  if (!c.date || !anchor.date) return 'concurrent'
+  if (c.date < anchor.date) {
+    const daysBefore = Math.round((new Date(anchor.date).getTime() - new Date(c.date).getTime()) / 86400000)
+    if (daysBefore > 365) return 'deep_past'
+    if (daysBefore > 30) return 'past'
+    return 'recent'
+  }
+  if (c.date > anchor.date) return 'consequence'
+  return 'concurrent'
+}
+
+const CF_CAUSAL_LABELS = new Set<CounterfactualRelationLabel>([
+  'triggers', 'likely_cause', 'contributes_to',
+])
+
+function cfLabelToEdge(label: CounterfactualRelationLabel): {
+  category: RelationCategory
+  subtype: string
+  isTrunk: boolean
+} {
+  switch (label) {
+    case 'triggers':             return { category: 'causal', subtype: 'triggers', isTrunk: true }
+    case 'likely_cause':         return { category: 'causal', subtype: 'causes', isTrunk: true }
+    case 'contributes_to':       return { category: 'causal', subtype: 'contributes_to', isTrunk: true }
+    case 'response_to':          return { category: 'corollary', subtype: 'response_to', isTrunk: false }
+    case 'spillover_from':       return { category: 'corollary', subtype: 'spillover_from', isTrunk: false }
+    case 'long_term_precursor':  return { category: 'contextual', subtype: 'background_context', isTrunk: false }
+    case 'background_context':   return { category: 'contextual', subtype: 'background_context', isTrunk: false }
+    case 'preceded_by':
+    default:                     return { category: 'contextual', subtype: 'related_to', isTrunk: false }
+  }
+}
+
 export function assembleStoryline(
   anchor: AnchorContext,
   candidates: CandidateItem[],
@@ -75,7 +120,6 @@ export function assembleStoryline(
   nextId = 0
   const cards: StorylineCard[] = []
   const edges: StorylineEdge[] = []
-  const cardIdMap = new Map<number, string>()
 
   const anchorCard: StorylineCard = {
     id: uid(),
@@ -96,14 +140,49 @@ export function assembleStoryline(
   }
   cards.push(anchorCard)
 
-  for (let i = 0; i < candidates.length; i++) {
-    const c = candidates[i]
-    const match = matchCandidateToAnalysis(c, analysis.timeline)
+  const matchedPairs = candidates.map((c, i) => ({
+    index: i,
+    candidate: c,
+    match: matchCandidateToAnalysis(c, analysis.timeline),
+  }))
 
-    const temporalPosition: TemporalPosition = match?.temporalPosition ?? inferPosition(c, anchor)
-    const confidence = match?.causalConfidence ?? 0.3
+  // Run counterfactual checks on all LLM-matched entries
+  const cfInputEntries = matchedPairs
+    .filter(p => p.match !== null)
+    .map(p => ({
+      candidateTitle: p.candidate.title,
+      candidateSummary: p.candidate.summary ?? '',
+      candidateDate: p.candidate.date,
+      candidateEntities: p.match!.entities ?? p.candidate.entities ?? [],
+      candidateRegions: p.candidate.regionTags ?? [],
+      candidateSectors: p.candidate.sectorTags ?? [],
+      temporalRelation: p.match!.temporalRelation,
+      llmRelationCategory: p.match!.relationCategory,
+      llmRelationSubtype: p.match!.relationSubtype,
+      llmCausalConfidence: p.match!.causalConfidence,
+      llmCausalEvidence: p.match!.causalEvidence,
+      llmExplanation: p.match!.explanation,
+    }))
 
-    if (confidence < 0.15) continue
+  const cfResults = cfInputEntries.length > 0
+    ? runCounterfactualChecks(
+        { title: anchor.title, summary: anchor.summary ?? '', date: anchor.date ?? '', entities: anchor.entities ?? [] },
+        cfInputEntries,
+      )
+    : []
+
+  // Map cfResults back by candidate title for lookup
+  const cfResultByTitle = new Map<string, typeof cfResults[number]>()
+  cfInputEntries.forEach((entry, idx) => {
+    cfResultByTitle.set(entry.candidateTitle, cfResults[idx])
+  })
+
+  for (const { index: i, candidate: c, match } of matchedPairs) {
+    const temporalPosition = resolveTemporalPosition(match, c, anchor)
+    const cfResult = match ? cfResultByTitle.get(c.title) : undefined
+    const isCausal = cfResult ? CF_CAUSAL_LABELS.has(cfResult.finalLabel) : false
+
+    const confidence = cfResult?.confidence ?? (match ? Math.max(0.1, match.causalConfidence) : 0.2)
 
     const card: StorylineCard = {
       id: uid(),
@@ -119,64 +198,73 @@ export function assembleStoryline(
       sourceUrls: c.url ? [c.url] : [],
       platformRefType: c.platformRefType,
       platformRefId: c.platformRefId,
-      importance: Math.round(confidence * 8) + 2,
+      importance: isCausal ? Math.round(confidence * 8) + 4 : (match ? 4 : 3),
       sortOrder: POSITION_ORDER[temporalPosition] * 100 + i,
     }
     cards.push(card)
-    cardIdMap.set(i, card.id)
 
-    if (match) {
-      const edgeType = ROLE_TO_EDGE[match.causalRole] ?? 'leads_to'
-      const isTrunk = match.causalRole === 'root_cause' || match.causalRole === 'precursor' || match.causalRole === 'trigger' || match.causalRole === 'effect'
+    if (!match) continue
 
-      const isPast = POSITION_ORDER[temporalPosition] < POSITION_ORDER.anchor
-      const sourceId = isPast ? card.id : anchorCard.id
-      const targetId = isPast ? anchorCard.id : card.id
+    const isPast = POSITION_ORDER[temporalPosition] < POSITION_ORDER.anchor
+    const sourceId = isPast ? card.id : anchorCard.id
+    const targetId = isPast ? anchorCard.id : card.id
+
+    // Temporal edge (always present)
+    edges.push({
+      id: uid(),
+      sourceCardId: sourceId,
+      targetCardId: targetId,
+      relationCategory: 'temporal' as RelationCategory,
+      relationSubtype: match.temporalRelation as RelationSubtype,
+      confidence: 0.9,
+      explanation: match.explanation,
+      isTrunk: false,
+    })
+
+    // Semantic edge — determined by counterfactual check if available
+    if (cfResult) {
+      const mapped = cfLabelToEdge(cfResult.finalLabel)
+      const enriched = cfResult.wasDowngraded
+        ? `${match.explanation} [CF: ${cfResult.explanation.downgrades[0] ?? 'rétrogradé'}]`
+        : match.explanation
 
       edges.push({
         id: uid(),
         sourceCardId: sourceId,
         targetCardId: targetId,
-        relationType: edgeType,
-        confidence: match.causalConfidence,
+        relationCategory: mapped.category,
+        relationSubtype: mapped.subtype as RelationSubtype,
+        confidence: cfResult.confidence,
+        explanation: enriched,
+        causalEvidence: mapped.isTrunk ? (match.causalEvidence || cfResult.explanation.finalRationale) : undefined,
+        isTrunk: mapped.isTrunk,
+      })
+    } else if (match.relationCategory === 'corollary') {
+      edges.push({
+        id: uid(),
+        sourceCardId: sourceId,
+        targetCardId: targetId,
+        relationCategory: 'corollary' as RelationCategory,
+        relationSubtype: match.relationSubtype as RelationSubtype,
+        confidence: 0.6,
         explanation: match.explanation,
-        isTrunk,
+        isTrunk: false,
+      })
+    } else {
+      edges.push({
+        id: uid(),
+        sourceCardId: sourceId,
+        targetCardId: targetId,
+        relationCategory: 'contextual' as RelationCategory,
+        relationSubtype: (match.relationSubtype || 'background_context') as RelationSubtype,
+        confidence: 0.5,
+        explanation: match.explanation,
+        isTrunk: false,
       })
     }
   }
 
-  for (const outcome of analysis.outcomes) {
-    const card: StorylineCard = {
-      id: uid(),
-      cardType: 'outcome',
-      temporalPosition: 'future',
-      title: outcome.title,
-      summary: outcome.reasoning,
-      probability: outcome.probability,
-      probabilitySource: 'ai_estimate',
-      confidence: outcome.probability,
-      entities: [],
-      regionTags: [],
-      sectorTags: [],
-      sourceUrls: [],
-      importance: Math.round(outcome.probability * 8) + 2,
-      sortOrder: POSITION_ORDER.future * 100 + cards.length,
-      metadata: { timeHorizon: outcome.timeHorizon },
-    }
-    cards.push(card)
-
-    edges.push({
-      id: uid(),
-      sourceCardId: anchorCard.id,
-      targetCardId: card.id,
-      relationType: 'leads_to',
-      confidence: outcome.probability,
-      explanation: `Scénario projeté (${outcome.timeHorizon})`,
-      isTrunk: false,
-    })
-  }
-
-  buildCrossEdges(cards, edges, analysis)
+  addOutcomeCards(cards, edges, anchorCard.id, analysis.outcomes)
 
   cards.sort((a, b) => a.sortOrder - b.sortOrder)
 
@@ -192,44 +280,44 @@ export function assembleStoryline(
   }
 }
 
-function inferPosition(c: CandidateItem, anchor: AnchorContext): TemporalPosition {
-  if (!c.date || !anchor.date) return 'concurrent'
-  if (c.date < anchor.date) {
-    const daysBefore = Math.round((new Date(anchor.date).getTime() - new Date(c.date).getTime()) / 86400000)
-    if (daysBefore > 365) return 'deep_past'
-    if (daysBefore > 30) return 'past'
-    return 'recent'
-  }
-  if (c.date > anchor.date) return 'consequence'
-  return 'concurrent'
-}
-
-function buildCrossEdges(
+function addOutcomeCards(
   cards: StorylineCard[],
   edges: StorylineEdge[],
-  analysis: StorylineAnalysis,
+  anchorCardId: string,
+  outcomes: StorylineOutcome[],
 ): void {
-  const trunkCards = cards
-    .filter(c => c.temporalPosition !== 'future' && c.temporalPosition !== 'concurrent')
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-
-  for (let i = 0; i < trunkCards.length - 1; i++) {
-    const a = trunkCards[i]
-    const b = trunkCards[i + 1]
-    const alreadyLinked = edges.some(
-      e => (e.sourceCardId === a.id && e.targetCardId === b.id) ||
-           (e.sourceCardId === b.id && e.targetCardId === a.id),
-    )
-    if (!alreadyLinked && a.id !== b.id) {
-      edges.push({
-        id: uid(),
-        sourceCardId: a.id,
-        targetCardId: b.id,
-        relationType: 'precedes',
-        confidence: 0.5,
-        explanation: 'Séquence chronologique',
-        isTrunk: true,
-      })
+  for (const outcome of outcomes) {
+    const card: StorylineCard = {
+      id: uid(),
+      cardType: 'outcome',
+      temporalPosition: 'future',
+      title: outcome.title,
+      summary: outcome.reasoning,
+      probability: outcome.probability,
+      probabilitySource: outcome.probabilitySource ?? 'ai_estimate',
+      confidence: outcome.probability,
+      entities: [],
+      regionTags: [],
+      sectorTags: [],
+      sourceUrls: [],
+      importance: Math.round(outcome.probability * 8) + 2,
+      sortOrder: POSITION_ORDER.future * 100 + cards.length,
+      supportingEvidence: outcome.supportingEvidence,
+      contradictingEvidence: outcome.contradictingEvidence,
+      outcomeStatus: 'projected',
+      metadata: { timeHorizon: outcome.timeHorizon },
     }
+    cards.push(card)
+
+    edges.push({
+      id: uid(),
+      sourceCardId: anchorCardId,
+      targetCardId: card.id,
+      relationCategory: 'outcome',
+      relationSubtype: 'may_lead_to',
+      confidence: outcome.probability,
+      explanation: `Scénario projeté (${outcome.timeHorizon}) — ${outcome.reasoning.slice(0, 100)}`,
+      isTrunk: false,
+    })
   }
 }

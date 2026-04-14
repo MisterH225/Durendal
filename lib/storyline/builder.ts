@@ -170,84 +170,64 @@ export async function buildStoryline(
 ): Promise<StorylineResult> {
   try {
     // ── Phase 2: Hybrid Retrieval (parallel) ────────────────────────────
-    const [internalCandidates, externalCandidates] = await Promise.all([
-      retrieveInternalCandidates(anchor),
-      retrieveExternalCandidates(anchor, (windowLabel, windowCandidates) => {
-        const preview = candidatesToPreviewCards(windowCandidates, windowLabel)
-        if (preview.length > 0) {
-          stream.onEvent({ phase: 'external', cards: preview })
-        }
-      }),
+    // Run Perplexity in parallel with Gemini+Search fallback so we always have data
+    const [retrievalResult, geminiDirect] = await Promise.all([
+      safeRetrievalPipeline(anchor, stream),
+      directGeminiSearchFallback(anchor),
     ])
 
-    console.log(`[builder-v3] Phase 2: internal=${internalCandidates.length}, external=${externalCandidates.length}`)
+    let clusters = retrievalResult.clusters
+    console.log(`[builder-v3] Phase 2-5: normal pipeline → ${clusters.length} clusters, Gemini fallback → ${geminiDirect.length} clusters`)
 
-    const internalCards = candidatesToPreviewCards(internalCandidates, 'internal')
-    stream.onEvent({ phase: 'internal', cards: internalCards })
-
-    const allCandidates = [...internalCandidates, ...externalCandidates]
-
-    if (allCandidates.length === 0) {
-      console.warn(`[builder-v3] WARNING: 0 candidates from retrieval. Anchor: "${anchor.title}", keywords: ${anchor.keywords.join(', ')}`)
+    // Merge: prefer normal pipeline clusters, supplement with Gemini fallback
+    if (clusters.length === 0 && geminiDirect.length > 0) {
+      clusters = geminiDirect
+      console.log(`[builder-v3] Using Gemini fallback as primary source (${clusters.length} clusters)`)
+    } else if (clusters.length > 0 && geminiDirect.length > 0) {
+      clusters = await reclusterMerged(clusters, geminiDirect)
+      console.log(`[builder-v3] Merged normal + Gemini fallback → ${clusters.length} clusters`)
     }
 
-    // ── Phase 3: Candidate Ranking ──────────────────────────────────────
-    const ranked = rankAndPruneCandidates(
-      allCandidates,
-      anchor.keywords,
-      anchor.entities ?? [],
-    )
-    console.log(`[builder-v3] Phase 3: ${allCandidates.length} candidates → ${ranked.length} after ranking`)
-
-    if (ranked.length === 0 && allCandidates.length > 0) {
-      console.warn(`[builder-v3] WARNING: ranking pruned ALL ${allCandidates.length} candidates. Bypassing ranking.`)
-      ranked.push(...allCandidates.slice(0, 25))
-    }
-
-    // ── Phase 4: Event Extraction (batch LLM) ───────────────────────────
-    let extractedEvents = await extractEventsFromCandidates(ranked, 30, anchor.title)
-    console.log(`[builder-v3] Phase 4: ${extractedEvents.length} events extracted from ${ranked.length} candidates`)
-
-    // ── Phase 5: Event Clustering ───────────────────────────────────────
-    let clusters = await clusterEvents(extractedEvents)
-    console.log(`[builder-v3] Phase 5: ${clusters.length} clusters`)
-
-    // ── Phase 5b: Fallback — if pipeline produced 0 clusters, use Gemini+Search directly
     if (clusters.length === 0) {
-      console.warn(`[builder-v3] Phase 5b: 0 clusters from normal pipeline. Activating Gemini+Search fallback.`)
-      const fallbackClusters = await directGeminiSearchFallback(anchor)
-      if (fallbackClusters.length > 0) {
-        clusters = fallbackClusters
-        console.log(`[builder-v3] Phase 5b: Gemini fallback produced ${clusters.length} clusters`)
-      }
+      console.error(`[builder-v3] CRITICAL: 0 clusters from all sources. Anchor: "${anchor.title}"`)
     }
 
     // ── Phase 6: Historical Expansion ───────────────────────────────────
     const biasResult = detectRecencyBias(clusters)
-    if (biasResult.hasRecencyBias) {
+    if (biasResult.hasRecencyBias && clusters.length > 0) {
       console.log(`[builder-v3] Phase 6: Recency bias detected — ${biasResult.reason}`)
-      const historicalCandidates = await searchHistoricalContext(
-        anchor.keywords,
-        anchor.entities ?? [],
-        clusters,
-      )
+      try {
+        const historicalCandidates = await searchHistoricalContext(
+          anchor.keywords,
+          anchor.entities ?? [],
+          clusters,
+        )
 
-      if (historicalCandidates.length > 0) {
-        const historicalExtracted = await extractEventsFromCandidates(historicalCandidates, 15, anchor.title)
-        const historicalClusters = await clusterEvents(historicalExtracted)
-        clusters = await reclusterMerged(clusters, historicalClusters)
-        console.log(`[builder-v3] Phase 6: ${clusters.length} clusters after historical merge`)
+        if (historicalCandidates.length > 0) {
+          const historicalExtracted = await extractEventsFromCandidates(historicalCandidates, 15, anchor.title)
+          const historicalClusters = await clusterEvents(historicalExtracted)
+          clusters = await reclusterMerged(clusters, historicalClusters)
+          console.log(`[builder-v3] Phase 6: ${clusters.length} clusters after historical merge`)
+        }
+      } catch (err) {
+        console.error(`[builder-v3] Phase 6 failed (non-fatal):`, err)
       }
     } else {
-      console.log(`[builder-v3] Phase 6: No recency bias, skipping historical expansion`)
+      console.log(`[builder-v3] Phase 6: Skipping historical expansion (bias=${biasResult.hasRecencyBias}, clusters=${clusters.length})`)
     }
 
     // ── Phase 7: Relation Graph Building ────────────────────────────────
     const temporalRelations = buildTemporalRelations(clusters, anchor)
 
     const [causalRelations, corollaryRelations] = await Promise.all([
-      detectCausalRelations(clusters, temporalRelations, anchor),
-      detectCorollaryRelations(clusters, temporalRelations, [], anchor),
+      detectCausalRelations(clusters, temporalRelations, anchor).catch(err => {
+        console.error('[builder-v3] Causal detection failed (non-fatal):', err)
+        return []
+      }),
+      detectCorollaryRelations(clusters, temporalRelations, [], anchor).catch(err => {
+        console.error('[builder-v3] Corollary detection failed (non-fatal):', err)
+        return []
+      }),
     ])
 
     let allRelations = [...temporalRelations, ...causalRelations, ...corollaryRelations]
@@ -285,6 +265,7 @@ export async function buildStoryline(
 
     // ── Phase 10: Storyline Assembly (graph, not chain) ─────────────────
     const storyline = assembleStorylineGraph(anchor, clusters, allRelations, outcomes)
+    console.log(`[builder-v3] Phase 10: assembled ${storyline.cards.length} cards, ${storyline.edges.length} edges`)
 
     // ── Phase 11: Narrative Generation ──────────────────────────────────
     const narrativeText = await generateNarrative(anchor, clusters, allRelations, outcomes)
@@ -299,6 +280,70 @@ export async function buildStoryline(
     console.error('[builder-v3] Fatal error:', message)
     stream.onEvent({ phase: 'error', error: message })
     throw err
+  }
+}
+
+async function safeRetrievalPipeline(
+  anchor: AnchorContext,
+  stream: StorylineBuilderStream,
+): Promise<{ clusters: EventCluster[] }> {
+  try {
+    // Phase 2: Parallel retrieval
+    const [internalCandidates, externalCandidates] = await Promise.allSettled([
+      retrieveInternalCandidates(anchor),
+      retrieveExternalCandidates(anchor, (windowLabel, windowCandidates) => {
+        const preview = candidatesToPreviewCards(windowCandidates, windowLabel)
+        if (preview.length > 0) {
+          stream.onEvent({ phase: 'external', cards: preview })
+        }
+      }),
+    ])
+
+    const internal = internalCandidates.status === 'fulfilled' ? internalCandidates.value : []
+    const external = externalCandidates.status === 'fulfilled' ? externalCandidates.value : []
+
+    if (internalCandidates.status === 'rejected') {
+      console.error('[builder-v3] Internal retrieval failed:', internalCandidates.reason)
+    }
+    if (externalCandidates.status === 'rejected') {
+      console.error('[builder-v3] External retrieval failed:', externalCandidates.reason)
+    }
+
+    console.log(`[builder-v3] Phase 2: internal=${internal.length}, external=${external.length}`)
+
+    const internalCards = candidatesToPreviewCards(internal, 'internal')
+    stream.onEvent({ phase: 'internal', cards: internalCards })
+
+    const allCandidates = [...internal, ...external]
+    if (allCandidates.length === 0) {
+      console.warn('[builder-v3] 0 candidates from all retrieval sources')
+      return { clusters: [] }
+    }
+
+    // Phase 3: Ranking
+    let ranked = rankAndPruneCandidates(allCandidates, anchor.keywords, anchor.entities ?? [])
+    if (ranked.length === 0 && allCandidates.length > 0) {
+      console.warn(`[builder-v3] Ranking pruned all ${allCandidates.length} candidates, bypassing`)
+      ranked = allCandidates.slice(0, 25)
+    }
+    console.log(`[builder-v3] Phase 3: ${allCandidates.length} → ${ranked.length} after ranking`)
+
+    // Phase 4: Extraction
+    const extractedEvents = await extractEventsFromCandidates(ranked, 30, anchor.title)
+    console.log(`[builder-v3] Phase 4: ${extractedEvents.length} events from ${ranked.length} candidates`)
+
+    if (extractedEvents.length === 0) {
+      return { clusters: [] }
+    }
+
+    // Phase 5: Clustering
+    const clusters = await clusterEvents(extractedEvents)
+    console.log(`[builder-v3] Phase 5: ${clusters.length} clusters`)
+
+    return { clusters }
+  } catch (err) {
+    console.error('[builder-v3] Retrieval pipeline failed (non-fatal):', err)
+    return { clusters: [] }
   }
 }
 
@@ -407,11 +452,15 @@ async function directGeminiSearchFallback(
           summary: e.summary ?? '',
           entities: (e.entities ?? []).slice(0, 5),
           geography: (e.regions ?? []).slice(0, 3),
-          sourceArticles: urls.map(url => ({
-            title: sourceUrlMap.get(url) ?? url.split('/').pop()?.replace(/-/g, ' ') ?? 'Source',
-            url,
-            source: new URL(url).hostname.replace('www.', ''),
-          })),
+          sourceArticles: urls.map(url => {
+            let hostname = 'source'
+            try { hostname = new URL(url).hostname.replace('www.', '') } catch { /* malformed URL */ }
+            return {
+              title: sourceUrlMap.get(url) ?? url.split('/').pop()?.replace(/-/g, ' ')?.slice(0, 80) ?? 'Source',
+              url,
+              source: hostname,
+            }
+          }),
           clusterSize: 1,
           representativeEventIdx: 0,
           regionTags: (e.regions ?? []).slice(0, 3),

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
-import { PanelLeftOpen, PanelLeftClose, Loader2, BookmarkPlus, Bookmarks, Trash2 } from 'lucide-react'
+import { PanelLeftOpen, PanelLeftClose, Loader2, BookmarkPlus, Library, Trash2 } from 'lucide-react'
 
 import type {
   GraphSearchResult,
@@ -14,6 +14,12 @@ import type {
   StorylineSSEEvent,
 } from '@/lib/graph/types'
 import { DEFAULT_FILTERS, NODE_TYPE_CONFIG } from '@/lib/graph/types'
+import {
+  addSavedStoryline,
+  loadSavedStorylines,
+  removeSavedStoryline,
+  type SavedStorylineEntry,
+} from '@/lib/graph/saved-storylines'
 
 import { GraphSearchBar } from './GraphSearchBar'
 import { GraphCanvas } from './GraphCanvas'
@@ -281,7 +287,7 @@ function GraphExplorerInner({ initialArticleId, initialQuery }: { initialArticle
                   }`}
                   title="Storylines enregistrés"
                 >
-                  <Bookmarks size={18} />
+                  <Library size={18} />
                 </button>
                 {savedMenuOpen && (
                   <div className="absolute left-0 top-full mt-1 w-[min(100vw-2rem,320px)] max-h-[min(70vh,360px)] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl z-50 py-1">

@@ -391,72 +391,104 @@ interface DirectSearchResult {
 async function directGeminiSearchFallback(
   anchor: AnchorContext,
 ): Promise<EventCluster[]> {
-  const prompt = [
-    `You are a senior intelligence analyst with access to the internet.`,
-    `Research the following topic thoroughly and build a CHRONOLOGICAL TIMELINE of key events.`,
-    ``,
-    `Topic: "${anchor.title}"`,
-    anchor.summary ? `Context: ${anchor.summary.slice(0, 400)}` : '',
-    anchor.entities?.length ? `Key actors: ${anchor.entities.join(', ')}` : '',
-    ``,
-    `I need 8-12 events that form the CAUSAL CHAIN leading to the current situation.`,
-    ``,
-    `REQUIREMENTS:`,
-    `1. Go DEEP in history — include root causes from years ago, not just recent news`,
-    `2. Each event must have a precise date (YYYY-MM-DD)`,
-    `3. Each event must explain HOW it connects to the next step in the chain`,
-    `4. Include source URLs when available`,
-    `5. Cover: root causes → escalations → turning points → current situation`,
-    `6. Include at least 2-3 events from > 6 months ago`,
-    `7. Include at least 1-2 events from > 1 year ago if the topic has deep roots`,
-    ``,
-    `For each event:`,
-    `- title: concise descriptive title (French, max 80 chars)`,
-    `- date: YYYY-MM-DD (as precise as possible)`,
-    `- summary: 2-3 sentences explaining what happened and its impact`,
-    `- entities: key actors (countries, organizations, people) - max 5`,
-    `- regions: geographic areas - max 3`,
-    `- sourceUrls: article URLs for reference (max 3)`,
-    `- causalRole: "root_cause" | "escalation" | "turning_point" | "reaction" | "context"`,
-    ``,
-    `Return ONLY valid JSON, no markdown:`,
-    `{"events": [{"title":"...","date":"2025-01-15","summary":"...","entities":["..."],"regions":["..."],"sourceUrls":["..."],"causalRole":"escalation"}]}`,
-    ``,
-    `Order events CHRONOLOGICALLY from oldest to most recent.`,
-  ].filter(Boolean).join('\n')
+  // Step 1: Use Gemini+Search to gather real-time information (natural language)
+  let researchText = ''
+  let groundingSources: Array<{ title: string; url: string }> = []
 
   try {
-    const { text, sources } = await callGeminiWithSearch(prompt, {
-      maxOutputTokens: 8000,
+    const researchPrompt = [
+      `Research the following topic thoroughly: "${anchor.title}"`,
+      anchor.summary ? `Context: ${anchor.summary.slice(0, 400)}` : '',
+      anchor.entities?.length ? `Key actors: ${anchor.entities.join(', ')}` : '',
+      ``,
+      `Provide a detailed CHRONOLOGICAL TIMELINE of the key events that led to this situation.`,
+      `Go deep into history — root causes from years ago, not just recent news.`,
+      `For each event, mention: when it happened (exact date if possible), what happened, who was involved, and how it led to the next development.`,
+      `Cover at least 8-12 events spanning from deep historical roots to the current situation.`,
+    ].filter(Boolean).join('\n')
+
+    const { text, sources } = await callGeminiWithSearch(researchPrompt, {
+      maxOutputTokens: 6000,
+    })
+    researchText = text
+    groundingSources = sources
+    console.log(`[directGeminiSearchFallback] Step 1: Got ${text.length} chars research text, ${sources.length} grounding sources`)
+  } catch (err) {
+    console.error('[directGeminiSearchFallback] Step 1 (search) failed:', err)
+  }
+
+  // Step 2: Use plain Gemini (no search) to structure into JSON
+  // If Step 1 failed, Gemini will use its training knowledge
+  const structurePrompt = [
+    `You are structuring a timeline into JSON format.`,
+    ``,
+    researchText.length > 100
+      ? `## Research data to structure:\n${researchText.slice(0, 8000)}`
+      : `## Topic to build timeline for:\n"${anchor.title}"\n${anchor.summary ?? ''}\nBuild a timeline from your knowledge of this topic.`,
+    ``,
+    `Extract 8-12 chronologically ordered events. For EACH event provide:`,
+    `- title: concise French title (max 80 chars)`,
+    `- date: YYYY-MM-DD (be as precise as possible, estimate if needed)`,
+    `- summary: 2-3 sentences in French`,
+    `- entities: key actors (max 5)`,
+    `- regions: geographic areas (max 3)`,
+    `- causalRole: "root_cause" | "escalation" | "turning_point" | "reaction" | "context"`,
+    ``,
+    `IMPORTANT:`,
+    `- Include at least 2 events from > 1 year ago`,
+    `- Include at least 2 events from 1-6 months ago`,
+    `- Include at least 2 recent events`,
+    `- Every event MUST have a date estimate`,
+    ``,
+    `Return ONLY valid JSON, absolutely no markdown or commentary:`,
+    `{"events":[{"title":"...","date":"2025-01-15","summary":"...","entities":["..."],"regions":["..."],"causalRole":"escalation"}]}`,
+  ].join('\n')
+
+  try {
+    const { text: structuredText } = await callGemini(structurePrompt, {
+      maxOutputTokens: 6000,
+      temperature: 0.1,
     })
 
-    const parsed = parseGeminiJson<DirectSearchResult>(text)
+    console.log(`[directGeminiSearchFallback] Step 2: Got ${structuredText.length} chars structured response`)
+
+    const parsed = parseGeminiJson<DirectSearchResult>(structuredText)
     if (!parsed?.events || parsed.events.length === 0) {
-      console.warn('[directGeminiSearchFallback] No events parsed from Gemini response')
+      console.warn('[directGeminiSearchFallback] No events parsed from structured response')
+      console.warn('[directGeminiSearchFallback] Raw text preview:', structuredText.slice(0, 300))
       return []
     }
 
-    const sourceUrlMap = new Map(sources.map(s => [s.url, s.title]))
+    console.log(`[directGeminiSearchFallback] Parsed ${parsed.events.length} events`)
+
+    const sourceUrlMap = new Map(groundingSources.map(s => [s.title, s.url]))
+    const sourceUrls = groundingSources.map(s => s.url)
 
     const clusters: EventCluster[] = parsed.events
       .filter(e => e.title)
       .map((e, i) => {
         const rand = Math.random().toString(36).slice(2, 10)
-        const urls = (e.sourceUrls ?? []).filter(u => u && u.startsWith('http')).slice(0, 3)
+
+        // Assign grounding source URLs round-robin when event has none
+        const eventUrls = (e.sourceUrls ?? []).filter(u => u && u.startsWith('http')).slice(0, 2)
+        if (eventUrls.length === 0 && sourceUrls.length > 0) {
+          const assignedUrl = sourceUrls[i % sourceUrls.length]
+          if (assignedUrl) eventUrls.push(assignedUrl)
+        }
 
         return {
-          clusterId: `fallback-${Date.now().toString(36)}-${rand}`,
+          clusterId: `fb-${Date.now().toString(36)}-${rand}`,
           canonicalTitle: e.title.slice(0, 120),
-          eventDate: e.date?.match(/^\d{4}-\d{2}-\d{2}/) ? e.date.slice(0, 10) : null,
+          eventDate: e.date?.match(/\d{4}-\d{2}-\d{2}/) ? e.date.slice(0, 10) : null,
           eventDateConfidence: (e.date ? 'medium' : 'low') as EventCluster['eventDateConfidence'],
           summary: e.summary ?? '',
           entities: (e.entities ?? []).slice(0, 5),
           geography: (e.regions ?? []).slice(0, 3),
-          sourceArticles: urls.map(url => {
+          sourceArticles: eventUrls.map(url => {
             let hostname = 'source'
             try { hostname = new URL(url).hostname.replace('www.', '') } catch { /* malformed URL */ }
             return {
-              title: sourceUrlMap.get(url) ?? url.split('/').pop()?.replace(/-/g, ' ')?.slice(0, 80) ?? 'Source',
+              title: sourceUrlMap.get(url) ?? groundingSources.find(s => s.url === url)?.title ?? hostname,
               url,
               source: hostname,
             }
@@ -469,10 +501,10 @@ async function directGeminiSearchFallback(
         }
       })
 
-    console.log(`[directGeminiSearchFallback] Produced ${clusters.length} clusters from Gemini+Search`)
+    console.log(`[directGeminiSearchFallback] Final: ${clusters.length} clusters`)
     return clusters
   } catch (err) {
-    console.error('[directGeminiSearchFallback] Failed:', err)
+    console.error('[directGeminiSearchFallback] Step 2 (structure) failed:', err)
     return []
   }
 }

@@ -3,8 +3,13 @@ import { retrieveInternalCandidates, retrieveExternalCandidates } from './servic
 import type { AnchorContext } from './services/hybrid-retrieval'
 import { rankAndPruneCandidates } from './services/candidate-ranking'
 import { analyzeStoryline } from './services/storyline-analysis'
-import { assembleStoryline } from './services/storyline-assembler'
+import { analyzeStorylineFromClusters } from './services/storyline-analysis'
+import { assembleStoryline, assembleStorylineFromClusters } from './services/storyline-assembler'
 import { generateOutcomes } from './services/outcome-generator'
+import { extractEventsFromCandidates } from './services/article-extractor'
+import { clusterEvents } from './services/event-clusterer'
+import { detectRecencyBias } from './services/recency-bias-detector'
+import { searchHistoricalContext } from './services/historical-searcher'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
 
@@ -150,7 +155,149 @@ export interface StorylineBuilderStream {
   onEvent: (event: StorylineSSEEvent) => void
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// V2 Pipeline: Event-centric storyline building
+// ═══════════════════════════════════════════════════════════════════════════
+
 export async function buildStoryline(
+  anchor: AnchorContext,
+  stream: StorylineBuilderStream,
+): Promise<StorylineResult> {
+  try {
+    // ── Phase 0: Retrieve raw candidates ────────────────────────────────
+    const internalCandidates = await retrieveInternalCandidates(anchor)
+    const internalCards = candidatesToPreviewCards(internalCandidates, 'internal')
+    stream.onEvent({ phase: 'internal', cards: internalCards })
+
+    let allCandidates = [...internalCandidates]
+    const externalCandidates = await retrieveExternalCandidates(anchor, (windowLabel, windowCandidates) => {
+      const preview = candidatesToPreviewCards(windowCandidates, windowLabel)
+      if (preview.length > 0) {
+        stream.onEvent({ phase: 'external', cards: preview })
+      }
+    })
+    allCandidates = allCandidates.concat(externalCandidates)
+
+    // Rank and prune raw candidates
+    const ranked = rankAndPruneCandidates(
+      allCandidates,
+      anchor.keywords,
+      anchor.entities ?? [],
+    )
+
+    console.log(`[builder-v2] Phase 0 complete: ${ranked.length} candidates after ranking`)
+
+    // ── Phase 1: Extract events from articles ───────────────────────────
+    const extractedEvents = await extractEventsFromCandidates(ranked, 30)
+    console.log(`[builder-v2] Phase 1 complete: ${extractedEvents.length} events extracted`)
+
+    // ── Phase 2: Cluster events ─────────────────────────────────────────
+    let eventClusters = await clusterEvents(extractedEvents)
+    console.log(`[builder-v2] Phase 2 complete: ${eventClusters.length} clusters`)
+
+    // ── Phase 3: Detect recency bias → historical search ────────────────
+    const biasResult = detectRecencyBias(eventClusters)
+    if (biasResult.hasRecencyBias) {
+      console.log(`[builder-v2] Recency bias detected: ${biasResult.reason}`)
+      const historicalCandidates = await searchHistoricalContext(
+        anchor.keywords,
+        anchor.entities ?? [],
+        eventClusters,
+      )
+
+      if (historicalCandidates.length > 0) {
+        const historicalExtracted = await extractEventsFromCandidates(historicalCandidates, 15)
+        const historicalClusters = await clusterEvents(historicalExtracted)
+
+        // Merge historical clusters, avoiding duplicates with existing
+        const existingTitles = new Set(eventClusters.map(c => c.canonicalTitle.toLowerCase().slice(0, 40)))
+        const newHistorical = historicalClusters.filter(hc =>
+          !existingTitles.has(hc.canonicalTitle.toLowerCase().slice(0, 40)),
+        )
+
+        eventClusters = [...newHistorical, ...eventClusters]
+        console.log(`[builder-v2] Phase 3 complete: added ${newHistorical.length} historical clusters, total ${eventClusters.length}`)
+      }
+    } else {
+      console.log(`[builder-v2] Phase 3: No recency bias detected, skipping historical search`)
+    }
+
+    // ── Phase 4: LLM causal analysis (cluster-based) ────────────────────
+    const analysis = await analyzeStorylineFromClusters(anchor, eventClusters)
+
+    if (analysis.timeline.length > 0) {
+      stream.onEvent({
+        phase: 'analysis',
+        narrative: analysis.narrative,
+      })
+    }
+
+    // ── Phase 5: Assemble storyline from clusters ───────────────────────
+    let storyline = assembleStorylineFromClusters(anchor, eventClusters, analysis)
+
+    // Ensure minimum outcomes
+    const outcomeCards = storyline.cards.filter(c => c.cardType === 'outcome')
+    if (outcomeCards.length < MIN_OUTCOMES) {
+      console.log(`[builder-v2] Only ${outcomeCards.length} outcomes, triggering dedicated outcome generation`)
+
+      const causalDrivers = storyline.cards.filter(c =>
+        storyline.edges.some(e =>
+          e.relationCategory === 'causal' &&
+          (e.sourceCardId === c.id || e.targetCardId === c.id),
+        ),
+      )
+      const corollaryEvents = storyline.cards.filter(c =>
+        storyline.edges.some(e =>
+          e.relationCategory === 'corollary' &&
+          (e.sourceCardId === c.id || e.targetCardId === c.id),
+        ),
+      )
+      const recentSignals = storyline.cards
+        .filter(c => c.temporalPosition === 'recent' || c.temporalPosition === 'concurrent')
+        .slice(0, 5)
+
+      const generatedOutcomes = await generateOutcomes({
+        anchor,
+        causalDrivers,
+        corollaryEvents,
+        recentSignals,
+        narrative: storyline.narrative ?? '',
+      })
+
+      const anchorCardId = storyline.cards.find(c => c.temporalPosition === 'anchor')?.id
+      if (anchorCardId && generatedOutcomes.length > 0) {
+        analysis.outcomes = generatedOutcomes
+        storyline = assembleStorylineFromClusters(anchor, eventClusters, analysis)
+      }
+    }
+
+    const finalOutcomes = storyline.cards.filter(c => c.cardType === 'outcome')
+    if (finalOutcomes.length > 0) {
+      stream.onEvent({
+        phase: 'outcomes',
+        cards: finalOutcomes,
+      })
+    }
+
+    stream.onEvent({
+      phase: 'complete',
+      storyline,
+    })
+
+    return storyline
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    console.error('[builder-v2] Fatal error:', message)
+    stream.onEvent({ phase: 'error', error: message })
+    throw err
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Legacy V1 builder (preserved for fallback)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function buildStorylineV1(
   anchor: AnchorContext,
   stream: StorylineBuilderStream,
 ): Promise<StorylineResult> {
@@ -187,8 +334,6 @@ export async function buildStoryline(
 
     const outcomeCards = storyline.cards.filter(c => c.cardType === 'outcome')
     if (outcomeCards.length < MIN_OUTCOMES) {
-      console.log(`[storyline-builder] Only ${outcomeCards.length} outcomes, triggering dedicated outcome generation`)
-
       const causalDrivers = storyline.cards.filter(c =>
         storyline.edges.some(e =>
           e.relationCategory === 'causal' &&
@@ -236,7 +381,7 @@ export async function buildStoryline(
     return storyline
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
-    console.error('[storyline-builder] Fatal error:', message)
+    console.error('[builder-v1] Fatal error:', message)
     stream.onEvent({ phase: 'error', error: message })
     throw err
   }

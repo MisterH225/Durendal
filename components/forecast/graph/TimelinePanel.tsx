@@ -339,12 +339,21 @@ export function TimelinePanel({ nodes, edges, query, selectedNodeId, onNodeSelec
       <div>
         <h3 className="text-[12px] font-bold text-neutral-400 uppercase tracking-wider mb-4">Chronologie détaillée</h3>
         <div className="space-y-6">
-          {Array.from(grouped.entries()).map(([month, items]) => (
+          {Array.from(grouped.entries()).map(([month, items]) => {
+            const now = new Date()
+            const monthDate = new Date(month + '-01')
+            const monthsAgo = (now.getFullYear() - monthDate.getFullYear()) * 12 + (now.getMonth() - monthDate.getMonth())
+            const isHistorical = monthsAgo > 1
+
+            return (
             <div key={month}>
               <div className="flex items-center gap-2 mb-3">
-                <div className="h-px flex-1 bg-neutral-800" />
-                <span className="text-[12px] font-bold text-neutral-300 px-2">{formatMonth(month)}</span>
-                <div className="h-px flex-1 bg-neutral-800" />
+                <div className={`h-px flex-1 ${isHistorical ? 'bg-amber-800/50' : 'bg-neutral-800'}`} />
+                <span className={`text-[12px] font-bold px-2 ${isHistorical ? 'text-amber-400' : 'text-neutral-300'}`}>
+                  {isHistorical ? '📜 ' : ''}{formatMonth(month)}
+                  {isHistorical && <span className="text-[9px] ml-1.5 text-amber-600 font-normal">(historique)</span>}
+                </span>
+                <div className={`h-px flex-1 ${isHistorical ? 'bg-amber-800/50' : 'bg-neutral-800'}`} />
               </div>
               <div className="space-y-1.5 border-l-2 border-neutral-800 ml-3 pl-4">
                 {items.map(n => {
@@ -396,7 +405,8 @@ export function TimelinePanel({ nodes, edges, query, selectedNodeId, onNodeSelec
                 })}
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
     </div>

@@ -360,6 +360,8 @@ function storylineToGraphResult(
       isTrunk: c.isTrunk,
       isCorollary: c.isCorollary,
       sourceArticles: c.sourceArticles,
+      clusterSize: (c.metadata as Record<string, unknown>)?.clusterSize,
+      eventDateConfidence: (c.metadata as Record<string, unknown>)?.eventDateConfidence,
     },
   }))
 

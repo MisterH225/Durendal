@@ -284,6 +284,8 @@ export interface CandidateItem {
 
 export interface StorylineAnalysisEntry {
   candidateRef: string
+  /** EventCluster ID — set by v2 pipeline, used for cluster-based assembly */
+  clusterId?: string
   temporalRelation: TemporalSubtype
   relationCategory: 'causal' | 'contextual' | 'corollary'
   relationSubtype: string

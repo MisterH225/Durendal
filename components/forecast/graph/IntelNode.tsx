@@ -37,6 +37,8 @@ function IntelNodeComponent({ data }: NodeProps) {
   const contradictingEvidence = meta.contradictingEvidence as string[] | undefined
   const probSource = meta.probabilitySource as string | undefined
   const sourceArticles = meta.sourceArticles as SourceArticle[] | undefined
+  const clusterSize = meta.clusterSize as number | undefined
+  const eventDateConfidence = meta.eventDateConfidence as string | undefined
 
   const w = isAnchor ? 'w-[310px]' : isOutcome ? 'w-[280px]' : 'w-[280px]'
   const dimCls = d.dimmed ? 'opacity-30' : ''
@@ -63,9 +65,16 @@ function IntelNodeComponent({ data }: NodeProps) {
               </span>
             )}
           </div>
-          {d.subtitle && (
-            <span className="text-[10px] text-neutral-500 font-medium">{d.subtitle}</span>
-          )}
+          <div className="flex items-center gap-1.5">
+            {clusterSize && clusterSize > 1 && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 font-medium">
+                {clusterSize} sources
+              </span>
+            )}
+            {d.subtitle && (
+              <span className="text-[10px] text-neutral-500 font-medium">{d.subtitle}</span>
+            )}
+          </div>
         </div>
 
         {/* Body */}
@@ -75,7 +84,25 @@ function IntelNodeComponent({ data }: NodeProps) {
             {d.label}
           </div>
 
-          {/* Summary (new) */}
+          {/* Date with confidence indicator */}
+          {d.createdAt && (
+            <div className="mt-1 flex items-center gap-1.5">
+              <span className="text-[10px] text-neutral-500">
+                {d.createdAt}
+              </span>
+              {eventDateConfidence && eventDateConfidence !== 'high' && (
+                <span className={`text-[8px] px-1 py-0.5 rounded ${
+                  eventDateConfidence === 'medium'
+                    ? 'bg-yellow-900/30 text-yellow-500'
+                    : 'bg-red-900/30 text-red-400'
+                }`}>
+                  {eventDateConfidence === 'medium' ? 'date approx.' : 'date incertaine'}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Summary */}
           {d.summary && (
             <div className="mt-1.5 text-[11px] text-neutral-400 leading-relaxed line-clamp-3">
               {d.summary}

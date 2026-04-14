@@ -14,6 +14,7 @@ import type {
   TemporalSubtype,
 } from '@/lib/graph/types'
 import type { AnchorContext } from './hybrid-retrieval'
+import type { EventCluster } from '../types/event-cluster'
 
 let nextId = 0
 function uid(): string { return `sc-${++nextId}-${Date.now().toString(36)}` }
@@ -35,6 +36,241 @@ const TEMPORAL_TO_POSITION: Record<string, TemporalPosition> = {
   concurrent_with: 'concurrent',
   after: 'consequence',
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V2: Cluster-based assembly
+// ═══════════════════════════════════════════════════════════════════════════
+
+function inferCardTypeFromCluster(cluster: EventCluster): StorylineCardType {
+  if (cluster.platformRefType === 'forecast_event' || cluster.platformRefType === 'intel_event') return 'event'
+  if (cluster.platformRefType === 'question') return 'event'
+  if (cluster.sourceType === 'perplexity' || cluster.sourceType === 'gemini') return 'article'
+  return 'event'
+}
+
+function resolvePositionFromCluster(
+  match: StorylineAnalysisEntry | null,
+  cluster: EventCluster,
+  anchor: AnchorContext,
+): TemporalPosition {
+  if (match) {
+    return TEMPORAL_TO_POSITION[match.temporalRelation] ?? inferPositionFromClusterDate(cluster, anchor)
+  }
+  return inferPositionFromClusterDate(cluster, anchor)
+}
+
+function inferPositionFromClusterDate(c: EventCluster, anchor: AnchorContext): TemporalPosition {
+  if (!c.eventDate || !anchor.date) return 'concurrent'
+  if (c.eventDate < anchor.date) {
+    const daysBefore = Math.round((new Date(anchor.date).getTime() - new Date(c.eventDate).getTime()) / 86400000)
+    if (daysBefore > 365) return 'deep_past'
+    if (daysBefore > 30) return 'past'
+    return 'recent'
+  }
+  if (c.eventDate > anchor.date) return 'consequence'
+  return 'concurrent'
+}
+
+export function assembleStorylineFromClusters(
+  anchor: AnchorContext,
+  clusters: EventCluster[],
+  analysis: StorylineAnalysis,
+): StorylineResult {
+  nextId = 0
+  const cards: StorylineCard[] = []
+  const edges: StorylineEdge[] = []
+
+  // Anchor card
+  const anchorCard: StorylineCard = {
+    id: uid(),
+    cardType: 'event',
+    temporalPosition: 'anchor',
+    title: anchor.title,
+    summary: analysis.anchor?.summary || anchor.summary,
+    date: anchor.date,
+    confidence: 1,
+    entities: anchor.entities ?? [],
+    regionTags: [],
+    sectorTags: [],
+    sourceUrls: anchor.url ? [anchor.url] : [],
+    platformRefType: anchor.platformRefType,
+    platformRefId: anchor.platformRefId,
+    importance: 10,
+    sortOrder: POSITION_ORDER.anchor * 100,
+    isTrunk: true,
+    isCorollary: false,
+  }
+  cards.push(anchorCard)
+
+  // Index clusters by clusterId for lookup
+  const clusterById = new Map<string, EventCluster>()
+  for (const c of clusters) clusterById.set(c.clusterId, c)
+
+  // Match analysis entries to clusters
+  const cardByClusterId = new Map<string, StorylineCard>()
+  const matchByCardId = new Map<string, StorylineAnalysisEntry>()
+
+  const trunkEntries = analysis.timeline.filter(e => !e.isCorollary)
+  const corollaryEntries = analysis.timeline.filter(e => e.isCorollary)
+
+  // Sort trunk entries by date for proper chain ordering
+  trunkEntries.sort((a, b) => {
+    const clA = clusterById.get(a.clusterId ?? a.candidateRef)
+    const clB = clusterById.get(b.clusterId ?? b.candidateRef)
+    const dateA = clA?.eventDate ?? ''
+    const dateB = clB?.eventDate ?? ''
+    return dateA.localeCompare(dateB)
+  })
+
+  // Build trunk cards
+  let trunkOrder = 0
+  for (const entry of trunkEntries) {
+    const clusterId = entry.clusterId ?? entry.candidateRef
+    const cluster = clusterById.get(clusterId)
+
+    if (!cluster) {
+      console.warn(`[assembler-v2] Cluster not found: ${clusterId}`)
+      continue
+    }
+
+    const temporalPosition = resolvePositionFromCluster(entry, cluster, anchor)
+
+    const card: StorylineCard = {
+      id: uid(),
+      cardType: inferCardTypeFromCluster(cluster),
+      temporalPosition,
+      title: cluster.canonicalTitle,
+      summary: entry.explanation || cluster.summary,
+      date: cluster.eventDate ?? undefined,
+      confidence: entry.causalConfidence > 0 ? entry.causalConfidence : 0.5,
+      entities: entry.entities.length > 0 ? entry.entities : cluster.entities,
+      regionTags: cluster.regionTags,
+      sectorTags: cluster.sectorTags,
+      sourceUrls: cluster.sourceArticles.map(a => a.url),
+      sourceArticles: entry.sourceArticles?.length
+        ? entry.sourceArticles
+        : cluster.sourceArticles.slice(0, 3),
+      platformRefType: cluster.platformRefType,
+      platformRefId: cluster.platformRefId,
+      importance: entry.relationCategory === 'causal' ? 8 : 5,
+      sortOrder: trunkOrder++,
+      isTrunk: true,
+      isCorollary: false,
+      metadata: {
+        clusterId: cluster.clusterId,
+        clusterSize: cluster.clusterSize,
+        eventDateConfidence: cluster.eventDateConfidence,
+      },
+    }
+    cards.push(card)
+    cardByClusterId.set(clusterId, card)
+    matchByCardId.set(card.id, entry)
+  }
+
+  // Build trunk chain edges: each trunk card → next → ... → anchor
+  const trunkCards = cards
+    .filter(c => c.isTrunk && c.temporalPosition !== 'anchor' && c.temporalPosition !== 'future')
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+
+  for (let i = 0; i < trunkCards.length; i++) {
+    const current = trunkCards[i]
+    const next = i < trunkCards.length - 1 ? trunkCards[i + 1] : anchorCard
+    const match = matchByCardId.get(current.id)
+
+    const edgeCategory: RelationCategory = match?.relationCategory === 'causal' ? 'causal' : 'contextual'
+    const edgeSubtype = match?.relationCategory === 'causal'
+      ? (match.relationSubtype || 'causes')
+      : 'background_context'
+
+    edges.push({
+      id: uid(),
+      sourceCardId: current.id,
+      targetCardId: next.id,
+      relationCategory: edgeCategory,
+      relationSubtype: edgeSubtype as RelationSubtype,
+      confidence: match?.causalConfidence ?? 0.5,
+      explanation: match?.explanation ?? '',
+      causalEvidence: match?.causalEvidence,
+      isTrunk: true,
+    })
+  }
+
+  // Build corollary cards and edges
+  for (const entry of corollaryEntries) {
+    const clusterId = entry.clusterId ?? entry.candidateRef
+    const cluster = clusterById.get(clusterId)
+    if (!cluster) continue
+
+    const temporalPosition = resolvePositionFromCluster(entry, cluster, anchor)
+
+    // Find the trunk card this corollary is attached to
+    const attachedTrunkCard = entry.attachedToRef
+      ? cardByClusterId.get(entry.attachedToRef) ?? anchorCard
+      : anchorCard
+
+    const card: StorylineCard = {
+      id: uid(),
+      cardType: inferCardTypeFromCluster(cluster),
+      temporalPosition,
+      title: cluster.canonicalTitle,
+      summary: entry.explanation || cluster.summary,
+      date: cluster.eventDate ?? undefined,
+      confidence: 0.5,
+      entities: entry.entities.length > 0 ? entry.entities : cluster.entities,
+      regionTags: cluster.regionTags,
+      sectorTags: cluster.sectorTags,
+      sourceUrls: cluster.sourceArticles.map(a => a.url),
+      sourceArticles: entry.sourceArticles?.length
+        ? entry.sourceArticles
+        : cluster.sourceArticles.slice(0, 3),
+      platformRefType: cluster.platformRefType,
+      platformRefId: cluster.platformRefId,
+      importance: 4,
+      sortOrder: POSITION_ORDER[temporalPosition] * 100 + cards.length,
+      isTrunk: false,
+      isCorollary: true,
+      attachedToCardId: attachedTrunkCard.id,
+      metadata: {
+        clusterId: cluster.clusterId,
+        clusterSize: cluster.clusterSize,
+        eventDateConfidence: cluster.eventDateConfidence,
+      },
+    }
+    cards.push(card)
+    cardByClusterId.set(clusterId, card)
+
+    edges.push({
+      id: uid(),
+      sourceCardId: attachedTrunkCard.id,
+      targetCardId: card.id,
+      relationCategory: 'corollary' as RelationCategory,
+      relationSubtype: (entry.relationSubtype || 'spillover_from') as RelationSubtype,
+      confidence: 0.6,
+      explanation: entry.explanation,
+      isTrunk: false,
+    })
+  }
+
+  // Outcome cards
+  addOutcomeCards(cards, edges, anchorCard.id, analysis.outcomes)
+
+  cards.sort((a, b) => a.sortOrder - b.sortOrder)
+
+  return {
+    anchorType: anchor.platformRefType ? 'article' : 'keyword',
+    anchorRef: anchor.platformRefId ?? anchor.keywords.join(' '),
+    anchorTitle: anchor.title,
+    anchorSummary: anchor.summary,
+    cards,
+    edges,
+    narrative: analysis.narrative,
+    status: 'ready',
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V1: Legacy candidate-based assembly (preserved)
+// ═══════════════════════════════════════════════════════════════════════════
 
 function inferCardType(candidate: CandidateItem): StorylineCardType {
   if (candidate.platformRefType === 'forecast_event' || candidate.platformRefType === 'intel_event') return 'event'
@@ -89,20 +325,6 @@ function inferPositionFromDate(c: CandidateItem, anchor: AnchorContext): Tempora
   return 'concurrent'
 }
 
-function findAnalysisEntryByRef(
-  ref: string,
-  timeline: StorylineAnalysisEntry[],
-): StorylineAnalysisEntry | null {
-  if (!ref) return null
-  const lower = ref.toLowerCase()
-  for (const entry of timeline) {
-    if (entry.candidateRef.toLowerCase() === lower) return entry
-    if (entry.candidateRef.toLowerCase().includes(lower.slice(0, 30))) return entry
-    if (lower.includes(entry.candidateRef.toLowerCase().slice(0, 30))) return entry
-  }
-  return null
-}
-
 export function assembleStoryline(
   anchor: AnchorContext,
   candidates: CandidateItem[],
@@ -133,7 +355,6 @@ export function assembleStoryline(
   }
   cards.push(anchorCard)
 
-  // Build cards for all matched candidates
   const cardByRef = new Map<string, StorylineCard>()
   const matchByCard = new Map<string, StorylineAnalysisEntry>()
 
@@ -143,12 +364,10 @@ export function assembleStoryline(
     match: matchCandidateToAnalysis(c, analysis.timeline),
   }))
 
-  // Separate trunk vs corollary events
   const trunkPairs = matchedPairs.filter(p => p.match && !p.match.isCorollary)
   const corollaryPairs = matchedPairs.filter(p => p.match?.isCorollary)
   const unmatchedPairs = matchedPairs.filter(p => !p.match)
 
-  // Sort trunk by date for chain ordering
   trunkPairs.sort((a, b) => {
     const da = a.candidate.date ?? ''
     const db = b.candidate.date ?? ''
@@ -185,7 +404,6 @@ export function assembleStoryline(
     matchByCard.set(card.id, match)
   }
 
-  // Build CHAIN EDGES for trunk: each card → next card → ... → anchor
   const trunkCards = cards.filter(c => c.isTrunk && c.temporalPosition !== 'anchor' && c.temporalPosition !== 'future')
     .sort((a, b) => a.sortOrder - b.sortOrder)
 
@@ -194,13 +412,6 @@ export function assembleStoryline(
     const next = i < trunkCards.length - 1 ? trunkCards[i + 1] : anchorCard
     const match = matchByCard.get(current.id)
 
-    // Check if LLM specified a specific predecessor
-    let predecessorCard: StorylineCard | undefined
-    if (match?.chainPredecessorRef) {
-      predecessorCard = cardByRef.get(match.chainPredecessorRef) ?? undefined
-    }
-
-    // Chain edge: current → next (or LLM-specified predecessor ← current)
     const edgeCategory: RelationCategory = match?.relationCategory === 'causal' ? 'causal' : 'contextual'
     const edgeSubtype = match?.relationCategory === 'causal'
       ? (match.relationSubtype || 'causes')
@@ -219,7 +430,6 @@ export function assembleStoryline(
     })
   }
 
-  // Build corollary cards — attached to their trunk card
   for (const { candidate: c, match } of corollaryPairs) {
     if (!match) continue
     const temporalPosition = resolveTemporalPosition(match, c, anchor)
@@ -264,7 +474,6 @@ export function assembleStoryline(
     })
   }
 
-  // Handle unmatched candidates as minor context nodes (no edges to avoid clutter)
   for (const { candidate: c, index: i } of unmatchedPairs.slice(0, 5)) {
     const temporalPosition = inferPositionFromDate(c, anchor)
     cards.push({
@@ -304,6 +513,10 @@ export function assembleStoryline(
     status: 'ready',
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Shared: Outcome cards
+// ═══════════════════════════════════════════════════════════════════════════
 
 function addOutcomeCards(
   cards: StorylineCard[],

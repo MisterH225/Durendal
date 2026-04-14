@@ -16,7 +16,9 @@ import { generateOutcomes } from './services/outcome-generator'
 import { assembleStorylineGraph } from './services/storyline-assembler'
 import { generateNarrative } from './services/narrative-generator'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { callGemini, parseGeminiJson } from '@/lib/ai/gemini'
+import { callGemini, callGeminiWithSearch, parseGeminiJson } from '@/lib/ai/gemini'
+import type { EventCluster } from './types/event-cluster'
+import type { ExtractedEvent } from './types/event-extraction'
 
 export type { AnchorContext }
 
@@ -178,10 +180,16 @@ export async function buildStoryline(
       }),
     ])
 
+    console.log(`[builder-v3] Phase 2: internal=${internalCandidates.length}, external=${externalCandidates.length}`)
+
     const internalCards = candidatesToPreviewCards(internalCandidates, 'internal')
     stream.onEvent({ phase: 'internal', cards: internalCards })
 
     const allCandidates = [...internalCandidates, ...externalCandidates]
+
+    if (allCandidates.length === 0) {
+      console.warn(`[builder-v3] WARNING: 0 candidates from retrieval. Anchor: "${anchor.title}", keywords: ${anchor.keywords.join(', ')}`)
+    }
 
     // ── Phase 3: Candidate Ranking ──────────────────────────────────────
     const ranked = rankAndPruneCandidates(
@@ -189,15 +197,30 @@ export async function buildStoryline(
       anchor.keywords,
       anchor.entities ?? [],
     )
-    console.log(`[builder-v3] Phase 2-3: ${allCandidates.length} candidates → ${ranked.length} after ranking`)
+    console.log(`[builder-v3] Phase 3: ${allCandidates.length} candidates → ${ranked.length} after ranking`)
+
+    if (ranked.length === 0 && allCandidates.length > 0) {
+      console.warn(`[builder-v3] WARNING: ranking pruned ALL ${allCandidates.length} candidates. Bypassing ranking.`)
+      ranked.push(...allCandidates.slice(0, 25))
+    }
 
     // ── Phase 4: Event Extraction (batch LLM) ───────────────────────────
-    const extractedEvents = await extractEventsFromCandidates(ranked, 30, anchor.title)
-    console.log(`[builder-v3] Phase 4: ${extractedEvents.length} events extracted`)
+    let extractedEvents = await extractEventsFromCandidates(ranked, 30, anchor.title)
+    console.log(`[builder-v3] Phase 4: ${extractedEvents.length} events extracted from ${ranked.length} candidates`)
 
     // ── Phase 5: Event Clustering ───────────────────────────────────────
     let clusters = await clusterEvents(extractedEvents)
     console.log(`[builder-v3] Phase 5: ${clusters.length} clusters`)
+
+    // ── Phase 5b: Fallback — if pipeline produced 0 clusters, use Gemini+Search directly
+    if (clusters.length === 0) {
+      console.warn(`[builder-v3] Phase 5b: 0 clusters from normal pipeline. Activating Gemini+Search fallback.`)
+      const fallbackClusters = await directGeminiSearchFallback(anchor)
+      if (fallbackClusters.length > 0) {
+        clusters = fallbackClusters
+        console.log(`[builder-v3] Phase 5b: Gemini fallback produced ${clusters.length} clusters`)
+      }
+    }
 
     // ── Phase 6: Historical Expansion ───────────────────────────────────
     const biasResult = detectRecencyBias(clusters)
@@ -299,4 +322,108 @@ function candidatesToPreviewCards(
     importance: 5,
     sortOrder: i,
   }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fallback: Direct Gemini + Google Search grounding
+// Used when Perplexity retrieval + extraction produces 0 clusters
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface DirectSearchEvent {
+  title: string
+  date: string | null
+  summary: string
+  entities: string[]
+  regions: string[]
+  sourceUrls: string[]
+  causalRole: 'root_cause' | 'escalation' | 'turning_point' | 'reaction' | 'context'
+}
+
+interface DirectSearchResult {
+  events: DirectSearchEvent[]
+}
+
+async function directGeminiSearchFallback(
+  anchor: AnchorContext,
+): Promise<EventCluster[]> {
+  const prompt = [
+    `You are a senior intelligence analyst with access to the internet.`,
+    `Research the following topic thoroughly and build a CHRONOLOGICAL TIMELINE of key events.`,
+    ``,
+    `Topic: "${anchor.title}"`,
+    anchor.summary ? `Context: ${anchor.summary.slice(0, 400)}` : '',
+    anchor.entities?.length ? `Key actors: ${anchor.entities.join(', ')}` : '',
+    ``,
+    `I need 8-12 events that form the CAUSAL CHAIN leading to the current situation.`,
+    ``,
+    `REQUIREMENTS:`,
+    `1. Go DEEP in history — include root causes from years ago, not just recent news`,
+    `2. Each event must have a precise date (YYYY-MM-DD)`,
+    `3. Each event must explain HOW it connects to the next step in the chain`,
+    `4. Include source URLs when available`,
+    `5. Cover: root causes → escalations → turning points → current situation`,
+    `6. Include at least 2-3 events from > 6 months ago`,
+    `7. Include at least 1-2 events from > 1 year ago if the topic has deep roots`,
+    ``,
+    `For each event:`,
+    `- title: concise descriptive title (French, max 80 chars)`,
+    `- date: YYYY-MM-DD (as precise as possible)`,
+    `- summary: 2-3 sentences explaining what happened and its impact`,
+    `- entities: key actors (countries, organizations, people) - max 5`,
+    `- regions: geographic areas - max 3`,
+    `- sourceUrls: article URLs for reference (max 3)`,
+    `- causalRole: "root_cause" | "escalation" | "turning_point" | "reaction" | "context"`,
+    ``,
+    `Return ONLY valid JSON, no markdown:`,
+    `{"events": [{"title":"...","date":"2025-01-15","summary":"...","entities":["..."],"regions":["..."],"sourceUrls":["..."],"causalRole":"escalation"}]}`,
+    ``,
+    `Order events CHRONOLOGICALLY from oldest to most recent.`,
+  ].filter(Boolean).join('\n')
+
+  try {
+    const { text, sources } = await callGeminiWithSearch(prompt, {
+      maxOutputTokens: 8000,
+    })
+
+    const parsed = parseGeminiJson<DirectSearchResult>(text)
+    if (!parsed?.events || parsed.events.length === 0) {
+      console.warn('[directGeminiSearchFallback] No events parsed from Gemini response')
+      return []
+    }
+
+    const sourceUrlMap = new Map(sources.map(s => [s.url, s.title]))
+
+    const clusters: EventCluster[] = parsed.events
+      .filter(e => e.title)
+      .map((e, i) => {
+        const rand = Math.random().toString(36).slice(2, 10)
+        const urls = (e.sourceUrls ?? []).filter(u => u && u.startsWith('http')).slice(0, 3)
+
+        return {
+          clusterId: `fallback-${Date.now().toString(36)}-${rand}`,
+          canonicalTitle: e.title.slice(0, 120),
+          eventDate: e.date?.match(/^\d{4}-\d{2}-\d{2}/) ? e.date.slice(0, 10) : null,
+          eventDateConfidence: (e.date ? 'medium' : 'low') as EventCluster['eventDateConfidence'],
+          summary: e.summary ?? '',
+          entities: (e.entities ?? []).slice(0, 5),
+          geography: (e.regions ?? []).slice(0, 3),
+          sourceArticles: urls.map(url => ({
+            title: sourceUrlMap.get(url) ?? url.split('/').pop()?.replace(/-/g, ' ') ?? 'Source',
+            url,
+            source: new URL(url).hostname.replace('www.', ''),
+          })),
+          clusterSize: 1,
+          representativeEventIdx: 0,
+          regionTags: (e.regions ?? []).slice(0, 3),
+          sectorTags: [],
+          sourceType: 'gemini' as const,
+        }
+      })
+
+    console.log(`[directGeminiSearchFallback] Produced ${clusters.length} clusters from Gemini+Search`)
+    return clusters
+  } catch (err) {
+    console.error('[directGeminiSearchFallback] Failed:', err)
+    return []
+  }
 }

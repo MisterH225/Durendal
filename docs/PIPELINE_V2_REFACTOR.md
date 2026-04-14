@@ -9,42 +9,47 @@
 
 ### Cartographie fichier → phase
 
-| Phase pipeline | Fichier(s) | Rôle |
-|---|---|---|
-| **Point d'entrée SSE** | `app/api/forecast/graph/search/route.ts` | API route GET, SSE stream, `maxDuration=300` |
-| **Anchor resolution** | `lib/storyline/builder.ts` — `resolveAnchor()`, `resolveKeywordToEvent()` | Transforme keyword/articleId en `AnchorContext` via Gemini |
-| **Retrieval interne** | `lib/storyline/services/hybrid-retrieval.ts` — `retrieveInternalCandidates()` | 5 requêtes Supabase parallèles (signals, ext_signals, forecast_events, intel_events, questions) |
-| **Retrieval externe** | `lib/storyline/services/hybrid-retrieval.ts` — `retrieveExternalCandidates()` | 5 fenêtres temporelles Perplexity **séquentielles** |
-| **Ranking/pruning** | `lib/storyline/services/candidate-ranking.ts` | Dédup titre, scoring keyword/entité, max 40 candidats |
-| **Extraction événements** | `lib/storyline/services/article-extractor.ts` | Batch Gemini (10/batch), extraction date/titre/pertinence |
-| **Clustering** | `lib/storyline/services/event-clusterer.ts` | 2-pass : token overlap + LLM borderline |
-| **Détection biais récence** | `lib/storyline/services/recency-bias-detector.ts` | Heuristique date-span / ratio recent |
-| **Recherche historique** | `lib/storyline/services/historical-searcher.ts` | 2 requêtes Perplexity séquentielles |
-| **Analyse causale LLM** | `lib/storyline/services/storyline-analysis.ts` — `analyzeStorylineFromClusters()` | UN appel Gemini+Search, prompt monolithique |
-| **Counterfactual check** | `lib/storyline/services/counterfactual-check.ts` | Service complet (7 dimensions), **NON BRANCHÉ dans le pipeline** |
-| **Outcome generation** | `lib/storyline/services/outcome-generator.ts` | Fallback conditionnel (`if < 2 outcomes`) |
-| **Assemblage** | `lib/storyline/services/storyline-assembler.ts` | Construit `StorylineResult` (cards + edges) |
-| **Orchestrateur** | `lib/storyline/builder.ts` — `buildStoryline()` | Séquence phases 0-5, SSE events |
-| **Legacy V1** | `buildStorylineV1()`, `analyzeStoryline()`, `assembleStoryline()` | Ancien pipeline candidat-basé, encore présent |
+
+| Phase pipeline              | Fichier(s)                                                                        | Rôle                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Point d'entrée SSE**      | `app/api/forecast/graph/search/route.ts`                                          | API route GET, SSE stream, `maxDuration=300`                                                    |
+| **Anchor resolution**       | `lib/storyline/builder.ts` — `resolveAnchor()`, `resolveKeywordToEvent()`         | Transforme keyword/articleId en `AnchorContext` via Gemini                                      |
+| **Retrieval interne**       | `lib/storyline/services/hybrid-retrieval.ts` — `retrieveInternalCandidates()`     | 5 requêtes Supabase parallèles (signals, ext_signals, forecast_events, intel_events, questions) |
+| **Retrieval externe**       | `lib/storyline/services/hybrid-retrieval.ts` — `retrieveExternalCandidates()`     | 5 fenêtres temporelles Perplexity **séquentielles**                                             |
+| **Ranking/pruning**         | `lib/storyline/services/candidate-ranking.ts`                                     | Dédup titre, scoring keyword/entité, max 40 candidats                                           |
+| **Extraction événements**   | `lib/storyline/services/article-extractor.ts`                                     | Batch Gemini (10/batch), extraction date/titre/pertinence                                       |
+| **Clustering**              | `lib/storyline/services/event-clusterer.ts`                                       | 2-pass : token overlap + LLM borderline                                                         |
+| **Détection biais récence** | `lib/storyline/services/recency-bias-detector.ts`                                 | Heuristique date-span / ratio recent                                                            |
+| **Recherche historique**    | `lib/storyline/services/historical-searcher.ts`                                   | 2 requêtes Perplexity séquentielles                                                             |
+| **Analyse causale LLM**     | `lib/storyline/services/storyline-analysis.ts` — `analyzeStorylineFromClusters()` | UN appel Gemini+Search, prompt monolithique                                                     |
+| **Counterfactual check**    | `lib/storyline/services/counterfactual-check.ts`                                  | Service complet (7 dimensions), **NON BRANCHÉ dans le pipeline**                                |
+| **Outcome generation**      | `lib/storyline/services/outcome-generator.ts`                                     | Fallback conditionnel (`if < 2 outcomes`)                                                       |
+| **Assemblage**              | `lib/storyline/services/storyline-assembler.ts`                                   | Construit `StorylineResult` (cards + edges)                                                     |
+| **Orchestrateur**           | `lib/storyline/builder.ts` — `buildStoryline()`                                   | Séquence phases 0-5, SSE events                                                                 |
+| **Legacy V1**               | `buildStorylineV1()`, `analyzeStoryline()`, `assembleStoryline()`                 | Ancien pipeline candidat-basé, encore présent                                                   |
+
 
 ### Types / data contracts
 
-| Type | Fichier | Rôle |
-|---|---|---|
-| `AnchorContext` | `hybrid-retrieval.ts:35-44` | Input pour tout le pipeline |
-| `CandidateItem` | `lib/graph/types.ts:269-283` | Résultat brut du retrieval |
-| `ExtractedEvent` | `lib/storyline/types/event-extraction.ts` | Sortie de l'extraction LLM |
-| `EventCluster` | `lib/storyline/types/event-cluster.ts` | Groupe d'événements dédupliqués |
-| `StorylineAnalysis` | `lib/graph/types.ts:312-317` | Sortie de l'analyse LLM (timeline + outcomes + narrative) |
-| `StorylineAnalysisEntry` | `lib/graph/types.ts:285-300` | Une entrée de timeline analysée |
-| `StorylineCard` | `lib/graph/types.ts:208-234` | Noeud du graphe final |
-| `StorylineEdge` | `lib/graph/types.ts:236-246` | Arête du graphe final |
-| `StorylineResult` | `lib/graph/types.ts:248-258` | Résultat complet envoyé au frontend |
-| `CounterfactualCheckInput/Result` | `lib/graph/types.ts:357-384` | Types pour le service CF (non branché) |
+
+| Type                              | Fichier                                   | Rôle                                                      |
+| --------------------------------- | ----------------------------------------- | --------------------------------------------------------- |
+| `AnchorContext`                   | `hybrid-retrieval.ts:35-44`               | Input pour tout le pipeline                               |
+| `CandidateItem`                   | `lib/graph/types.ts:269-283`              | Résultat brut du retrieval                                |
+| `ExtractedEvent`                  | `lib/storyline/types/event-extraction.ts` | Sortie de l'extraction LLM                                |
+| `EventCluster`                    | `lib/storyline/types/event-cluster.ts`    | Groupe d'événements dédupliqués                           |
+| `StorylineAnalysis`               | `lib/graph/types.ts:312-317`              | Sortie de l'analyse LLM (timeline + outcomes + narrative) |
+| `StorylineAnalysisEntry`          | `lib/graph/types.ts:285-300`              | Une entrée de timeline analysée                           |
+| `StorylineCard`                   | `lib/graph/types.ts:208-234`              | Noeud du graphe final                                     |
+| `StorylineEdge`                   | `lib/graph/types.ts:236-246`              | Arête du graphe final                                     |
+| `StorylineResult`                 | `lib/graph/types.ts:248-258`              | Résultat complet envoyé au frontend                       |
+| `CounterfactualCheckInput/Result` | `lib/graph/types.ts:357-384`              | Types pour le service CF (non branché)                    |
+
 
 ### Modules centraux vs wrappers
 
 **Centraux** (logique métier substantielle) :
+
 - `hybrid-retrieval.ts` — logique de requête multi-source
 - `article-extractor.ts` — extraction structurée par LLM
 - `event-clusterer.ts` — algorithme de clustering 2-pass
@@ -53,6 +58,7 @@
 - `storyline-assembler.ts` — construction du graphe cards/edges
 
 **Wrappers / utilitaires** :
+
 - `candidate-ranking.ts` — scoring simple, pas de logique complexe
 - `recency-bias-detector.ts` — 20 lignes de heuristique date
 - `historical-searcher.ts` — wrapper autour de Perplexity
@@ -90,6 +96,7 @@ AnchorContext
 ### 1.1 — Causal analysis monolithique et linéaire
 
 **Problème central** : `analyzeStorylineFromClusters()` fait UN SEUL appel LLM qui doit simultanément :
+
 - classifier 25 clusters
 - construire une chaîne linéaire (trunk)
 - identifier les corollaires
@@ -98,11 +105,13 @@ AnchorContext
 - rédiger un narratif
 
 C'est trop pour un seul prompt. Le LLM prend des raccourcis :
+
 - Il assigne `causal` à tout ce qui est `before` temporellement
 - Il ne produit pas toujours les outcomes
 - Les corollaires sont sous-détectés
 
 **Le modèle linéaire (A→B→C→Anchor)** est structurellement incapable de représenter :
+
 - Deux causes indépendantes qui convergent vers un effet
 - Un corollaire attaché à un événement non-trunk
 - Un contexte historique profond qui n'est pas une cause
@@ -114,6 +123,7 @@ Le service existe, il est testé (10 tests passent), il a 7 dimensions de scorin
 ### 1.3 — Outcome generation conditionnelle
 
 L'outcome generation est un `if (outcomeCards.length < 2)`. Trois problèmes :
+
 1. Elle dépend du succès de la Phase 4 (qui demande déjà les outcomes)
 2. Si Phase 4 produit 2 outcomes médiocres, Phase 5 ne se déclenche pas
 3. Le `generateOutcomes()` est un fallback, pas une phase structurante
@@ -132,6 +142,7 @@ L'outcome generation est un `if (outcomeCards.length < 2)`. Trois problèmes :
 ### 1.6 — Couplage faible mais types pollués
 
 `lib/graph/types.ts` est un fichier fourre-tout (468 lignes) qui mélange :
+
 - Types du graph explorer legacy
 - Types du storyline engine
 - Types du counterfactual check
@@ -145,30 +156,32 @@ Ce n'est pas un blocage mais c'est un frein à la maintenabilité.
 
 ### Classification des modules
 
-| Module | Décision | Justification |
-|---|---|---|
-| `hybrid-retrieval.ts` — `retrieveInternalCandidates()` | **KEEP WITH REFACTOR** | La logique est correcte mais les fenêtres externes doivent être parallélisées |
-| `hybrid-retrieval.ts` — `retrieveExternalCandidates()` | **REWRITE** | Séquentiel → parallèle. Restructurer les fenêtres temporelles |
-| `candidate-ranking.ts` | **KEEP WITH REFACTOR** | Ajouter score minimum + meilleure pondération |
-| `article-extractor.ts` | **KEEP** | Le batch processing fonctionne bien |
-| `event-clusterer.ts` | **KEEP WITH REFACTOR** | Remplacer la variable globale mutable, ajouter re-clustering post-historique |
-| `recency-bias-detector.ts` | **KEEP WITH REFACTOR** | Garder l'heuristique, enrichir avec span-by-category |
-| `historical-searcher.ts` | **REWRITE** | Paralléliser, ajouter fenêtres progressives, meilleur merge |
-| `storyline-analysis.ts` — `analyzeStorylineFromClusters()` | **REWRITE** | Éclater le prompt monolithique en 3 appels spécialisés |
-| `storyline-analysis.ts` — `analyzeStoryline()` (V1) | **DELETE** | Legacy, plus utilisé |
-| `counterfactual-check.ts` | **EXTRACT AND REUSE** | Brancher dans le pipeline entre relation detection et assembly |
-| `outcome-generator.ts` | **REWRITE** | Phase obligatoire, pas un fallback |
-| `storyline-assembler.ts` — `assembleStorylineFromClusters()` | **KEEP WITH REFACTOR** | Adapter pour le modèle graphe (pas chaîne) |
-| `storyline-assembler.ts` — `assembleStoryline()` (V1) | **DELETE** | Legacy |
-| `builder.ts` — `buildStoryline()` | **REWRITE** | Nouvel orchestrateur avec phases granulaires |
-| `builder.ts` — `buildStorylineV1()` | **DELETE** | Legacy |
-| `builder.ts` — `resolveAnchor()` | **KEEP** | Fonctionne correctement |
-| `lib/graph/types.ts` — types storyline | **KEEP WITH REFACTOR** | Restructurer, ajouter `EventRelation`, séparer les concerns |
-| `lib/graph/types.ts` — types counterfactual | **KEEP** | Déjà bien structurés |
-| `lib/graph/types.ts` — types graph explorer legacy | **KEEP** | Utilisés par le frontend, ne pas toucher |
-| `lib/storyline/types/event-extraction.ts` | **KEEP** | Stable |
-| `lib/storyline/types/event-cluster.ts` | **KEEP WITH REFACTOR** | Ajouter champ `relations` |
-| Frontend (`GraphExplorerClient`, `GraphCanvas`, `IntelNode`, etc.) | **KEEP WITH REFACTOR** | Adapter la transformation pour le nouveau modèle edge |
+
+| Module                                                             | Décision               | Justification                                                                 |
+| ------------------------------------------------------------------ | ---------------------- | ----------------------------------------------------------------------------- |
+| `hybrid-retrieval.ts` — `retrieveInternalCandidates()`             | **KEEP WITH REFACTOR** | La logique est correcte mais les fenêtres externes doivent être parallélisées |
+| `hybrid-retrieval.ts` — `retrieveExternalCandidates()`             | **REWRITE**            | Séquentiel → parallèle. Restructurer les fenêtres temporelles                 |
+| `candidate-ranking.ts`                                             | **KEEP WITH REFACTOR** | Ajouter score minimum + meilleure pondération                                 |
+| `article-extractor.ts`                                             | **KEEP**               | Le batch processing fonctionne bien                                           |
+| `event-clusterer.ts`                                               | **KEEP WITH REFACTOR** | Remplacer la variable globale mutable, ajouter re-clustering post-historique  |
+| `recency-bias-detector.ts`                                         | **KEEP WITH REFACTOR** | Garder l'heuristique, enrichir avec span-by-category                          |
+| `historical-searcher.ts`                                           | **REWRITE**            | Paralléliser, ajouter fenêtres progressives, meilleur merge                   |
+| `storyline-analysis.ts` — `analyzeStorylineFromClusters()`         | **REWRITE**            | Éclater le prompt monolithique en 3 appels spécialisés                        |
+| `storyline-analysis.ts` — `analyzeStoryline()` (V1)                | **DELETE**             | Legacy, plus utilisé                                                          |
+| `counterfactual-check.ts`                                          | **EXTRACT AND REUSE**  | Brancher dans le pipeline entre relation detection et assembly                |
+| `outcome-generator.ts`                                             | **REWRITE**            | Phase obligatoire, pas un fallback                                            |
+| `storyline-assembler.ts` — `assembleStorylineFromClusters()`       | **KEEP WITH REFACTOR** | Adapter pour le modèle graphe (pas chaîne)                                    |
+| `storyline-assembler.ts` — `assembleStoryline()` (V1)              | **DELETE**             | Legacy                                                                        |
+| `builder.ts` — `buildStoryline()`                                  | **REWRITE**            | Nouvel orchestrateur avec phases granulaires                                  |
+| `builder.ts` — `buildStorylineV1()`                                | **DELETE**             | Legacy                                                                        |
+| `builder.ts` — `resolveAnchor()`                                   | **KEEP**               | Fonctionne correctement                                                       |
+| `lib/graph/types.ts` — types storyline                             | **KEEP WITH REFACTOR** | Restructurer, ajouter `EventRelation`, séparer les concerns                   |
+| `lib/graph/types.ts` — types counterfactual                        | **KEEP**               | Déjà bien structurés                                                          |
+| `lib/graph/types.ts` — types graph explorer legacy                 | **KEEP**               | Utilisés par le frontend, ne pas toucher                                      |
+| `lib/storyline/types/event-extraction.ts`                          | **KEEP**               | Stable                                                                        |
+| `lib/storyline/types/event-cluster.ts`                             | **KEEP WITH REFACTOR** | Ajouter champ `relations`                                                     |
+| Frontend (`GraphExplorerClient`, `GraphCanvas`, `IntelNode`, etc.) | **KEEP WITH REFACTOR** | Adapter la transformation pour le nouveau modèle edge                         |
+
 
 ### Suppressions explicites planifiées
 
@@ -247,6 +260,7 @@ Entrée utilisateur (keyword / articleId)
 ### Détail par phase
 
 #### Phase 1 — Anchor Resolution
+
 - **Responsabilité** : Transformer l'entrée utilisateur en contexte structuré
 - **Input** : `{ query?: string, articleId?: string }`
 - **Output** : `AnchorContext`
@@ -254,6 +268,7 @@ Entrée utilisateur (keyword / articleId)
 - **Ce qui change** : Rien
 
 #### Phase 2 — Hybrid Retrieval
+
 - **Responsabilité** : Collecter les candidats bruts depuis toutes les sources
 - **Input** : `AnchorContext`
 - **Output** : `CandidateItem[]`
@@ -263,6 +278,7 @@ Entrée utilisateur (keyword / articleId)
   - Gain latence estimé : ~60% (5 appels en parallèle au lieu de séquentiels)
 
 #### Phase 3 — Candidate Ranking
+
 - **Responsabilité** : Déduplication et scoring
 - **Input** : `CandidateItem[]`
 - **Output** : `CandidateItem[]` (scored, pruned)
@@ -270,12 +286,14 @@ Entrée utilisateur (keyword / articleId)
 - **Ce qui change** : Ajout d'un score minimum (candidats avec score < 5 éliminés)
 
 #### Phase 4 — Event Extraction
+
 - **Responsabilité** : Extraire les événements structurés des candidats
 - **Input** : `CandidateItem[]`, `anchorTitle`
 - **Output** : `ExtractedEvent[]`
 - **Module** : `article-extractor.ts` — INCHANGÉ
 
 #### Phase 5 — Event Clustering
+
 - **Responsabilité** : Grouper les événements dédupliqués
 - **Input** : `ExtractedEvent[]`
 - **Output** : `EventCluster[]`
@@ -283,6 +301,7 @@ Entrée utilisateur (keyword / articleId)
 - **Ce qui change** : Remplacer `let clusterSeq = 0` par UUID, ajouter export `reclusterMerged()`
 
 #### Phase 6 — Historical Expansion
+
 - **Responsabilité** : Combler le déficit temporel si recency bias détecté
 - **Input** : `EventCluster[]`, `AnchorContext`
 - **Output** : `EventCluster[]` (enrichis)
@@ -294,6 +313,7 @@ Entrée utilisateur (keyword / articleId)
   - **Nouveau** : reclustering cross (historiques vs récents) pour éviter les doublons
 
 #### Phase 7 — Relation Graph Building (NOUVEAU — remplace le prompt monolithique)
+
 - **Responsabilité** : Construire le graphe de relations entre les clusters
 - **Input** : `EventCluster[]`, `AnchorContext`
 - **Output** : `EventRelation[]`
@@ -302,6 +322,7 @@ Entrée utilisateur (keyword / articleId)
 Se décompose en 3 sous-phases :
 
 ##### 7a. Temporal Linking (déterministe, SANS LLM)
+
 ```
 Pour chaque paire (clusterA, clusterB) où dateA < dateB :
   - diffDays = dateB - dateA
@@ -310,30 +331,34 @@ Pour chaque paire (clusterA, clusterB) où dateA < dateB :
   - if diffDays <= 365 → long_term_precursor
   - if concurrent → concurrent_with
 ```
+
 - **Coût LLM** : 0
 - **Output** : `EventRelation[]` avec `category: 'temporal'`
 
 ##### 7b. Causal Candidate Detection (LLM)
+
 Un appel LLM spécialisé pour les seuls clusters qui sont en relation temporelle `before` ou `immediate_precursor` avec un autre cluster.
 
 Le prompt :
+
 - Reçoit les paires candidates
 - Pour chaque paire, doit identifier si c'est `causes`, `contributes_to`, `enables`, `triggers`, `prevents`, ou `not_causal`
 - Doit fournir une evidence causale
 - Doit identifier le mécanisme
-
 - **Output** : `EventRelation[]` avec `category: 'causal'` et `mechanismEvidence`
 
 ##### 7c. Corollary / Response / Spillover Detection (LLM)
+
 Un appel LLM séparé pour les clusters qui sont en relation temporelle `after` ou `concurrent_with`.
 
 Le prompt :
+
 - Reçoit les paires candidates
 - Pour chaque paire, doit identifier si c'est `response_to`, `spillover_from`, `retaliation_to`, `market_reaction_to`, `policy_reaction_to`, `parallel_development`, ou `unrelated`
-
 - **Output** : `EventRelation[]` avec `category: 'corollary'`
 
 #### Phase 8 — Counterfactual Causal Scoring
+
 - **Responsabilité** : Vérifier et corriger les labels causaux du LLM
 - **Input** : `EventRelation[]` (les causals de 7b), `AnchorContext`, `EventCluster[]`
 - **Output** : `EventRelation[]` (avec labels potentiellement downgraded)
@@ -343,6 +368,7 @@ Le prompt :
   - `mapCounterfactualToRelation()` pour convertir le label final en relation du graphe
 
 #### Phase 9 — Mandatory Outcome Generation
+
 - **Responsabilité** : Produire 2-3 outcomes systématiquement
 - **Input** : `AnchorContext`, `EventCluster[]`, `EventRelation[]`
 - **Output** : `OutcomePrediction[]`
@@ -353,6 +379,7 @@ Le prompt :
   - Structure de sortie enrichie (confidence, status)
 
 #### Phase 10 — Storyline Assembly
+
 - **Responsabilité** : Construire le `StorylineResult` final
 - **Input** : `AnchorContext`, `EventCluster[]`, `EventRelation[]`, `OutcomePrediction[]`
 - **Output** : `StorylineResult`
@@ -363,6 +390,7 @@ Le prompt :
   - Edges multi-catégorie (pas forcé en chaîne)
 
 #### Phase 11 — Narrative Generation (NOUVEAU — extrait de analysis)
+
 - **Responsabilité** : Générer le narratif textuel
 - **Input** : `StorylineResult`
 - **Output** : `string` (narrative en français)
@@ -370,6 +398,7 @@ Le prompt :
 - **Ce qui change** : Séparé de l'analyse causale. Dernier appel LLM, purement rédactionnel.
 
 #### Phase 12 — SSE Projection
+
 - **Responsabilité** : Streamer les résultats progressifs
 - **Module** : `route.ts` — INCHANGÉ côté API, adaptation des événements SSE
 
@@ -418,10 +447,11 @@ interface EventRelation {
 ```
 
 **Changements clés** :
+
 1. **Séparation temporel / sémantique** : Chaque relation a TOUJOURS un `temporalRelation` (déterministe) ET un `semanticCategory` (LLM + CF check)
 2. **Pas de `chainPredecessorRef`** : Les relations sont des arêtes d'un graphe, pas les maillons d'une chaîne
-3. **`wasDowngraded` + `originalLlmLabel`** : Traçabilité du counterfactual check
-4. **`mechanismEvidence`** : Obligatoire pour toute relation causale
+3. `**wasDowngraded` + `originalLlmLabel**` : Traçabilité du counterfactual check
+4. `**mechanismEvidence**` : Obligatoire pour toute relation causale
 
 ### Comment les relations vivent dans le pipeline
 
@@ -467,6 +497,7 @@ detectRecencyBias(clusters)
 Ce n'est PAS le rôle de la phase historique. C'est le rôle de la Phase 7b (causal detection) + Phase 8 (counterfactual check).
 
 La phase historique se contente de :
+
 1. Détecter le manque de profondeur temporelle
 2. Chercher des événements historiquement pertinents
 3. Les injecter dans le pool de clusters
@@ -518,6 +549,7 @@ Pour chaque `EventRelation` avec `semanticCategory === 'causal'` :
 ### Outputs
 
 `CounterfactualCheckResult` par relation, contenant :
+
 - `finalLabel`: `'triggers'` | `'likely_cause'` | `'contributes_to'` | `'background_context'` | `'preceded_by'` | etc.
 - `wasDowngraded`: boolean
 - `confidence`: number
@@ -843,26 +875,29 @@ export interface StorylineGraph {
 
 ### Ordre des refactors
 
-| Étape | Fichier(s) | Changement | Risque | Checkpoint |
-|-------|-----------|-----------|--------|-----------|
-| **M1** | `lib/storyline/types/event-relation.ts` | Créer `EventRelation`, `OutcomePrediction` | Nul | Types compilent |
-| **M2** | `hybrid-retrieval.ts` | Paralléliser `retrieveExternalCandidates` | Faible | Même résultats, ~60% plus rapide |
-| **M3** | `event-clusterer.ts` | Remplacer `clusterSeq` par crypto UUID, ajouter `reclusterMerged()` | Faible | Tests de clustering passent |
-| **M4** | `historical-searcher.ts` | Paralléliser, 3 fenêtres, meilleur merge | Faible | Résultats historiques plus riches |
-| **M5** | `relation-detector.ts` | NOUVEAU service : temporal + causal + corollary detection | Moyen | Tests de classification |
-| **M6** | `builder.ts` | Brancher `relation-detector` + `counterfactual-check` dans le pipeline | Élevé | Pipeline complet fonctionne |
-| **M7** | `outcome-generator.ts` | Rendre obligatoire, enrichir inputs/outputs | Moyen | Outcomes systématiques |
-| **M8** | `storyline-assembler.ts` | Adapter pour `EventRelation[]` au lieu de `StorylineAnalysis` | Élevé | Graphe final correct |
-| **M9** | `narrative-generator.ts` | Extraire le narratif dans un service dédié | Faible | Narratif généré |
-| **M10** | `builder.ts` | Supprimer V1, nettoyer | Faible | Code V1 absent |
-| **M11** | `storyline-analysis.ts` | Supprimer `analyzeStoryline()` V1, garder temporairement `analyzeStorylineFromClusters()` comme fallback | Moyen | Fallback fonctionne |
-| **M12** | `storyline-analysis.ts` | Supprimer complètement quand M5-M8 sont stables | Faible | Plus de legacy |
-| **M13** | `lib/graph/types.ts` | Supprimer `StorylineAnalysis`, `StorylineAnalysisEntry`, `StorylineOutcome` | Faible | Compile |
-| **M14** | Frontend | Adapter `storylineToGraphResult()` pour les metadata enrichies | Faible | UI fonctionne |
+
+| Étape   | Fichier(s)                              | Changement                                                                                               | Risque | Checkpoint                        |
+| ------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ | --------------------------------- |
+| **M1**  | `lib/storyline/types/event-relation.ts` | Créer `EventRelation`, `OutcomePrediction`                                                               | Nul    | Types compilent                   |
+| **M2**  | `hybrid-retrieval.ts`                   | Paralléliser `retrieveExternalCandidates`                                                                | Faible | Même résultats, ~60% plus rapide  |
+| **M3**  | `event-clusterer.ts`                    | Remplacer `clusterSeq` par crypto UUID, ajouter `reclusterMerged()`                                      | Faible | Tests de clustering passent       |
+| **M4**  | `historical-searcher.ts`                | Paralléliser, 3 fenêtres, meilleur merge                                                                 | Faible | Résultats historiques plus riches |
+| **M5**  | `relation-detector.ts`                  | NOUVEAU service : temporal + causal + corollary detection                                                | Moyen  | Tests de classification           |
+| **M6**  | `builder.ts`                            | Brancher `relation-detector` + `counterfactual-check` dans le pipeline                                   | Élevé  | Pipeline complet fonctionne       |
+| **M7**  | `outcome-generator.ts`                  | Rendre obligatoire, enrichir inputs/outputs                                                              | Moyen  | Outcomes systématiques            |
+| **M8**  | `storyline-assembler.ts`                | Adapter pour `EventRelation[]` au lieu de `StorylineAnalysis`                                            | Élevé  | Graphe final correct              |
+| **M9**  | `narrative-generator.ts`                | Extraire le narratif dans un service dédié                                                               | Faible | Narratif généré                   |
+| **M10** | `builder.ts`                            | Supprimer V1, nettoyer                                                                                   | Faible | Code V1 absent                    |
+| **M11** | `storyline-analysis.ts`                 | Supprimer `analyzeStoryline()` V1, garder temporairement `analyzeStorylineFromClusters()` comme fallback | Moyen  | Fallback fonctionne               |
+| **M12** | `storyline-analysis.ts`                 | Supprimer complètement quand M5-M8 sont stables                                                          | Faible | Plus de legacy                    |
+| **M13** | `lib/graph/types.ts`                    | Supprimer `StorylineAnalysis`, `StorylineAnalysisEntry`, `StorylineOutcome`                              | Faible | Compile                           |
+| **M14** | Frontend                                | Adapter `storylineToGraphResult()` pour les metadata enrichies                                           | Faible | UI fonctionne                     |
+
 
 ### Compatibilité temporaire
 
 Pendant M5-M8, le builder aura deux chemins :
+
 ```typescript
 try {
   // Nouveau pipeline (relations → CF → assembly)
@@ -885,18 +920,20 @@ Ce fallback sera supprimé à M12.
 
 ### Stratégie
 
-| Catégorie | Fichier test | Ce qui est testé |
-|-----------|-------------|-----------------|
-| **Temporal linking** | `relation-detector.test.ts` | Calcul déterministe des relations temporelles |
-| **Causal classification** | `relation-detector.test.ts` | Labels causaux du LLM (mock) |
-| **CF downgrade** | `counterfactual-check.test.ts` | **EXISTE DÉJÀ** — 10 tests passent |
-| **CF intégration** | `counterfactual-integration.test.ts` | CF branché dans le pipeline avec vrais clusters |
-| **Historical expansion** | `historical-searcher.test.ts` | Détection bias + merge + re-clustering |
-| **Outcome generation** | `outcome-generator.test.ts` | Phase obligatoire, structure de sortie |
-| **Assembly** | `storyline-assembler.test.ts` | Trunk detection (DAG), edges multi-catégorie, outcome cards |
-| **Relation model** | `event-relation.test.ts` | Validation des types, séparation temporel/causal |
-| **SSE shape** | `sse-projection.test.ts` | Format des events SSE, compatibilité frontend |
-| **E2E pipeline** | `builder.integration.test.ts` | Pipeline complet avec mocks LLM |
+
+| Catégorie                 | Fichier test                         | Ce qui est testé                                            |
+| ------------------------- | ------------------------------------ | ----------------------------------------------------------- |
+| **Temporal linking**      | `relation-detector.test.ts`          | Calcul déterministe des relations temporelles               |
+| **Causal classification** | `relation-detector.test.ts`          | Labels causaux du LLM (mock)                                |
+| **CF downgrade**          | `counterfactual-check.test.ts`       | **EXISTE DÉJÀ** — 10 tests passent                          |
+| **CF intégration**        | `counterfactual-integration.test.ts` | CF branché dans le pipeline avec vrais clusters             |
+| **Historical expansion**  | `historical-searcher.test.ts`        | Détection bias + merge + re-clustering                      |
+| **Outcome generation**    | `outcome-generator.test.ts`          | Phase obligatoire, structure de sortie                      |
+| **Assembly**              | `storyline-assembler.test.ts`        | Trunk detection (DAG), edges multi-catégorie, outcome cards |
+| **Relation model**        | `event-relation.test.ts`             | Validation des types, séparation temporel/causal            |
+| **SSE shape**             | `sse-projection.test.ts`             | Format des events SSE, compatibilité frontend               |
+| **E2E pipeline**          | `builder.integration.test.ts`        | Pipeline complet avec mocks LLM                             |
+
 
 ### Tests prioritaires (existants à conserver)
 
@@ -1234,64 +1271,71 @@ INPUT: keyword / articleId
 
 ### Liste des services finaux
 
-| Service | Status |
-|---------|--------|
-| `builder.ts` | REWRITE |
-| `hybrid-retrieval.ts` | REFACTOR |
-| `candidate-ranking.ts` | REFACTOR minor |
-| `article-extractor.ts` | KEEP |
-| `event-clusterer.ts` | REFACTOR minor |
-| `recency-bias-detector.ts` | REFACTOR minor |
-| `historical-searcher.ts` | REWRITE |
-| `relation-detector.ts` | **NEW** |
-| `counterfactual-check.ts` | KEEP (brancher) |
-| `outcome-generator.ts` | REWRITE |
-| `storyline-assembler.ts` | REFACTOR |
-| `narrative-generator.ts` | **NEW** |
-| `storyline-analysis.ts` | **DELETE** (après migration) |
+
+| Service                    | Status                       |
+| -------------------------- | ---------------------------- |
+| `builder.ts`               | REWRITE                      |
+| `hybrid-retrieval.ts`      | REFACTOR                     |
+| `candidate-ranking.ts`     | REFACTOR minor               |
+| `article-extractor.ts`     | KEEP                         |
+| `event-clusterer.ts`       | REFACTOR minor               |
+| `recency-bias-detector.ts` | REFACTOR minor               |
+| `historical-searcher.ts`   | REWRITE                      |
+| `relation-detector.ts`     | **NEW**                      |
+| `counterfactual-check.ts`  | KEEP (brancher)              |
+| `outcome-generator.ts`     | REWRITE                      |
+| `storyline-assembler.ts`   | REFACTOR                     |
+| `narrative-generator.ts`   | **NEW**                      |
+| `storyline-analysis.ts`    | **DELETE** (après migration) |
+
 
 ### Liste des types finaux
 
-| Type | Status |
-|------|--------|
-| `ExtractedEvent` | KEEP |
-| `EventCluster` | KEEP |
-| `EventRelation` | **NEW** |
-| `OutcomePrediction` | **NEW** |
-| `StorylineNode` | **NEW** |
-| `StorylineGraph` | **NEW** |
-| `AnchorContext` | KEEP |
-| `CandidateItem` | KEEP |
-| `StorylineCard` | KEEP |
-| `StorylineEdge` | KEEP |
-| `StorylineResult` | KEEP |
-| `StorylineSSEEvent` | KEEP |
-| `CounterfactualCheckInput/Result` | KEEP |
-| `StorylineAnalysis` | **DELETE** (après migration) |
-| `StorylineAnalysisEntry` | **DELETE** (après migration) |
-| `StorylineOutcome` | **DELETE** (après migration) |
+
+| Type                              | Status                       |
+| --------------------------------- | ---------------------------- |
+| `ExtractedEvent`                  | KEEP                         |
+| `EventCluster`                    | KEEP                         |
+| `EventRelation`                   | **NEW**                      |
+| `OutcomePrediction`               | **NEW**                      |
+| `StorylineNode`                   | **NEW**                      |
+| `StorylineGraph`                  | **NEW**                      |
+| `AnchorContext`                   | KEEP                         |
+| `CandidateItem`                   | KEEP                         |
+| `StorylineCard`                   | KEEP                         |
+| `StorylineEdge`                   | KEEP                         |
+| `StorylineResult`                 | KEEP                         |
+| `StorylineSSEEvent`               | KEEP                         |
+| `CounterfactualCheckInput/Result` | KEEP                         |
+| `StorylineAnalysis`               | **DELETE** (après migration) |
+| `StorylineAnalysisEntry`          | **DELETE** (après migration) |
+| `StorylineOutcome`                | **DELETE** (après migration) |
+
 
 ### 20 premières tâches concrètes
 
-| # | Tâche | Fichier(s) | Dépend de |
-|---|-------|-----------|-----------|
-| 1 | Créer `EventRelation` type | `lib/storyline/types/event-relation.ts` | — |
-| 2 | Créer `OutcomePrediction` type | `lib/storyline/types/outcome-prediction.ts` | — |
-| 3 | Mettre à jour `lib/storyline/types/index.ts` avec les nouveaux exports | `types/index.ts` | 1, 2 |
-| 4 | Paralléliser `retrieveExternalCandidates()` | `hybrid-retrieval.ts` | — |
-| 5 | Remplacer `clusterSeq` mutable par `crypto.randomUUID()` | `event-clusterer.ts` | — |
-| 6 | Ajouter `reclusterMerged()` à `event-clusterer.ts` | `event-clusterer.ts` | 5 |
-| 7 | Paralléliser les 2 requêtes dans `historical-searcher.ts` | `historical-searcher.ts` | — |
-| 8 | Ajouter 3e fenêtre historique "deep" dans `historical-searcher.ts` | `historical-searcher.ts` | 7 |
-| 9 | Créer `relation-detector.ts` — `buildTemporalRelations()` | `relation-detector.ts` | 1 |
-| 10 | Écrire tests pour `buildTemporalRelations()` | `__tests__/relation-detector.test.ts` | 9 |
-| 11 | Créer `relation-detector.ts` — `detectCausalRelations()` | `relation-detector.ts` | 9 |
-| 12 | Créer `relation-detector.ts` — `detectCorollaryRelations()` | `relation-detector.ts` | 9 |
-| 13 | Créer `applyCounterfactualChecks()` wrapper dans `relation-detector.ts` | `relation-detector.ts` | 11 |
-| 14 | Écrire tests d'intégration CF dans le pipeline | `__tests__/counterfactual-integration.test.ts` | 13 |
-| 15 | Réécrire `outcome-generator.ts` — phase obligatoire | `outcome-generator.ts` | 1, 2 |
-| 16 | Écrire tests pour outcome generation | `__tests__/outcome-generator.test.ts` | 15 |
-| 17 | Refactorer `assembleStorylineGraph()` pour accepter `EventRelation[]` | `storyline-assembler.ts` | 1, 9, 15 |
-| 18 | Créer `narrative-generator.ts` | `narrative-generator.ts` | — |
-| 19 | Réécrire `buildStoryline()` dans `builder.ts` avec le nouveau pipeline | `builder.ts` | 4-18 |
-| 20 | Supprimer code V1 legacy (buildStorylineV1, analyzeStoryline, assembleStoryline) | `builder.ts`, `storyline-analysis.ts`, `storyline-assembler.ts` | 19 |
+
+| #   | Tâche                                                                            | Fichier(s)                                                      | Dépend de |
+| --- | -------------------------------------------------------------------------------- | --------------------------------------------------------------- | --------- |
+| 1   | Créer `EventRelation` type                                                       | `lib/storyline/types/event-relation.ts`                         | —         |
+| 2   | Créer `OutcomePrediction` type                                                   | `lib/storyline/types/outcome-prediction.ts`                     | —         |
+| 3   | Mettre à jour `lib/storyline/types/index.ts` avec les nouveaux exports           | `types/index.ts`                                                | 1, 2      |
+| 4   | Paralléliser `retrieveExternalCandidates()`                                      | `hybrid-retrieval.ts`                                           | —         |
+| 5   | Remplacer `clusterSeq` mutable par `crypto.randomUUID()`                         | `event-clusterer.ts`                                            | —         |
+| 6   | Ajouter `reclusterMerged()` à `event-clusterer.ts`                               | `event-clusterer.ts`                                            | 5         |
+| 7   | Paralléliser les 2 requêtes dans `historical-searcher.ts`                        | `historical-searcher.ts`                                        | —         |
+| 8   | Ajouter 3e fenêtre historique "deep" dans `historical-searcher.ts`               | `historical-searcher.ts`                                        | 7         |
+| 9   | Créer `relation-detector.ts` — `buildTemporalRelations()`                        | `relation-detector.ts`                                          | 1         |
+| 10  | Écrire tests pour `buildTemporalRelations()`                                     | `__tests__/relation-detector.test.ts`                           | 9         |
+| 11  | Créer `relation-detector.ts` — `detectCausalRelations()`                         | `relation-detector.ts`                                          | 9         |
+| 12  | Créer `relation-detector.ts` — `detectCorollaryRelations()`                      | `relation-detector.ts`                                          | 9         |
+| 13  | Créer `applyCounterfactualChecks()` wrapper dans `relation-detector.ts`          | `relation-detector.ts`                                          | 11        |
+| 14  | Écrire tests d'intégration CF dans le pipeline                                   | `__tests__/counterfactual-integration.test.ts`                  | 13        |
+| 15  | Réécrire `outcome-generator.ts` — phase obligatoire                              | `outcome-generator.ts`                                          | 1, 2      |
+| 16  | Écrire tests pour outcome generation                                             | `__tests__/outcome-generator.test.ts`                           | 15        |
+| 17  | Refactorer `assembleStorylineGraph()` pour accepter `EventRelation[]`            | `storyline-assembler.ts`                                        | 1, 9, 15  |
+| 18  | Créer `narrative-generator.ts`                                                   | `narrative-generator.ts`                                        | —         |
+| 19  | Réécrire `buildStoryline()` dans `builder.ts` avec le nouveau pipeline           | `builder.ts`                                                    | 4-18      |
+| 20  | Supprimer code V1 legacy (buildStorylineV1, analyzeStoryline, assembleStoryline) | `builder.ts`, `storyline-analysis.ts`, `storyline-assembler.ts` | 19        |
+
+

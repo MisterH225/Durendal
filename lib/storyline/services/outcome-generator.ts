@@ -1,82 +1,110 @@
 import { callGeminiWithSearch, parseGeminiJson } from '@/lib/ai/gemini'
-import type { StorylineOutcome, StorylineCard } from '@/lib/graph/types'
+import type { EventCluster } from '../types/event-cluster'
+import type { EventRelation } from '../types/event-relation'
+import type { OutcomePrediction, ConfidenceLevel } from '../types/outcome-prediction'
 import type { AnchorContext } from './hybrid-retrieval'
 
-interface OutcomeGeneratorInput {
+const TARGET_OUTCOMES = 3
+const MIN_OUTCOMES = 2
+
+export interface OutcomeGenerationContext {
   anchor: AnchorContext
-  causalDrivers: StorylineCard[]
-  corollaryEvents: StorylineCard[]
-  recentSignals: StorylineCard[]
-  narrative: string
+  clusters: EventCluster[]
+  relations: EventRelation[]
+}
+
+interface RawOutcome {
+  title: string
+  probability: number
+  reasoning: string
+  timeHorizon: string
+  supportingEvidence: string[]
+  contradictingEvidence: string[]
+  drivenByClusterIds?: string[]
 }
 
 interface OutcomeGeneratorResult {
-  outcomes: StorylineOutcome[]
+  outcomes: RawOutcome[]
 }
 
-const MIN_OUTCOMES = 2
-const TARGET_OUTCOMES = 3
-
 export async function generateOutcomes(
-  input: OutcomeGeneratorInput,
-): Promise<StorylineOutcome[]> {
-  const causalSummary = input.causalDrivers
-    .slice(0, 5)
-    .map(c => `- ${c.title} (${c.date ?? '?'})`)
+  context: OutcomeGenerationContext,
+): Promise<OutcomePrediction[]> {
+  const { anchor, clusters, relations } = context
+
+  const causalRelations = relations.filter(r => r.semanticCategory === 'causal')
+  const corollaryRelations = relations.filter(r => r.semanticCategory === 'corollary')
+
+  const clusterMap = new Map(clusters.map(c => [c.clusterId, c]))
+
+  const causalSummary = causalRelations
+    .slice(0, 8)
+    .map(r => {
+      const cluster = clusterMap.get(r.sourceClusterId)
+      return cluster
+        ? `- [${r.sourceClusterId}] "${cluster.canonicalTitle}" (${cluster.eventDate ?? '?'}) — ${r.semanticSubtype}: ${r.mechanismEvidence.slice(0, 100)}`
+        : null
+    })
+    .filter(Boolean)
     .join('\n')
 
-  const corollarySummary = input.corollaryEvents
+  const corollarySummary = corollaryRelations
     .slice(0, 5)
-    .map(c => `- ${c.title} (${c.date ?? '?'})`)
+    .map(r => {
+      const cluster = clusterMap.get(r.targetClusterId)
+      return cluster
+        ? `- "${cluster.canonicalTitle}" (${r.semanticSubtype})`
+        : null
+    })
+    .filter(Boolean)
     .join('\n')
 
-  const recentSummary = input.recentSignals
-    .slice(0, 5)
-    .map(c => `- ${c.title} (${c.date ?? '?'})`)
-    .join('\n')
+  const clusterIds = clusters.map(c => c.clusterId).join(', ')
 
   const systemInstruction = [
     'You are a senior geopolitical and economic forecasting analyst.',
-    'You generate realistic, specific outcome scenarios based on available evidence.',
-    'Your probabilities are calibrated: you assign lower probabilities when evidence is weak.',
+    'You generate realistic, specific, mutually distinct outcome scenarios based on available evidence.',
+    'Your probabilities are calibrated: lower when evidence is weak, higher when strong.',
     'You always consider contradicting evidence.',
-    'You avoid generic or vague outcomes.',
+    'You avoid generic or vague outcomes like "tensions continue" or "situation evolves".',
   ].join(' ')
 
   const prompt = [
     `## Current situation`,
-    `Anchor: "${input.anchor.title}"`,
-    input.anchor.summary ? `Summary: ${input.anchor.summary.slice(0, 400)}` : '',
-    input.anchor.date ? `Date: ${input.anchor.date}` : '',
+    `Anchor: "${anchor.title}"`,
+    anchor.summary ? `Summary: ${anchor.summary.slice(0, 400)}` : '',
+    anchor.date ? `Date: ${anchor.date}` : '',
     ``,
-    causalSummary ? `## Causal drivers\n${causalSummary}` : '',
-    corollarySummary ? `## Corollary / parallel events\n${corollarySummary}` : '',
-    recentSummary ? `## Recent signals\n${recentSummary}` : '',
-    input.narrative ? `## Narrative context\n${input.narrative.slice(0, 600)}` : '',
+    causalSummary ? `## Causal drivers (verified)\n${causalSummary}` : '',
+    corollarySummary ? `## Corollary / side effects\n${corollarySummary}` : '',
     ``,
     `## Your task`,
-    `Generate exactly ${TARGET_OUTCOMES} plausible, specific outcome scenarios for the NEAR FUTURE of this situation.`,
+    `Generate exactly ${TARGET_OUTCOMES} plausible, SPECIFIC outcome scenarios for the NEAR FUTURE of this situation.`,
     ``,
-    `Requirements:`,
-    `- Each outcome must be SPECIFIC, not generic (e.g. "Iran accepts nuclear inspections under IAEA framework" not "tensions decrease")`,
-    `- Probabilities across all outcomes should sum to 0.7-1.0`,
-    `- If evidence is weak, assign lower probabilities and note uncertainty in reasoning`,
-    `- Each outcome must cite specific supporting AND contradicting evidence`,
-    `- Include at least one outcome that represents a significant escalation or change`,
-    `- Include at least one outcome that represents stabilization or de-escalation`,
-    `- Avoid outcomes that are trivially obvious ("the situation continues")`,
+    `REQUIREMENTS:`,
+    `1. Each outcome must be SPECIFIC and ACTIONABLE, not generic.`,
+    `   BAD: "tensions increase" — GOOD: "Iran ferme le détroit d'Ormuz pendant 72h, Brent dépasse 120$/baril"`,
+    `2. Probabilities across all outcomes should sum to 0.7-1.0`,
+    `3. Each outcome must cite at least 1 specific supporting evidence from the causal drivers above`,
+    `4. Include at least one escalation scenario and one de-escalation/stabilization scenario`,
+    `5. Outcomes should be MUTUALLY DISTINCT — not variations of the same thing`,
+    `6. If you reference a causal driver cluster, include its clusterId in drivenByClusterIds`,
+    ``,
+    `## Available cluster IDs for reference`,
+    clusterIds,
     ``,
     `## Required JSON output`,
     `Return ONLY valid JSON, no markdown:`,
     `{`,
     `  "outcomes": [`,
     `    {`,
-    `      "title": "Specific outcome description",`,
+    `      "title": "Specific outcome description (max 100 chars)",`,
     `      "probability": 0.35,`,
-    `      "reasoning": "2-3 sentences explaining why this is plausible, citing specific evidence",`,
+    `      "reasoning": "2-3 sentences citing specific evidence",`,
     `      "timeHorizon": "weeks",`,
-    `      "supportingEvidence": ["specific fact 1", "specific event 2"],`,
-    `      "contradictingEvidence": ["specific counter-evidence 1"]`,
+    `      "supportingEvidence": ["specific fact from causal chain"],`,
+    `      "contradictingEvidence": ["counter-evidence"],`,
+    `      "drivenByClusterIds": ["cluster-id-1"]`,
     `    }`,
     `  ]`,
     `}`,
@@ -92,76 +120,130 @@ export async function generateOutcomes(
 
     const parsed = parseGeminiJson<OutcomeGeneratorResult>(text)
     if (!parsed?.outcomes || parsed.outcomes.length === 0) {
-      console.error('[outcome-generator] Failed to parse outcomes, using fallback')
-      return buildFallbackOutcomes(input)
+      console.warn('[outcome-generator] LLM returned no outcomes, using fallback')
+      return buildFallbackOutcomes(context)
     }
 
-    return sanitizeOutcomes(parsed.outcomes)
+    return sanitizeOutcomes(parsed.outcomes, clusters)
   } catch (err) {
     console.error('[outcome-generator] Gemini call failed:', err)
-    return buildFallbackOutcomes(input)
+    return buildFallbackOutcomes(context)
   }
 }
 
-function sanitizeOutcomes(raw: StorylineOutcome[]): StorylineOutcome[] {
-  const outcomes = raw
+function inferConfidence(outcome: RawOutcome): ConfidenceLevel {
+  if (
+    outcome.supportingEvidence.length >= 2 &&
+    outcome.reasoning.length > 80 &&
+    outcome.probability >= 0.15
+  ) {
+    return 'high'
+  }
+  if (outcome.supportingEvidence.length >= 1 && outcome.reasoning.length > 40) {
+    return 'medium'
+  }
+  return 'low'
+}
+
+function sanitizeOutcomes(
+  raw: RawOutcome[],
+  clusters: EventCluster[],
+): OutcomePrediction[] {
+  const clusterIds = new Set(clusters.map(c => c.clusterId))
+
+  const outcomes: OutcomePrediction[] = raw
     .filter(o => o.title && o.probability != null)
-    .map(o => ({
-      title: o.title,
+    .map((o, i) => ({
+      id: `outcome-${Date.now().toString(36)}-${i}`,
+      title: o.title.slice(0, 120),
       probability: Math.max(0.05, Math.min(0.95, o.probability)),
+      probabilitySource: 'ai_estimate' as const,
+      confidenceLevel: inferConfidence(o),
       reasoning: o.reasoning ?? '',
-      timeHorizon: o.timeHorizon ?? 'weeks',
+      timeHorizon: validateHorizon(o.timeHorizon),
       supportingEvidence: o.supportingEvidence ?? [],
       contradictingEvidence: o.contradictingEvidence ?? [],
-      probabilitySource: 'ai_estimate' as const,
+      status: 'open' as const,
+      drivenByClusterIds: (o.drivenByClusterIds ?? []).filter(id => clusterIds.has(id)),
+      raisedByRelationIds: [],
+      loweredByRelationIds: [],
     }))
 
-  if (outcomes.length < MIN_OUTCOMES) {
-    while (outcomes.length < MIN_OUTCOMES) {
-      outcomes.push({
-        title: `Scénario alternatif ${outcomes.length + 1}`,
-        probability: 0.15,
-        reasoning: 'Scénario généré par défaut en raison d\'un manque de données. Confiance faible.',
-        timeHorizon: 'weeks',
-        supportingEvidence: [],
-        contradictingEvidence: [],
-        probabilitySource: 'ai_estimate',
-      })
-    }
+  while (outcomes.length < MIN_OUTCOMES) {
+    outcomes.push({
+      id: `outcome-fallback-${outcomes.length}`,
+      title: `Scénario alternatif ${outcomes.length + 1}`,
+      probability: 0.15,
+      probabilitySource: 'ai_estimate',
+      confidenceLevel: 'low',
+      reasoning: 'Scénario généré par défaut en raison de données insuffisantes.',
+      timeHorizon: 'weeks',
+      supportingEvidence: [],
+      contradictingEvidence: [],
+      status: 'open',
+      drivenByClusterIds: [],
+      raisedByRelationIds: [],
+      loweredByRelationIds: [],
+    })
   }
 
   return outcomes.slice(0, TARGET_OUTCOMES)
 }
 
-function buildFallbackOutcomes(input: OutcomeGeneratorInput): StorylineOutcome[] {
-  const topic = input.anchor.title
+function validateHorizon(h: string): OutcomePrediction['timeHorizon'] {
+  const valid = new Set(['days', 'weeks', '1-3 months', '3-12 months'])
+  return valid.has(h) ? h as OutcomePrediction['timeHorizon'] : 'weeks'
+}
+
+function buildFallbackOutcomes(
+  context: OutcomeGenerationContext,
+): OutcomePrediction[] {
+  const topic = context.anchor.title
   return [
     {
-      title: `Escalade ou intensification autour de "${topic}"`,
+      id: 'outcome-fallback-0',
+      title: `Escalade ou intensification autour de "${topic.slice(0, 60)}"`,
       probability: 0.30,
-      reasoning: `Basé sur la dynamique actuelle, une escalade reste plausible. Confiance faible en raison du manque de données précises.`,
+      probabilitySource: 'ai_estimate',
+      confidenceLevel: 'low',
+      reasoning: `Basé sur la dynamique actuelle, une escalade reste plausible. Confiance faible.`,
       timeHorizon: 'weeks',
-      supportingEvidence: input.causalDrivers.slice(0, 2).map(c => c.title),
+      supportingEvidence: [],
       contradictingEvidence: [],
-      probabilitySource: 'ai_estimate',
+      status: 'open',
+      drivenByClusterIds: [],
+      raisedByRelationIds: [],
+      loweredByRelationIds: [],
     },
     {
-      title: `Stabilisation ou statu quo de la situation "${topic}"`,
+      id: 'outcome-fallback-1',
+      title: `Stabilisation ou statu quo de "${topic.slice(0, 60)}"`,
       probability: 0.40,
-      reasoning: `Le statu quo est souvent le scénario le plus probable à court terme. Les acteurs impliqués n'ont pas encore montré de signaux forts de changement.`,
-      timeHorizon: '1-3 months',
-      supportingEvidence: [],
-      contradictingEvidence: input.recentSignals.slice(0, 2).map(c => c.title),
       probabilitySource: 'ai_estimate',
-    },
-    {
-      title: `Désescalade ou résolution partielle de "${topic}"`,
-      probability: 0.20,
-      reasoning: `Une résolution partielle est possible mais dépend de négociations ou de pressions extérieures. Confiance faible.`,
+      confidenceLevel: 'low',
+      reasoning: `Le statu quo est souvent le scénario le plus probable à court terme.`,
       timeHorizon: '1-3 months',
       supportingEvidence: [],
       contradictingEvidence: [],
+      status: 'open',
+      drivenByClusterIds: [],
+      raisedByRelationIds: [],
+      loweredByRelationIds: [],
+    },
+    {
+      id: 'outcome-fallback-2',
+      title: `Désescalade ou résolution partielle de "${topic.slice(0, 60)}"`,
+      probability: 0.20,
       probabilitySource: 'ai_estimate',
+      confidenceLevel: 'low',
+      reasoning: `Une résolution partielle est possible mais dépend de pressions extérieures.`,
+      timeHorizon: '1-3 months',
+      supportingEvidence: [],
+      contradictingEvidence: [],
+      status: 'open',
+      drivenByClusterIds: [],
+      raisedByRelationIds: [],
+      loweredByRelationIds: [],
     },
   ]
 }

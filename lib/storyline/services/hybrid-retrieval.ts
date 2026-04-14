@@ -166,11 +166,10 @@ export async function retrieveExternalCandidates(
   anchor: AnchorContext,
   onWindowComplete?: (windowLabel: string, candidates: CandidateItem[]) => void,
 ): Promise<CandidateItem[]> {
-  const allCandidates: CandidateItem[] = []
   const anchorDesc = `${anchor.title}. ${anchor.summary ?? ''}`
 
-  for (const window of TIME_WINDOWS) {
-    try {
+  const results = await Promise.allSettled(
+    TIME_WINDOWS.map(async (window) => {
       const prompt = buildWindowPrompt(anchorDesc, window)
       const { text, citations } = await perplexityResponses(prompt, {
         recency: window.recency,
@@ -178,11 +177,18 @@ export async function retrieveExternalCandidates(
       })
 
       const windowCandidates = parsePerplexityResponse(text, citations, window.label)
-      allCandidates.push(...windowCandidates)
-
       if (onWindowComplete) onWindowComplete(window.label, windowCandidates)
-    } catch (err) {
-      console.error(`[hybrid-retrieval] Window ${window.label} failed:`, err)
+      return windowCandidates
+    }),
+  )
+
+  const allCandidates: CandidateItem[] = []
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i]
+    if (result.status === 'fulfilled') {
+      allCandidates.push(...result.value)
+    } else {
+      console.error(`[hybrid-retrieval] Window ${TIME_WINDOWS[i].label} failed:`, result.reason)
     }
   }
 

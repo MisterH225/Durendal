@@ -372,6 +372,11 @@ function storylineToGraphResult(
     type: (e.relationSubtype ?? 'related_to') as any,
     confidence: e.confidence,
     explanation: e.explanation,
+    metadata: {
+      relationCategory: e.relationCategory,
+      causalEvidence: e.causalEvidence,
+      isTrunk: e.isTrunk,
+    },
   }))
 
   const anchorNodeIds = cards.filter(c => c.temporalPosition === 'anchor').map(c => c.id)

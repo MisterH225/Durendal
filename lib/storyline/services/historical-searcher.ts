@@ -1,10 +1,12 @@
 import { perplexityResponses } from '@/lib/ai/perplexity'
+import type { SearchRecency } from '@/lib/ai/perplexity'
 import type { CandidateItem } from '@/lib/graph/types'
 import type { EventCluster } from '../types/event-cluster'
 
 interface HistoricalQuery {
   prompt: string
   focus: string
+  recency: SearchRecency
 }
 
 function buildHistoricalQueries(
@@ -20,52 +22,54 @@ function buildHistoricalQueries(
     .map(c => c.canonicalTitle)
     .join('; ')
 
+  const jsonFormat = `Return ONLY valid JSON: {"items": [{"title":"...","date":"...","summary":"...","entities":["..."],"regions":["..."]}]}`
+
   return [
     {
-      focus: 'deep_historical_roots',
+      focus: 'recent_context',
+      recency: 'month',
       prompt: [
-        `I need a HISTORICAL TIMELINE of the events that led to the current situation regarding: "${mainTopic}".`,
+        `Find key developments from the past 1-6 MONTHS that directly led to: "${mainTopic}".`,
+        mainEntities ? `Key actors: ${mainEntities}` : '',
         ``,
-        `Current situation summary (recent events):`,
-        clusterTitles,
+        `Current situation: ${clusterTitles}`,
         ``,
-        `Go DEEP into history. I need events from the past 2-5 YEARS that created the conditions for the current crisis.`,
-        `Focus on: root causes, initial triggers, key turning points, diplomatic milestones, military escalations.`,
+        `I need the INTERMEDIATE events — decisions, escalations, turning points — from the recent months.`,
+        `For each: title (max 80 chars), date (YYYY-MM-DD), summary (2-3 sentences), entities, regions.`,
         ``,
-        `For each historical event, provide:`,
-        `- title: concise descriptive title (max 80 chars)`,
-        `- date: YYYY-MM-DD (as precise as possible)`,
-        `- summary: 2-3 sentences explaining what happened and how it contributed to the current situation`,
-        `- entities: key actors (countries, organizations, leaders)`,
-        `- regions: geographic areas`,
-        `- causal_link: how this event led to or contributed to the next development`,
-        ``,
-        `Return ONLY valid JSON: {"items": [{"title":"...","date":"...","summary":"...","entities":["..."],"regions":["..."],"causal_link":"..."}]}`,
-        ``,
-        `Return 5-8 items, chronologically ordered from oldest to most recent.`,
-        `These should be DIFFERENT events from the recent ones listed above.`,
-      ].join('\n'),
+        jsonFormat,
+        `Return 3-5 items, chronologically ordered. DIFFERENT from: ${clusterTitles.slice(0, 200)}`,
+      ].filter(Boolean).join('\n'),
     },
     {
       focus: 'structural_preconditions',
+      recency: 'year',
       prompt: [
-        `What are the long-term STRUCTURAL FACTORS behind the current situation: "${mainTopic}"?`,
-        mainEntities ? `Key actors involved: ${mainEntities}` : '',
+        `What are the STRUCTURAL FACTORS from 6 months to 2 years ago behind: "${mainTopic}"?`,
+        mainEntities ? `Key actors: ${mainEntities}` : '',
         ``,
-        `I need events/developments from 1-3 years ago that set the stage.`,
         `Think: policy decisions, treaties, elections, economic shifts, military buildups.`,
+        `For each: title (max 80 chars), date (YYYY-MM-DD), summary (2-3 sentences), entities, regions.`,
         ``,
-        `For each event, provide:`,
-        `- title: concise (max 80 chars)`,
-        `- date: YYYY-MM-DD`,
-        `- summary: 2-3 sentences`,
-        `- entities: key actors`,
-        `- regions: geographic areas`,
-        ``,
-        `Return ONLY valid JSON: {"items": [{"title":"...","date":"...","summary":"...","entities":["..."],"regions":["..."]}]}`,
-        ``,
+        jsonFormat,
         `Return 3-5 items, chronologically ordered.`,
       ].filter(Boolean).join('\n'),
+    },
+    {
+      focus: 'deep_historical_roots',
+      recency: 'year',
+      prompt: [
+        `I need a DEEP HISTORICAL TIMELINE (2-10 years ago) of the ROOT CAUSES behind: "${mainTopic}".`,
+        ``,
+        `Current situation: ${clusterTitles}`,
+        ``,
+        `Go DEEP into history. Find foundational events, treaties, conflicts, regime changes, structural shifts`,
+        `that created the CONDITIONS for the current crisis to emerge.`,
+        `For each: title (max 80 chars), date (YYYY-MM-DD), summary (2-3 sentences), entities, regions.`,
+        ``,
+        jsonFormat,
+        `Return 4-6 items, chronologically ordered from oldest to most recent.`,
+      ].join('\n'),
     },
   ]
 }
@@ -116,35 +120,39 @@ export async function searchHistoricalContext(
   currentClusters: EventCluster[],
 ): Promise<CandidateItem[]> {
   const queries = buildHistoricalQueries(keywords, entities, currentClusters)
-  const allCandidates: CandidateItem[] = []
 
-  for (const query of queries) {
-    try {
+  const results = await Promise.allSettled(
+    queries.map(async (query) => {
       const { text } = await perplexityResponses(query.prompt, {
-        recency: 'year',
+        recency: query.recency,
         languages: ['fr', 'en'],
       })
 
       const candidates = parseHistoricalResponse(text, query.focus)
-      allCandidates.push(...candidates)
       console.log(`[historical-searcher] ${query.focus}: found ${candidates.length} historical events`)
-    } catch (err) {
-      console.error(`[historical-searcher] ${query.focus} failed:`, err)
+      return candidates
+    }),
+  )
+
+  const allCandidates: CandidateItem[] = []
+  for (let i = 0; i < results.length; i++) {
+    if (results[i].status === 'fulfilled') {
+      allCandidates.push(...(results[i] as PromiseFulfilledResult<CandidateItem[]>).value)
+    } else {
+      console.error(`[historical-searcher] ${queries[i].focus} failed:`, (results[i] as PromiseRejectedResult).reason)
     }
   }
 
-  // Deduplicate by title similarity
   const deduped: CandidateItem[] = []
   for (const c of allCandidates) {
-    const normTitle = c.title.toLowerCase().slice(0, 50)
-    const isDup = deduped.some(d =>
-      d.title.toLowerCase().slice(0, 50) === normTitle ||
-      d.title.toLowerCase().includes(normTitle) ||
-      normTitle.includes(d.title.toLowerCase().slice(0, 50)),
-    )
+    const normTitle = c.title.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, 60)
+    const isDup = deduped.some(d => {
+      const dNorm = d.title.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, 60)
+      return dNorm === normTitle || dNorm.includes(normTitle) || normTitle.includes(dNorm)
+    })
     if (!isDup) deduped.push(c)
   }
 
-  console.log(`[historical-searcher] Total: ${deduped.length} unique historical events`)
+  console.log(`[historical-searcher] Total: ${deduped.length} unique historical events from ${queries.length} parallel queries`)
   return deduped
 }

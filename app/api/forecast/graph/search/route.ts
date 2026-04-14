@@ -4,7 +4,7 @@ import { resolveAnchor, buildStoryline } from '@/lib/storyline/builder'
 import type { StorylineSSEEvent } from '@/lib/graph/types'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl

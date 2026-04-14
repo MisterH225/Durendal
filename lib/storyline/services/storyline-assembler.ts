@@ -1,23 +1,22 @@
 import type {
-  CandidateItem,
-  SourceArticle,
-  StorylineAnalysis,
-  StorylineAnalysisEntry,
   StorylineCard,
   StorylineEdge,
   StorylineResult,
   StorylineCardType,
-  StorylineOutcome,
   TemporalPosition,
   RelationCategory,
   RelationSubtype,
-  TemporalSubtype,
 } from '@/lib/graph/types'
 import type { AnchorContext } from './hybrid-retrieval'
 import type { EventCluster } from '../types/event-cluster'
+import type { EventRelation } from '../types/event-relation'
+import type { OutcomePrediction } from '../types/outcome-prediction'
+import { ANCHOR_CLUSTER_ID } from './relation-detector'
 
-let nextId = 0
-function uid(): string { return `sc-${++nextId}-${Date.now().toString(36)}` }
+function uid(): string {
+  const rand = Math.random().toString(36).slice(2, 10)
+  return `sc-${Date.now().toString(36)}-${rand}`
+}
 
 const POSITION_ORDER: Record<TemporalPosition, number> = {
   deep_past: 0,
@@ -29,34 +28,11 @@ const POSITION_ORDER: Record<TemporalPosition, number> = {
   future: 6,
 }
 
-const TEMPORAL_TO_POSITION: Record<string, TemporalPosition> = {
-  long_term_precursor: 'deep_past',
-  before: 'past',
-  immediate_precursor: 'recent',
-  concurrent_with: 'concurrent',
-  after: 'consequence',
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// V2: Cluster-based assembly
-// ═══════════════════════════════════════════════════════════════════════════
-
 function inferCardTypeFromCluster(cluster: EventCluster): StorylineCardType {
   if (cluster.platformRefType === 'forecast_event' || cluster.platformRefType === 'intel_event') return 'event'
   if (cluster.platformRefType === 'question') return 'event'
   if (cluster.sourceType === 'perplexity' || cluster.sourceType === 'gemini') return 'article'
   return 'event'
-}
-
-function resolvePositionFromCluster(
-  match: StorylineAnalysisEntry | null,
-  cluster: EventCluster,
-  anchor: AnchorContext,
-): TemporalPosition {
-  if (match) {
-    return TEMPORAL_TO_POSITION[match.temporalRelation] ?? inferPositionFromClusterDate(cluster, anchor)
-  }
-  return inferPositionFromClusterDate(cluster, anchor)
 }
 
 function inferPositionFromClusterDate(c: EventCluster, anchor: AnchorContext): TemporalPosition {
@@ -71,14 +47,46 @@ function inferPositionFromClusterDate(c: EventCluster, anchor: AnchorContext): T
   return 'concurrent'
 }
 
-export function assembleStorylineFromClusters(
+// ═══════════════════════════════════════════════════════════════════════════
+// Trunk detection via BFS on causal relations (graph, not chain)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function detectTrunkClusters(relations: EventRelation[]): Set<string> {
+  const trunk = new Set<string>([ANCHOR_CLUSTER_ID])
+  const queue = [ANCHOR_CLUSTER_ID]
+
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    for (const rel of relations) {
+      if (
+        rel.targetClusterId === current &&
+        rel.semanticCategory === 'causal' &&
+        !trunk.has(rel.sourceClusterId)
+      ) {
+        trunk.add(rel.sourceClusterId)
+        queue.push(rel.sourceClusterId)
+      }
+    }
+  }
+
+  return trunk
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Main assembly: relation-graph-based
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function assembleStorylineGraph(
   anchor: AnchorContext,
   clusters: EventCluster[],
-  analysis: StorylineAnalysis,
+  relations: EventRelation[],
+  outcomes: OutcomePrediction[],
+  narrative?: string,
 ): StorylineResult {
-  nextId = 0
   const cards: StorylineCard[] = []
   const edges: StorylineEdge[] = []
+
+  const trunkClusterIds = detectTrunkClusters(relations)
 
   // Anchor card
   const anchorCard: StorylineCard = {
@@ -86,7 +94,7 @@ export function assembleStorylineFromClusters(
     cardType: 'event',
     temporalPosition: 'anchor',
     title: anchor.title,
-    summary: analysis.anchor?.summary || anchor.summary,
+    summary: anchor.summary,
     date: anchor.date,
     confidence: 1,
     entities: anchor.entities ?? [],
@@ -102,428 +110,93 @@ export function assembleStorylineFromClusters(
   }
   cards.push(anchorCard)
 
-  // Index clusters by clusterId for lookup
-  const clusterById = new Map<string, EventCluster>()
-  for (const c of clusters) clusterById.set(c.clusterId, c)
-
-  // Match analysis entries to clusters
   const cardByClusterId = new Map<string, StorylineCard>()
-  const matchByCardId = new Map<string, StorylineAnalysisEntry>()
+  cardByClusterId.set(ANCHOR_CLUSTER_ID, anchorCard)
 
-  const trunkEntries = analysis.timeline.filter(e => !e.isCorollary)
-  const corollaryEntries = analysis.timeline.filter(e => e.isCorollary)
+  // Corollary detection
+  const corollaryRelations = relations.filter(r => r.semanticCategory === 'corollary')
+  const corollaryTargetIds = new Set(corollaryRelations.map(r => r.targetClusterId))
 
-  // Sort trunk entries by date for proper chain ordering
-  trunkEntries.sort((a, b) => {
-    const clA = clusterById.get(a.clusterId ?? a.candidateRef)
-    const clB = clusterById.get(b.clusterId ?? b.candidateRef)
-    const dateA = clA?.eventDate ?? ''
-    const dateB = clB?.eventDate ?? ''
-    return dateA.localeCompare(dateB)
-  })
+  // Sort clusters chronologically
+  const sortedClusters = [...clusters].sort((a, b) =>
+    (a.eventDate ?? '').localeCompare(b.eventDate ?? ''),
+  )
 
-  // Build trunk cards
+  // Build cluster cards
   let trunkOrder = 0
-  for (const entry of trunkEntries) {
-    const clusterId = entry.clusterId ?? entry.candidateRef
-    const cluster = clusterById.get(clusterId)
+  for (const cluster of sortedClusters) {
+    const isTrunk = trunkClusterIds.has(cluster.clusterId)
+    const isCorollary = corollaryTargetIds.has(cluster.clusterId)
+    const temporalPosition = inferPositionFromClusterDate(cluster, anchor)
 
-    if (!cluster) {
-      console.warn(`[assembler-v2] Cluster not found: ${clusterId}`)
-      continue
+    const bestRelation = relations.find(
+      r => r.sourceClusterId === cluster.clusterId || r.targetClusterId === cluster.clusterId,
+    )
+
+    // For corollaries, find which trunk card they attach to
+    let attachedToCardId: string | undefined
+    if (isCorollary) {
+      const corolRel = corollaryRelations.find(r => r.targetClusterId === cluster.clusterId)
+      if (corolRel) {
+        const attachedCard = cardByClusterId.get(corolRel.sourceClusterId)
+        attachedToCardId = attachedCard?.id
+      }
     }
-
-    const temporalPosition = resolvePositionFromCluster(entry, cluster, anchor)
 
     const card: StorylineCard = {
       id: uid(),
       cardType: inferCardTypeFromCluster(cluster),
       temporalPosition,
       title: cluster.canonicalTitle,
-      summary: entry.explanation || cluster.summary,
+      summary: bestRelation?.explanation || cluster.summary,
       date: cluster.eventDate ?? undefined,
-      confidence: entry.causalConfidence > 0 ? entry.causalConfidence : 0.5,
-      entities: entry.entities.length > 0 ? entry.entities : cluster.entities,
+      confidence: bestRelation?.confidence ?? 0.5,
+      entities: cluster.entities,
       regionTags: cluster.regionTags,
       sectorTags: cluster.sectorTags,
       sourceUrls: cluster.sourceArticles.map(a => a.url),
-      sourceArticles: entry.sourceArticles?.length
-        ? entry.sourceArticles
-        : cluster.sourceArticles.slice(0, 3),
+      sourceArticles: cluster.sourceArticles.slice(0, 3),
       platformRefType: cluster.platformRefType,
       platformRefId: cluster.platformRefId,
-      importance: entry.relationCategory === 'causal' ? 8 : 5,
-      sortOrder: trunkOrder++,
-      isTrunk: true,
-      isCorollary: false,
+      importance: isTrunk ? 8 : isCorollary ? 4 : 3,
+      sortOrder: isTrunk ? trunkOrder++ : POSITION_ORDER[temporalPosition] * 100 + cards.length,
+      isTrunk,
+      isCorollary,
+      attachedToCardId,
       metadata: {
         clusterId: cluster.clusterId,
         clusterSize: cluster.clusterSize,
         eventDateConfidence: cluster.eventDateConfidence,
+        counterfactualScore: bestRelation?.counterfactualScore,
+        wasDowngraded: bestRelation?.wasDowngraded,
       },
     }
     cards.push(card)
-    cardByClusterId.set(clusterId, card)
-    matchByCardId.set(card.id, entry)
+    cardByClusterId.set(cluster.clusterId, card)
   }
 
-  // Build trunk chain edges: each trunk card → next → ... → anchor
-  const trunkCards = cards
-    .filter(c => c.isTrunk && c.temporalPosition !== 'anchor' && c.temporalPosition !== 'future')
-    .sort((a, b) => a.sortOrder - b.sortOrder)
+  // Build edges from semantic relations (skip pure temporal)
+  for (const rel of relations) {
+    if (rel.semanticCategory === 'temporal') continue
 
-  for (let i = 0; i < trunkCards.length; i++) {
-    const current = trunkCards[i]
-    const next = i < trunkCards.length - 1 ? trunkCards[i + 1] : anchorCard
-    const match = matchByCardId.get(current.id)
-
-    const edgeCategory: RelationCategory = match?.relationCategory === 'causal' ? 'causal' : 'contextual'
-    const edgeSubtype = match?.relationCategory === 'causal'
-      ? (match.relationSubtype || 'causes')
-      : 'background_context'
+    const sourceCard = cardByClusterId.get(rel.sourceClusterId)
+    const targetCard = cardByClusterId.get(rel.targetClusterId)
+    if (!sourceCard || !targetCard) continue
 
     edges.push({
       id: uid(),
-      sourceCardId: current.id,
-      targetCardId: next.id,
-      relationCategory: edgeCategory,
-      relationSubtype: edgeSubtype as RelationSubtype,
-      confidence: match?.causalConfidence ?? 0.5,
-      explanation: match?.explanation ?? '',
-      causalEvidence: match?.causalEvidence,
-      isTrunk: true,
+      sourceCardId: sourceCard.id,
+      targetCardId: targetCard.id,
+      relationCategory: rel.semanticCategory as RelationCategory,
+      relationSubtype: rel.semanticSubtype as RelationSubtype,
+      confidence: rel.confidence,
+      explanation: rel.explanation,
+      causalEvidence: rel.mechanismEvidence || undefined,
+      isTrunk: rel.semanticCategory === 'causal' && trunkClusterIds.has(rel.sourceClusterId),
     })
   }
 
-  // Build corollary cards and edges
-  for (const entry of corollaryEntries) {
-    const clusterId = entry.clusterId ?? entry.candidateRef
-    const cluster = clusterById.get(clusterId)
-    if (!cluster) continue
-
-    const temporalPosition = resolvePositionFromCluster(entry, cluster, anchor)
-
-    // Find the trunk card this corollary is attached to
-    const attachedTrunkCard = entry.attachedToRef
-      ? cardByClusterId.get(entry.attachedToRef) ?? anchorCard
-      : anchorCard
-
-    const card: StorylineCard = {
-      id: uid(),
-      cardType: inferCardTypeFromCluster(cluster),
-      temporalPosition,
-      title: cluster.canonicalTitle,
-      summary: entry.explanation || cluster.summary,
-      date: cluster.eventDate ?? undefined,
-      confidence: 0.5,
-      entities: entry.entities.length > 0 ? entry.entities : cluster.entities,
-      regionTags: cluster.regionTags,
-      sectorTags: cluster.sectorTags,
-      sourceUrls: cluster.sourceArticles.map(a => a.url),
-      sourceArticles: entry.sourceArticles?.length
-        ? entry.sourceArticles
-        : cluster.sourceArticles.slice(0, 3),
-      platformRefType: cluster.platformRefType,
-      platformRefId: cluster.platformRefId,
-      importance: 4,
-      sortOrder: POSITION_ORDER[temporalPosition] * 100 + cards.length,
-      isTrunk: false,
-      isCorollary: true,
-      attachedToCardId: attachedTrunkCard.id,
-      metadata: {
-        clusterId: cluster.clusterId,
-        clusterSize: cluster.clusterSize,
-        eventDateConfidence: cluster.eventDateConfidence,
-      },
-    }
-    cards.push(card)
-    cardByClusterId.set(clusterId, card)
-
-    edges.push({
-      id: uid(),
-      sourceCardId: attachedTrunkCard.id,
-      targetCardId: card.id,
-      relationCategory: 'corollary' as RelationCategory,
-      relationSubtype: (entry.relationSubtype || 'spillover_from') as RelationSubtype,
-      confidence: 0.6,
-      explanation: entry.explanation,
-      isTrunk: false,
-    })
-  }
-
-  // Outcome cards
-  addOutcomeCards(cards, edges, anchorCard.id, analysis.outcomes)
-
-  cards.sort((a, b) => a.sortOrder - b.sortOrder)
-
-  return {
-    anchorType: anchor.platformRefType ? 'article' : 'keyword',
-    anchorRef: anchor.platformRefId ?? anchor.keywords.join(' '),
-    anchorTitle: anchor.title,
-    anchorSummary: anchor.summary,
-    cards,
-    edges,
-    narrative: analysis.narrative,
-    status: 'ready',
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// V1: Legacy candidate-based assembly (preserved)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function inferCardType(candidate: CandidateItem): StorylineCardType {
-  if (candidate.platformRefType === 'forecast_event' || candidate.platformRefType === 'intel_event') return 'event'
-  if (candidate.platformRefType === 'question') return 'event'
-  if (candidate.platformRefType === 'signal' || candidate.platformRefType === 'external_signal') return 'article'
-  if (candidate.sourceType === 'perplexity' || candidate.sourceType === 'gemini') return 'article'
-  return 'context'
-}
-
-function matchCandidateToAnalysis(
-  candidate: CandidateItem,
-  timeline: StorylineAnalysisEntry[],
-): StorylineAnalysisEntry | null {
-  const normalTitle = candidate.title.toLowerCase().slice(0, 60)
-
-  for (const entry of timeline) {
-    const ref = entry.candidateRef.toLowerCase()
-    if (ref.includes(normalTitle) || normalTitle.includes(ref.slice(0, 40))) {
-      return entry
-    }
-    const refIndex = ref.match(/^\[(\d+)\]/)
-    if (refIndex) continue
-
-    const refWords = ref.split(/\s+/).filter(w => w.length > 3)
-    const titleWords = normalTitle.split(/\s+/).filter(w => w.length > 3)
-    let overlap = 0
-    for (const w of refWords) {
-      if (titleWords.some(tw => tw.includes(w) || w.includes(tw))) overlap++
-    }
-    if (refWords.length > 0 && overlap / refWords.length > 0.5) return entry
-  }
-
-  return null
-}
-
-function resolveTemporalPosition(match: StorylineAnalysisEntry | null, candidate: CandidateItem, anchor: AnchorContext): TemporalPosition {
-  if (match) {
-    return TEMPORAL_TO_POSITION[match.temporalRelation] ?? inferPositionFromDate(candidate, anchor)
-  }
-  return inferPositionFromDate(candidate, anchor)
-}
-
-function inferPositionFromDate(c: CandidateItem, anchor: AnchorContext): TemporalPosition {
-  if (!c.date || !anchor.date) return 'concurrent'
-  if (c.date < anchor.date) {
-    const daysBefore = Math.round((new Date(anchor.date).getTime() - new Date(c.date).getTime()) / 86400000)
-    if (daysBefore > 365) return 'deep_past'
-    if (daysBefore > 30) return 'past'
-    return 'recent'
-  }
-  if (c.date > anchor.date) return 'consequence'
-  return 'concurrent'
-}
-
-export function assembleStoryline(
-  anchor: AnchorContext,
-  candidates: CandidateItem[],
-  analysis: StorylineAnalysis,
-): StorylineResult {
-  nextId = 0
-  const cards: StorylineCard[] = []
-  const edges: StorylineEdge[] = []
-
-  const anchorCard: StorylineCard = {
-    id: uid(),
-    cardType: 'event',
-    temporalPosition: 'anchor',
-    title: anchor.title,
-    summary: analysis.anchor?.summary || anchor.summary,
-    date: anchor.date,
-    confidence: 1,
-    entities: anchor.entities ?? [],
-    regionTags: [],
-    sectorTags: [],
-    sourceUrls: anchor.url ? [anchor.url] : [],
-    platformRefType: anchor.platformRefType,
-    platformRefId: anchor.platformRefId,
-    importance: 10,
-    sortOrder: POSITION_ORDER.anchor * 100,
-    isTrunk: true,
-    isCorollary: false,
-  }
-  cards.push(anchorCard)
-
-  const cardByRef = new Map<string, StorylineCard>()
-  const matchByCard = new Map<string, StorylineAnalysisEntry>()
-
-  const matchedPairs = candidates.map((c, i) => ({
-    index: i,
-    candidate: c,
-    match: matchCandidateToAnalysis(c, analysis.timeline),
-  }))
-
-  const trunkPairs = matchedPairs.filter(p => p.match && !p.match.isCorollary)
-  const corollaryPairs = matchedPairs.filter(p => p.match?.isCorollary)
-  const unmatchedPairs = matchedPairs.filter(p => !p.match)
-
-  trunkPairs.sort((a, b) => {
-    const da = a.candidate.date ?? ''
-    const db = b.candidate.date ?? ''
-    return da.localeCompare(db)
-  })
-
-  let trunkOrder = 0
-  for (const { candidate: c, match } of trunkPairs) {
-    if (!match) continue
-    const temporalPosition = resolveTemporalPosition(match, c, anchor)
-
-    const card: StorylineCard = {
-      id: uid(),
-      cardType: inferCardType(c),
-      temporalPosition,
-      title: c.title,
-      summary: match.explanation || c.summary,
-      date: c.date,
-      confidence: match.causalConfidence > 0 ? match.causalConfidence : 0.5,
-      entities: match.entities ?? c.entities ?? [],
-      regionTags: c.regionTags ?? [],
-      sectorTags: c.sectorTags ?? [],
-      sourceUrls: c.url ? [c.url] : [],
-      sourceArticles: match.sourceArticles ?? (c.url ? [{ title: c.title.slice(0, 60), url: c.url }] : []),
-      platformRefType: c.platformRefType,
-      platformRefId: c.platformRefId,
-      importance: match.relationCategory === 'causal' ? 8 : 5,
-      sortOrder: trunkOrder++,
-      isTrunk: true,
-      isCorollary: false,
-    }
-    cards.push(card)
-    cardByRef.set(match.candidateRef, card)
-    matchByCard.set(card.id, match)
-  }
-
-  const trunkCards = cards.filter(c => c.isTrunk && c.temporalPosition !== 'anchor' && c.temporalPosition !== 'future')
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-
-  for (let i = 0; i < trunkCards.length; i++) {
-    const current = trunkCards[i]
-    const next = i < trunkCards.length - 1 ? trunkCards[i + 1] : anchorCard
-    const match = matchByCard.get(current.id)
-
-    const edgeCategory: RelationCategory = match?.relationCategory === 'causal' ? 'causal' : 'contextual'
-    const edgeSubtype = match?.relationCategory === 'causal'
-      ? (match.relationSubtype || 'causes')
-      : 'background_context'
-
-    edges.push({
-      id: uid(),
-      sourceCardId: current.id,
-      targetCardId: next.id,
-      relationCategory: edgeCategory,
-      relationSubtype: edgeSubtype as RelationSubtype,
-      confidence: match?.causalConfidence ?? 0.5,
-      explanation: match?.explanation ?? '',
-      causalEvidence: match?.causalEvidence,
-      isTrunk: true,
-    })
-  }
-
-  for (const { candidate: c, match } of corollaryPairs) {
-    if (!match) continue
-    const temporalPosition = resolveTemporalPosition(match, c, anchor)
-
-    const attachedTrunkCard = match.attachedToRef
-      ? cardByRef.get(match.attachedToRef) ?? anchorCard
-      : anchorCard
-
-    const card: StorylineCard = {
-      id: uid(),
-      cardType: inferCardType(c),
-      temporalPosition,
-      title: c.title,
-      summary: match.explanation || c.summary,
-      date: c.date,
-      confidence: 0.5,
-      entities: match.entities ?? c.entities ?? [],
-      regionTags: c.regionTags ?? [],
-      sectorTags: c.sectorTags ?? [],
-      sourceUrls: c.url ? [c.url] : [],
-      sourceArticles: match.sourceArticles ?? (c.url ? [{ title: c.title.slice(0, 60), url: c.url }] : []),
-      platformRefType: c.platformRefType,
-      platformRefId: c.platformRefId,
-      importance: 4,
-      sortOrder: POSITION_ORDER[temporalPosition] * 100 + cards.length,
-      isTrunk: false,
-      isCorollary: true,
-      attachedToCardId: attachedTrunkCard.id,
-    }
-    cards.push(card)
-    cardByRef.set(match.candidateRef, card)
-
-    edges.push({
-      id: uid(),
-      sourceCardId: attachedTrunkCard.id,
-      targetCardId: card.id,
-      relationCategory: 'corollary' as RelationCategory,
-      relationSubtype: (match.relationSubtype || 'spillover_from') as RelationSubtype,
-      confidence: 0.6,
-      explanation: match.explanation,
-      isTrunk: false,
-    })
-  }
-
-  for (const { candidate: c, index: i } of unmatchedPairs.slice(0, 5)) {
-    const temporalPosition = inferPositionFromDate(c, anchor)
-    cards.push({
-      id: uid(),
-      cardType: inferCardType(c),
-      temporalPosition,
-      title: c.title,
-      summary: c.summary,
-      date: c.date,
-      confidence: 0.2,
-      entities: c.entities ?? [],
-      regionTags: c.regionTags ?? [],
-      sectorTags: c.sectorTags ?? [],
-      sourceUrls: c.url ? [c.url] : [],
-      sourceArticles: c.url ? [{ title: c.title.slice(0, 60), url: c.url }] : [],
-      platformRefType: c.platformRefType,
-      platformRefId: c.platformRefId,
-      importance: 2,
-      sortOrder: POSITION_ORDER[temporalPosition] * 100 + 90 + i,
-      isTrunk: false,
-      isCorollary: false,
-    })
-  }
-
-  addOutcomeCards(cards, edges, anchorCard.id, analysis.outcomes)
-
-  cards.sort((a, b) => a.sortOrder - b.sortOrder)
-
-  return {
-    anchorType: anchor.platformRefType ? 'article' : 'keyword',
-    anchorRef: anchor.platformRefId ?? anchor.keywords.join(' '),
-    anchorTitle: anchor.title,
-    anchorSummary: anchor.summary,
-    cards,
-    edges,
-    narrative: analysis.narrative,
-    status: 'ready',
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Shared: Outcome cards
-// ═══════════════════════════════════════════════════════════════════════════
-
-function addOutcomeCards(
-  cards: StorylineCard[],
-  edges: StorylineEdge[],
-  anchorCardId: string,
-  outcomes: StorylineOutcome[],
-): void {
+  // Outcome cards and edges
   for (const outcome of outcomes) {
     const card: StorylineCard = {
       id: uid(),
@@ -532,7 +205,7 @@ function addOutcomeCards(
       title: outcome.title,
       summary: outcome.reasoning,
       probability: outcome.probability,
-      probabilitySource: outcome.probabilitySource ?? 'ai_estimate',
+      probabilitySource: outcome.probabilitySource,
       confidence: outcome.probability,
       entities: [],
       regionTags: [],
@@ -542,8 +215,12 @@ function addOutcomeCards(
       sortOrder: POSITION_ORDER.future * 100 + cards.length,
       supportingEvidence: outcome.supportingEvidence,
       contradictingEvidence: outcome.contradictingEvidence,
-      outcomeStatus: 'projected',
-      metadata: { timeHorizon: outcome.timeHorizon },
+      outcomeStatus: outcome.status === 'open' ? 'projected' : outcome.status as StorylineCard['outcomeStatus'],
+      metadata: {
+        timeHorizon: outcome.timeHorizon,
+        confidenceLevel: outcome.confidenceLevel,
+        outcomeId: outcome.id,
+      },
       isTrunk: false,
       isCorollary: false,
     }
@@ -551,7 +228,7 @@ function addOutcomeCards(
 
     edges.push({
       id: uid(),
-      sourceCardId: anchorCardId,
+      sourceCardId: anchorCard.id,
       targetCardId: card.id,
       relationCategory: 'outcome',
       relationSubtype: 'may_lead_to',
@@ -559,5 +236,34 @@ function addOutcomeCards(
       explanation: `Scénario projeté (${outcome.timeHorizon}) — ${outcome.reasoning.slice(0, 100)}`,
       isTrunk: false,
     })
+
+    for (const driverClusterId of outcome.drivenByClusterIds) {
+      const driverCard = cardByClusterId.get(driverClusterId)
+      if (driverCard) {
+        edges.push({
+          id: uid(),
+          sourceCardId: driverCard.id,
+          targetCardId: card.id,
+          relationCategory: 'outcome',
+          relationSubtype: 'raises_probability_of',
+          confidence: 0.5,
+          explanation: `${driverCard.title} contribue à ce scénario`,
+          isTrunk: false,
+        })
+      }
+    }
+  }
+
+  cards.sort((a, b) => a.sortOrder - b.sortOrder)
+
+  return {
+    anchorType: anchor.platformRefType ? 'article' : 'keyword',
+    anchorRef: anchor.platformRefId ?? anchor.keywords.join(' '),
+    anchorTitle: anchor.title,
+    anchorSummary: anchor.summary,
+    cards,
+    edges,
+    narrative: narrative ?? '',
+    status: 'ready',
   }
 }

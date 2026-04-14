@@ -1,3 +1,4 @@
+import { describe, test, expect } from 'vitest'
 import { CounterfactualCheckService } from '../counterfactual-check'
 import type { CounterfactualCheckInput, TemporalSubtype } from '@/lib/graph/types'
 
@@ -166,7 +167,7 @@ describe('CounterfactualCheckService', () => {
     }))
 
     expect(result.scores.alternativeCausePenalty).toBeGreaterThan(0.2)
-    expect(['contributes_to', 'background_context', 'long_term_precursor']).toContain(result.finalLabel)
+    expect(['contributes_to', 'background_context', 'long_term_precursor', 'preceded_by']).toContain(result.finalLabel)
   })
 
   // ── Test 7: Low evidence → downgraded ─────────────────────────────

@@ -3,8 +3,10 @@ import type { SourceArticle } from '@/lib/graph/types'
 import type { ExtractedEvent } from '../types/event-extraction'
 import type { EventCluster } from '../types/event-cluster'
 
-let clusterSeq = 0
-function nextClusterId(): string { return `cluster-${++clusterSeq}-${Date.now().toString(36)}` }
+function nextClusterId(): string {
+  const rand = Math.random().toString(36).slice(2, 10)
+  return `cluster-${Date.now().toString(36)}-${rand}`
+}
 
 function normalizeForComparison(t: string): string {
   return t.toLowerCase()
@@ -197,7 +199,6 @@ interface InternalCluster {
 export async function clusterEvents(
   extractedEvents: ExtractedEvent[],
 ): Promise<EventCluster[]> {
-  clusterSeq = 0
   if (extractedEvents.length === 0) return []
 
   const clusters: InternalCluster[] = []
@@ -307,4 +308,99 @@ export async function clusterEvents(
 
   console.log(`[event-clusterer] ${extractedEvents.length} events → ${result.length} clusters`)
   return result
+}
+
+/**
+ * Merge incoming clusters into an existing set, cross-checking for duplicates.
+ * Used after historical expansion to avoid having the same event in both sets.
+ */
+export async function reclusterMerged(
+  existing: EventCluster[],
+  incoming: EventCluster[],
+): Promise<EventCluster[]> {
+  const merged = [...existing]
+  const llmChecksNeeded: Array<{ existingIdx: number; incoming: EventCluster }> = []
+
+  for (const inc of incoming) {
+    let matched = false
+
+    for (let i = 0; i < merged.length; i++) {
+      const overlap = tokenOverlap(merged[i].canonicalTitle, inc.canonicalTitle)
+      if (overlap >= 0.65 || normalizeForComparison(merged[i].canonicalTitle) === normalizeForComparison(inc.canonicalTitle)) {
+        mergeClusterInto(merged[i], inc)
+        matched = true
+        break
+      }
+      if (overlap >= 0.40 && overlap < 0.65) {
+        llmChecksNeeded.push({ existingIdx: i, incoming: inc })
+        matched = true
+        break
+      }
+    }
+
+    if (!matched) {
+      merged.push(inc)
+    }
+  }
+
+  if (llmChecksNeeded.length > 0) {
+    const checkResults = await Promise.allSettled(
+      llmChecksNeeded.map(({ existingIdx, incoming: inc }) =>
+        llmCheckSameEvent(
+          merged[existingIdx].canonicalTitle,
+          merged[existingIdx].summary,
+          inc.canonicalTitle,
+          inc.summary,
+        ).then(result => ({ existingIdx, incoming: inc, result })),
+      ),
+    )
+
+    for (const settled of checkResults) {
+      if (settled.status !== 'fulfilled') continue
+      const { existingIdx, incoming: inc, result } = settled.value
+
+      if (result.isSameEvent && result.confidence !== 'low') {
+        mergeClusterInto(merged[existingIdx], inc)
+        if (result.mergedTitle) {
+          merged[existingIdx].canonicalTitle = result.mergedTitle
+        }
+      } else {
+        merged.push(inc)
+      }
+    }
+  }
+
+  console.log(`[event-clusterer] recluster: ${existing.length} + ${incoming.length} → ${merged.length} clusters`)
+  return merged
+}
+
+function mergeClusterInto(target: EventCluster, source: EventCluster): void {
+  target.clusterSize += source.clusterSize
+
+  const existingUrls = new Set(target.sourceArticles.map(a => a.url))
+  for (const article of source.sourceArticles) {
+    if (!existingUrls.has(article.url)) {
+      target.sourceArticles.push(article)
+    }
+  }
+  target.sourceArticles = target.sourceArticles.slice(0, 6)
+
+  const existingEntities = new Set(target.entities.map(e => e.toLowerCase()))
+  for (const ent of source.entities) {
+    if (!existingEntities.has(ent.toLowerCase())) {
+      target.entities.push(ent)
+      existingEntities.add(ent.toLowerCase())
+    }
+  }
+  target.entities = target.entities.slice(0, 10)
+
+  if (source.summary.length > target.summary.length) {
+    target.summary = source.summary
+  }
+
+  const confRank = { high: 3, medium: 2, low: 1 }
+  if ((confRank[source.eventDateConfidence] ?? 0) > (confRank[target.eventDateConfidence] ?? 0)) {
+    target.eventDate = source.eventDate
+    target.eventDateConfidence = source.eventDateConfidence
+  }
 }

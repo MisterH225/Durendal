@@ -1,13 +1,9 @@
 'use client'
 
-import Link from 'next/link'
 import { X, ExternalLink, Crosshair, Network, Copy, ArrowUpRight, Newspaper } from 'lucide-react'
 import type { IntelligenceGraphNode, IntelligenceGraphEdge } from '@/lib/graph/types'
 import { NODE_TYPE_CONFIG, EDGE_TYPE_CONFIG } from '@/lib/graph/types'
-
-function signalsSearchUrl(label: string): string {
-  return `/forecast/signals?q=${encodeURIComponent(label)}`
-}
+import { resolveNodeReadTarget } from './read-link'
 
 interface GraphDetailPanelProps {
   node: IntelligenceGraphNode
@@ -48,7 +44,9 @@ export function GraphDetailPanel({
     c => c.neighbor && (c.neighbor.type === 'article' || c.neighbor.type === 'signal'),
   )
 
-  const isReadableNode = node.type === 'article' || node.type === 'signal'
+  const isReadableNode =
+    node.type === 'article' || node.type === 'signal' || node.type === 'event'
+  const readTarget = resolveNodeReadTarget(node)
 
   return (
     <div className="w-[340px] flex-shrink-0 bg-neutral-900 border-l border-neutral-800 overflow-y-auto">
@@ -101,12 +99,15 @@ export function GraphDetailPanel({
         {/* Actions */}
         <div className="flex flex-wrap gap-1.5">
           {isReadableNode && (
-            <Link
-              href={signalsSearchUrl(node.label)}
+            <a
+              href={readTarget.href}
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/25 hover:bg-amber-500/25 transition-colors"
+              title="S’ouvre dans un nouvel onglet — le graphe reste ici"
             >
-              <Newspaper size={11} /> Lire l'article
-            </Link>
+              <Newspaper size={11} /> {readTarget.label}
+            </a>
           )}
           <button onClick={() => onRecenter(node.id)} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-blue-500/15 text-blue-400 border border-blue-500/25 hover:bg-blue-500/25 transition-colors">
             <Crosshair size={11} /> Recentrer
@@ -114,7 +115,7 @@ export function GraphDetailPanel({
           <button onClick={() => onRecenter(node.id)} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-violet-500/15 text-violet-400 border border-violet-500/25 hover:bg-violet-500/25 transition-colors">
             <Network size={11} /> Explorer voisinage
           </button>
-          {node.url && (
+          {node.url && /^https?:\/\//i.test(node.url) && readTarget.kind !== 'external' && (
             <a href={node.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-medium px-2 py-1.5 rounded-lg bg-neutral-800 text-neutral-300 border border-neutral-700 hover:bg-neutral-700 transition-colors">
               <ExternalLink size={11} /> Source externe
             </a>
@@ -137,18 +138,21 @@ export function GraphDetailPanel({
               {linkedArticles.map(({ edge, neighbor }) => {
                 if (!neighbor) return null
                 const ncfg = NODE_TYPE_CONFIG[neighbor.type]
+                const neighborRead = resolveNodeReadTarget(neighbor)
                 return (
                   <div key={edge.id} className="rounded-lg border border-neutral-800 bg-neutral-800/40 p-2.5">
                     <div className="flex items-start gap-2">
                       <span className="text-xs mt-0.5">{ncfg.icon}</span>
                       <div className="min-w-0 flex-1">
-                        <Link
-                          href={signalsSearchUrl(neighbor.label)}
+                        <a
+                          href={neighborRead.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="text-[11px] font-medium text-amber-300 hover:text-amber-200 hover:underline text-left leading-snug transition-colors block"
                         >
                           {neighbor.label}
                           <ArrowUpRight size={10} className="inline ml-1 opacity-50" />
-                        </Link>
+                        </a>
                         {neighbor.summary && (
                           <p className="text-[10px] text-neutral-500 mt-0.5 line-clamp-2">{neighbor.summary}</p>
                         )}
@@ -157,12 +161,14 @@ export function GraphDetailPanel({
                           {edge.explanation && <span className="text-[9px] text-neutral-500 italic">{edge.explanation}</span>}
                         </div>
                         <div className="flex items-center gap-1.5 mt-1.5">
-                          <Link
-                            href={signalsSearchUrl(neighbor.label)}
+                          <a
+                            href={neighborRead.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors"
                           >
-                            Lire →
-                          </Link>
+                            {neighborRead.label} →
+                          </a>
                           <button
                             onClick={() => onNavigate(neighbor.id)}
                             className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-neutral-700/50 text-neutral-400 border border-neutral-700 hover:bg-neutral-700 transition-colors"

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
-import { PanelLeftOpen, PanelLeftClose, Loader2 } from 'lucide-react'
+import { PanelLeftOpen, PanelLeftClose, Loader2, BookmarkPlus, Bookmarks, Trash2 } from 'lucide-react'
 
 import type {
   GraphSearchResult,
@@ -52,6 +52,9 @@ function GraphExplorerInner({ initialArticleId, initialQuery }: { initialArticle
   const [showLeftPanel, setShowLeftPanel] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [currentQuery, setCurrentQuery] = useState('')
+  const [savedMenuOpen, setSavedMenuOpen] = useState(false)
+  const [saveNotice, setSaveNotice] = useState<string | null>(null)
+  const [savedListVersion, setSavedListVersion] = useState(0)
 
   const canvasRef = useRef<{ zoomIn: () => void; zoomOut: () => void; fitView: () => void }>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -188,6 +191,58 @@ function GraphExplorerInner({ initialArticleId, initialQuery }: { initialArticle
     onRecenter(nodeId)
   }, [onRecenter])
 
+  const handleSaveStoryline = useCallback(() => {
+    if (!storyline || cards.length === 0) return
+    const snapshot: StorylineResult = {
+      ...storyline,
+      cards,
+      edges,
+      narrative: narrative || storyline.narrative,
+    }
+    addSavedStoryline({
+      query: currentQuery || storyline.anchorRef,
+      anchorTitle: storyline.anchorTitle,
+      storyline: snapshot,
+    })
+    setSavedListVersion(v => v + 1)
+    setSaveNotice('Storyline enregistré sur cet appareil. Utilisez « Mes storylines » pour le rouvrir.')
+    window.setTimeout(() => setSaveNotice(null), 5000)
+  }, [storyline, cards, edges, narrative, currentQuery])
+
+  const handleRestoreSaved = useCallback((entry: SavedStorylineEntry) => {
+    const s = entry.storyline
+    setStoryline(s)
+    setCards(s.cards)
+    setEdges(s.edges)
+    setNarrative(s.narrative ?? '')
+    setCurrentQuery(entry.query)
+    setBuildPhase('complete')
+    setSelectedNodeId(null)
+    setSavedMenuOpen(false)
+    setErrorMsg(null)
+  }, [])
+
+  const handleRemoveSaved = useCallback((id: string) => {
+    removeSavedStoryline(id)
+    setSavedListVersion(v => v + 1)
+  }, [])
+
+  const savedEntries = useMemo(() => {
+    void savedListVersion
+    return loadSavedStorylines()
+  }, [savedListVersion])
+
+  const savedMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!savedMenuOpen) return
+    function onMouseDown(e: MouseEvent) {
+      const el = savedMenuRef.current
+      if (el && !el.contains(e.target as Node)) setSavedMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [savedMenuOpen])
+
   const phaseLabel = PHASE_LABELS[buildPhase] ?? ''
   const activeTypes = Array.from(new Set(legacyResult?.nodes.map(n => n.type) ?? []))
   const hasContent = cards.length > 0
@@ -205,10 +260,78 @@ function GraphExplorerInner({ initialArticleId, initialQuery }: { initialArticle
             {showLeftPanel ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
           </button>
 
+          {hasContent && buildPhase === 'complete' && storyline && (
+            <>
+              <button
+                type="button"
+                onClick={handleSaveStoryline}
+                className="flex-shrink-0 p-2 rounded-lg text-amber-400/90 hover:bg-amber-500/10 border border-amber-500/20 transition-colors"
+                title="Enregistrer ce storyline sur cet appareil (navigateur)"
+              >
+                <BookmarkPlus size={18} />
+              </button>
+              <div ref={savedMenuRef} className="relative flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSavedMenuOpen(o => !o)}
+                  className={`p-2 rounded-lg border transition-colors ${
+                    savedMenuOpen
+                      ? 'bg-neutral-800 text-neutral-100 border-neutral-600'
+                      : 'text-neutral-400 hover:bg-neutral-800 border-neutral-800'
+                  }`}
+                  title="Storylines enregistrés"
+                >
+                  <Bookmarks size={18} />
+                </button>
+                {savedMenuOpen && (
+                  <div className="absolute left-0 top-full mt-1 w-[min(100vw-2rem,320px)] max-h-[min(70vh,360px)] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl z-50 py-1">
+                    {savedEntries.length === 0 ? (
+                      <p className="px-3 py-4 text-[11px] text-neutral-500">Aucun storyline enregistré. Lancez une recherche, puis cliquez sur la marque-page +.</p>
+                    ) : (
+                      savedEntries.map(entry => (
+                        <div
+                          key={entry.id}
+                          className="flex items-start gap-1 px-2 py-1.5 hover:bg-neutral-800/80 border-b border-neutral-800/50 last:border-0"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleRestoreSaved(entry)}
+                            className="flex-1 text-left min-w-0"
+                          >
+                            <div className="text-[11px] font-medium text-neutral-200 line-clamp-2">{entry.anchorTitle}</div>
+                            <div className="text-[9px] text-neutral-500 mt-0.5">
+                              {new Date(entry.savedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSaved(entry.id)}
+                            className="p-1 text-neutral-500 hover:text-red-400 flex-shrink-0"
+                            title="Supprimer"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
           <div className="flex-1 flex items-center justify-center">
             <GraphSearchBar onSearch={onSearch} isLoading={isLoading} />
           </div>
         </div>
+
+        {saveNotice && (
+          <div className="px-4 pb-2">
+            <div className="text-[11px] text-emerald-400/95 bg-emerald-950/40 border border-emerald-800/50 rounded-lg px-3 py-2">
+              {saveNotice}
+            </div>
+          </div>
+        )}
 
         {hasContent && (
           <div className="flex items-center justify-between px-4 pb-2">
@@ -362,6 +485,8 @@ function storylineToGraphResult(
       sourceArticles: c.sourceArticles,
       clusterSize: (c.metadata as Record<string, unknown>)?.clusterSize,
       eventDateConfidence: (c.metadata as Record<string, unknown>)?.eventDateConfidence,
+      platformRefType: c.platformRefType,
+      platformRefId: c.platformRefId,
     },
   }))
 
